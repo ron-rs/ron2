@@ -8,7 +8,7 @@
 //! ```
 //! use ron2::{from_str, to_string, Value};
 //!
-//! let value = from_str("(x: 1, y: 2)").unwrap();
+//! let value = from_str("Point { x: 1, y: 2 }").unwrap();
 //! let output = to_string(&value).unwrap();
 //! ```
 
@@ -38,24 +38,20 @@ extern crate alloc;
 
 pub mod ast;
 pub mod chars;
-pub mod de;
 pub mod error;
 pub mod extensions;
 pub mod lexer;
 pub mod options;
-pub mod parse;
 pub mod ser;
 pub mod token;
 mod util;
 pub mod value;
 
-pub use crate::de::Deserializer;
 pub use crate::error::{Error, SpannedError, SpannedResult};
 pub use crate::extensions::Extensions;
 pub use crate::options::Options;
-pub use crate::parse::Parser;
 pub use crate::ser::{PrettyConfig, Serializer};
-pub use crate::value::{Map, Number, Value};
+pub use crate::value::{Map, NamedContent, Number, StructFields, Value};
 
 /// Deserialize a Value from a string.
 ///

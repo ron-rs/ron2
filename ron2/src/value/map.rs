@@ -9,17 +9,16 @@ use super::Value;
 
 /// A [`Value`] to [`Value`] map.
 ///
-/// This structure either uses a [`BTreeMap`](alloc::collections::BTreeMap) or the
-/// [`IndexMap`](indexmap::IndexMap) internally.
-/// The latter can be used by enabling the `indexmap` feature. This can be used
-/// to preserve the order of the parsed map.
+/// This structure uses [`IndexMap`](indexmap::IndexMap) internally when the `std`
+/// feature is enabled (preserving insertion order), or falls back to
+/// [`BTreeMap`](alloc::collections::BTreeMap) for `no_std` (sorted order).
 #[derive(Clone, Debug, Default)]
 pub struct Map(pub(crate) MapInner);
 
-#[cfg(not(feature = "indexmap"))]
-type MapInner = alloc::collections::BTreeMap<Value, Value>;
-#[cfg(feature = "indexmap")]
+#[cfg(feature = "std")]
 type MapInner = indexmap::IndexMap<Value, Value, std::collections::hash_map::RandomState>;
+#[cfg(not(feature = "std"))]
+type MapInner = alloc::collections::BTreeMap<Value, Value>;
 
 impl Map {
     /// Creates a new, empty [`Map`].
@@ -59,11 +58,11 @@ impl Map {
 
     /// Removes an element by its `key`.
     pub fn remove(&mut self, key: &Value) -> Option<Value> {
-        #[cfg(feature = "indexmap")]
+        #[cfg(feature = "std")]
         {
             self.0.shift_remove(key)
         }
-        #[cfg(not(feature = "indexmap"))]
+        #[cfg(not(feature = "std"))]
         {
             self.0.remove(key)
         }

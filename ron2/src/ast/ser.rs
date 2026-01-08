@@ -37,18 +37,18 @@ use crate::error::Result;
 /// ```
 pub fn serialize_document(doc: &Document<'_>) -> Result<String> {
     let mut output = String::new();
-    let mut ser = AstSerializer::new(&mut output, doc.source);
+    let mut ser = AstSerializer::new(&mut output, &doc.source);
     ser.write_document(doc)?;
     Ok(output)
 }
 
 /// Serialize an AST document to a writer.
 pub fn serialize_document_to<W: Write>(writer: W, doc: &Document<'_>) -> Result<()> {
-    let mut ser = AstSerializer::new(writer, doc.source);
+    let mut ser = AstSerializer::new(writer, &doc.source);
     ser.write_document(doc)
 }
 
-/// AST serializer that writes to a fmt::Write target.
+/// AST serializer that writes to a `fmt::Write` target.
 struct AstSerializer<'a, W: Write> {
     writer: W,
     source: &'a str,
@@ -89,7 +89,7 @@ impl<'a, W: Write> AstSerializer<'a, W> {
             self.writer.write_str(text)?;
         } else {
             // No span - write whitespace and comments individually
-            self.writer.write_str(trivia.whitespace)?;
+            self.writer.write_str(&trivia.whitespace)?;
             for comment in &trivia.comments {
                 self.write_comment(comment)?;
             }
@@ -99,7 +99,7 @@ impl<'a, W: Write> AstSerializer<'a, W> {
 
     fn write_comment(&mut self, comment: &Comment<'_>) -> Result<()> {
         // Use the raw text which includes delimiters
-        self.writer.write_str(comment.text)?;
+        self.writer.write_str(&comment.text)?;
         Ok(())
     }
 
@@ -126,21 +126,21 @@ impl<'a, W: Write> AstSerializer<'a, W> {
             }
             Expr::Char(c) => {
                 // Use raw text to preserve original format
-                self.writer.write_str(c.raw)?;
+                self.writer.write_str(&c.raw)?;
             }
             Expr::Byte(b) => {
-                self.writer.write_str(b.raw)?;
+                self.writer.write_str(&b.raw)?;
             }
             Expr::Number(n) => {
                 // Use raw text to preserve hex, binary, underscores
-                self.writer.write_str(n.raw)?;
+                self.writer.write_str(&n.raw)?;
             }
             Expr::String(s) => {
                 // Use raw text to preserve raw strings, escapes
-                self.writer.write_str(s.raw)?;
+                self.writer.write_str(&s.raw)?;
             }
             Expr::Bytes(b) => {
-                self.writer.write_str(b.raw)?;
+                self.writer.write_str(&b.raw)?;
             }
             Expr::Option(opt) => self.write_option(opt)?,
             Expr::Seq(seq) => self.write_seq(seq)?,
@@ -152,33 +152,30 @@ impl<'a, W: Write> AstSerializer<'a, W> {
     }
 
     fn write_option(&mut self, opt: &OptionExpr<'_>) -> Result<()> {
-        match &opt.value {
-            Some(inner) => {
-                // Write "Some"
-                self.writer.write_str("Some")?;
+        if let Some(inner) = &opt.value {
+            // Write "Some"
+            self.writer.write_str("Some")?;
 
-                // Write opening paren using span
-                let open_text = inner.open_paren.slice(self.source);
-                self.writer.write_str(open_text)?;
+            // Write opening paren using span
+            let open_text = inner.open_paren.slice(self.source);
+            self.writer.write_str(open_text)?;
 
-                // Write leading trivia
-                self.write_trivia(&inner.leading)?;
+            // Write leading trivia
+            self.write_trivia(&inner.leading)?;
 
-                // Write the inner expression
-                self.write_expr(&inner.expr)?;
+            // Write the inner expression
+            self.write_expr(&inner.expr)?;
 
-                // Write trailing trivia
-                self.write_trivia(&inner.trailing)?;
+            // Write trailing trivia
+            self.write_trivia(&inner.trailing)?;
 
-                // Write closing paren using span
-                let close_text = inner.close_paren.slice(self.source);
-                self.writer.write_str(close_text)?;
-            }
-            None => {
-                // Write "None" - use span for exact text
-                let text = opt.span.slice(self.source);
-                self.writer.write_str(text)?;
-            }
+            // Write closing paren using span
+            let close_text = inner.close_paren.slice(self.source);
+            self.writer.write_str(close_text)?;
+        } else {
+            // Write "None" - use span for exact text
+            let text = opt.span.slice(self.source);
+            self.writer.write_str(text)?;
         }
         Ok(())
     }

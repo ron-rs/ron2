@@ -9,18 +9,63 @@ mod number;
 pub use map::Map;
 pub use number::{Number, F32, F64};
 
+/// Ordered list of struct fields (name-value pairs).
+///
+/// Uses a `Vec` to preserve insertion order and support all trait derivations.
+/// Field lookup is O(n) but structs typically have few fields.
+pub type StructFields = Vec<(String, Value)>;
+
 /// A RON value that can represent any valid RON data.
+///
+/// This enum distinguishes between all RON syntactic forms:
+/// - `Seq`: sequences `[a, b, c]`
+/// - `Tuple`: tuples `(a, b, c)`
+/// - `Map`: maps with arbitrary keys `{ key: value }`
+/// - `Struct`: anonymous structs with named fields `(x: 1, y: 2)`
+/// - `Named`: named types (structs/enums) like `Point(x: 1)` or `Option::Some(1)`
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Value {
+    // Primitives
     Bool(bool),
     Char(char),
-    Map(Map),
     Number(Number),
-    Option(Option<Box<Value>>),
     String(String),
     Bytes(Vec<u8>),
-    Seq(Vec<Value>),
     Unit,
+    /// `None` or `Some(value)` - special-cased for convenience
+    Option(Option<Box<Value>>),
+
+    // Collections (anonymous)
+    /// Sequence: `[a, b, c]`
+    Seq(Vec<Value>),
+    /// Tuple: `(a, b, c)` - positional elements
+    Tuple(Vec<Value>),
+    /// Map: `{ key: value }` - arbitrary Value keys
+    Map(Map),
+    /// Anonymous struct: `(x: 1, y: 2)` - named fields, no type name
+    Struct(StructFields),
+
+    // Named types (struct or enum)
+    /// Named type: `Point`, `Point(1, 2)`, `Point(x: 1)`, or `Type::Variant(...)`
+    ///
+    /// The `name` field stores the full path as-is (e.g., `"Type::Variant"`).
+    Named {
+        /// The type/variant name, e.g., `"Point"` or `"Option::Some"`
+        name: String,
+        /// The content of the named type
+        content: NamedContent,
+    },
+}
+
+/// Content of a named type (struct or enum variant).
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum NamedContent {
+    /// Unit: `Point` or `MyEnum::Variant`
+    Unit,
+    /// Tuple: `Point(1, 2)` or `Some(x)`
+    Tuple(Vec<Value>),
+    /// Struct: `Point(x: 1, y: 2)`
+    Struct(StructFields),
 }
 
 impl From<bool> for Value {

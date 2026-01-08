@@ -1,11 +1,12 @@
 //! Conversion from AST to Value.
 //!
-//! This module provides lossy conversion from the AST representation to the
-//! simpler `Value` type. The conversion discards:
+//! This module provides conversion from the AST representation to the
+//! `Value` type. The conversion discards:
 //! - Span information
 //! - Trivia (whitespace and comments)
 //! - Raw text representations (e.g., hex literals become numbers)
-//! - Struct names (become anonymous maps/tuples)
+//!
+//! Unlike older implementations, struct/enum names are preserved in `Value::Named`.
 
 use alloc::{boxed::Box, string::String, vec::Vec};
 
@@ -14,11 +15,10 @@ use crate::ast::{
     StringExpr, StructBody, StructExpr, TupleBody, TupleExpr,
 };
 use crate::error::{Error, Result};
-use crate::value::{Number, Value, F32, F64};
+use crate::value::{NamedContent, Number, StructFields, Value, F32, F64};
 
 /// Convert an AST document to a Value.
 ///
-/// This is a lossy conversion that discards spans, trivia, and struct names.
 /// Returns `None` if the document has no value (empty document or comments only).
 ///
 /// # Example
@@ -39,10 +39,10 @@ pub fn expr_to_value(expr: &Expr<'_>) -> Result<Value> {
         Expr::Unit(_) => Ok(Value::Unit),
         Expr::Bool(b) => Ok(Value::Bool(b.value)),
         Expr::Char(c) => Ok(Value::Char(c.value)),
-        Expr::Byte(b) => byte_to_value(b),
+        Expr::Byte(b) => Ok(byte_to_value(b)),
         Expr::Number(n) => number_to_value(n),
-        Expr::String(s) => string_to_value(s),
-        Expr::Bytes(b) => bytes_to_value(b),
+        Expr::String(s) => Ok(string_to_value(s)),
+        Expr::Bytes(b) => Ok(bytes_to_value(b)),
         Expr::Option(opt) => option_to_value(opt),
         Expr::Seq(seq) => seq_to_value(seq),
         Expr::Map(map) => map_to_value(map),
@@ -51,9 +51,9 @@ pub fn expr_to_value(expr: &Expr<'_>) -> Result<Value> {
     }
 }
 
-fn byte_to_value(b: &crate::ast::ByteExpr<'_>) -> Result<Value> {
+fn byte_to_value(b: &crate::ast::ByteExpr<'_>) -> Value {
     // A byte literal b'x' becomes a Number(U8)
-    Ok(Value::Number(Number::U8(b.value)))
+    Value::Number(Number::U8(b.value))
 }
 
 fn number_to_value(n: &NumberExpr<'_>) -> Result<Value> {
@@ -100,25 +100,28 @@ fn parse_integer(raw: &str) -> Result<Value> {
 /// Fit a signed value into the smallest Number variant
 fn fit_signed(val: i128) -> Value {
     #[cfg(feature = "integer128")]
-    if val >= i128::from(i64::MIN) && val <= i128::from(i64::MAX) {
-        return fit_signed_64(val as i64);
+    if let Ok(v) = i64::try_from(val) {
+        return fit_signed_64(v);
     } else {
         return Value::Number(Number::I128(val));
     }
 
     #[cfg(not(feature = "integer128"))]
     {
+        // In non-integer128 mode, we truncate to i64 range
+        // This is intentional - values outside i64 range will overflow
+        #[allow(clippy::cast_possible_truncation)]
         fit_signed_64(val as i64)
     }
 }
 
 fn fit_signed_64(val: i64) -> Value {
-    if val >= i64::from(i8::MIN) && val <= i64::from(i8::MAX) {
-        Value::Number(Number::I8(val as i8))
-    } else if val >= i64::from(i16::MIN) && val <= i64::from(i16::MAX) {
-        Value::Number(Number::I16(val as i16))
-    } else if val >= i64::from(i32::MIN) && val <= i64::from(i32::MAX) {
-        Value::Number(Number::I32(val as i32))
+    if let Ok(v) = i8::try_from(val) {
+        Value::Number(Number::I8(v))
+    } else if let Ok(v) = i16::try_from(val) {
+        Value::Number(Number::I16(v))
+    } else if let Ok(v) = i32::try_from(val) {
+        Value::Number(Number::I32(v))
     } else {
         Value::Number(Number::I64(val))
     }
@@ -127,25 +130,28 @@ fn fit_signed_64(val: i64) -> Value {
 /// Fit an unsigned value into the smallest Number variant
 fn fit_unsigned(val: u128) -> Value {
     #[cfg(feature = "integer128")]
-    if val <= u128::from(u64::MAX) {
-        return fit_unsigned_64(val as u64);
+    if let Ok(v) = u64::try_from(val) {
+        return fit_unsigned_64(v);
     } else {
         return Value::Number(Number::U128(val));
     }
 
     #[cfg(not(feature = "integer128"))]
     {
+        // In non-integer128 mode, we truncate to u64 range
+        // This is intentional - values outside u64 range will overflow
+        #[allow(clippy::cast_possible_truncation)]
         fit_unsigned_64(val as u64)
     }
 }
 
 fn fit_unsigned_64(val: u64) -> Value {
-    if val <= u64::from(u8::MAX) {
-        Value::Number(Number::U8(val as u8))
-    } else if val <= u64::from(u16::MAX) {
-        Value::Number(Number::U16(val as u16))
-    } else if val <= u64::from(u32::MAX) {
-        Value::Number(Number::U32(val as u32))
+    if let Ok(v) = u8::try_from(val) {
+        Value::Number(Number::U8(v))
+    } else if let Ok(v) = u16::try_from(val) {
+        Value::Number(Number::U16(v))
+    } else if let Ok(v) = u32::try_from(val) {
+        Value::Number(Number::U32(v))
     } else {
         Value::Number(Number::U64(val))
     }
@@ -159,6 +165,8 @@ fn parse_float(raw: &str) -> Result<Value> {
     let val: f64 = cleaned.parse().map_err(|_| Error::ExpectedFloat)?;
 
     // Check if it fits in f32 without loss
+    // The cast is intentional - we're checking if f32 can represent this value
+    #[allow(clippy::cast_possible_truncation)]
     let as_f32 = val as f32;
     if (f64::from(as_f32) - val).abs() < f64::EPSILON {
         Ok(Value::Number(Number::F32(F32(as_f32))))
@@ -176,12 +184,12 @@ fn parse_special_float(raw: &str) -> Result<Value> {
     }
 }
 
-fn string_to_value(s: &StringExpr<'_>) -> Result<Value> {
-    Ok(Value::String(s.value.clone()))
+fn string_to_value(s: &StringExpr<'_>) -> Value {
+    Value::String(s.value.clone())
 }
 
-fn bytes_to_value(b: &BytesExpr<'_>) -> Result<Value> {
-    Ok(Value::Bytes(b.value.clone()))
+fn bytes_to_value(b: &BytesExpr<'_>) -> Value {
+    Value::Bytes(b.value.clone())
 }
 
 fn option_to_value(opt: &OptionExpr<'_>) -> Result<Value> {
@@ -213,53 +221,65 @@ fn map_to_value(map: &MapExpr<'_>) -> Result<Value> {
     Ok(Value::Map(entries?.into_iter().collect()))
 }
 
+/// Convert anonymous tuple `(a, b, c)` to `Value::Tuple`.
 fn tuple_to_value(tuple: &TupleExpr<'_>) -> Result<Value> {
-    // A tuple becomes a sequence
     let elements: Result<Vec<Value>> = tuple
         .elements
         .iter()
         .map(|elem| expr_to_value(&elem.expr))
         .collect();
-    Ok(Value::Seq(elements?))
+    Ok(Value::Tuple(elements?))
 }
 
+/// Convert named struct/enum to `Value::Named`.
+///
+/// Handles:
+/// - Unit: `Point` → Named { name: "Point", content: Unit }
+/// - Tuple: `Point(1, 2)` → Named { name: "Point", content: Tuple([1, 2]) }
+/// - Struct: `Point(x: 1)` → Named { name: "Point", content: Struct({x: 1}) }
 fn struct_to_value(s: &StructExpr<'_>) -> Result<Value> {
-    match &s.body {
-        Some(StructBody::Tuple(tuple)) => tuple_body_to_value(tuple),
-        Some(StructBody::Fields(fields)) => fields_body_to_value(fields),
-        None => {
-            // Unit struct - becomes Unit or a map with name
-            Ok(Value::Unit)
+    let name = s.name.name.to_string();
+
+    let content = match &s.body {
+        None => NamedContent::Unit,
+        Some(StructBody::Tuple(tuple)) => {
+            let elements = tuple_body_to_vec(tuple)?;
+            NamedContent::Tuple(elements)
         }
-    }
+        Some(StructBody::Fields(fields)) => {
+            let struct_fields = fields_body_to_struct_fields(fields)?;
+            NamedContent::Struct(struct_fields)
+        }
+    };
+
+    Ok(Value::Named { name, content })
 }
 
-fn tuple_body_to_value(tuple: &TupleBody<'_>) -> Result<Value> {
-    let elements: Result<Vec<Value>> = tuple
+/// Convert tuple body to Vec<Value>.
+fn tuple_body_to_vec(tuple: &TupleBody<'_>) -> Result<Vec<Value>> {
+    tuple
         .elements
         .iter()
         .map(|elem| expr_to_value(&elem.expr))
-        .collect();
-    Ok(Value::Seq(elements?))
+        .collect()
 }
 
-fn fields_body_to_value(fields: &FieldsBody<'_>) -> Result<Value> {
-    let entries: Result<Vec<(Value, Value)>> = fields
-        .fields
-        .iter()
-        .map(|field| {
-            let key = Value::String(String::from(field.name.name));
-            let value = expr_to_value(&field.value)?;
-            Ok((key, value))
-        })
-        .collect();
-
-    Ok(Value::Map(entries?.into_iter().collect()))
+/// Convert fields body to `StructFields` (`Vec<(String, Value)>`).
+fn fields_body_to_struct_fields(fields: &FieldsBody<'_>) -> Result<StructFields> {
+    let mut result = StructFields::new();
+    for field in &fields.fields {
+        let key = field.name.name.to_string();
+        let value = expr_to_value(&field.value)?;
+        result.push((key, value));
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
 #[allow(clippy::panic)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
     use crate::ast::parse_document;
 
@@ -289,7 +309,7 @@ mod tests {
         let doc = parse_document("3.14").unwrap();
         let value = to_value(&doc).unwrap().unwrap();
         match value {
-            Value::Number(Number::F32(_)) | Value::Number(Number::F64(_)) => {}
+            Value::Number(Number::F32(_) | Number::F64(_)) => {}
             _ => panic!("expected float"),
         }
     }
@@ -340,26 +360,78 @@ mod tests {
     }
 
     #[test]
+    fn convert_tuple() {
+        let doc = parse_document("(1, 2, 3)").unwrap();
+        let value = to_value(&doc).unwrap().unwrap();
+        assert_eq!(
+            value,
+            Value::Tuple(vec![
+                Value::Number(Number::U8(1)),
+                Value::Number(Number::U8(2)),
+                Value::Number(Number::U8(3)),
+            ])
+        );
+    }
+
+    #[test]
     fn convert_map() {
         let doc = parse_document(r#"{"a": 1}"#).unwrap();
         let value = to_value(&doc).unwrap().unwrap();
         match value {
             Value::Map(map) => {
                 assert_eq!(map.len(), 1);
+                assert_eq!(
+                    map.get(&Value::String(String::from("a"))),
+                    Some(&Value::Number(Number::U8(1)))
+                );
             }
             _ => panic!("expected map"),
         }
     }
 
     #[test]
-    fn convert_struct_with_fields() {
+    fn convert_named_unit() {
+        let doc = parse_document("Point").unwrap();
+        let value = to_value(&doc).unwrap().unwrap();
+        assert_eq!(
+            value,
+            Value::Named {
+                name: String::from("Point"),
+                content: NamedContent::Unit,
+            }
+        );
+    }
+
+    #[test]
+    fn convert_named_tuple() {
+        let doc = parse_document("Point(1, 2)").unwrap();
+        let value = to_value(&doc).unwrap().unwrap();
+        assert_eq!(
+            value,
+            Value::Named {
+                name: String::from("Point"),
+                content: NamedContent::Tuple(vec![
+                    Value::Number(Number::U8(1)),
+                    Value::Number(Number::U8(2)),
+                ]),
+            }
+        );
+    }
+
+    #[test]
+    fn convert_named_struct() {
+        // RON uses braces for named fields: Point { x: 1 }
         let doc = parse_document("Point { x: 1, y: 2 }").unwrap();
         let value = to_value(&doc).unwrap().unwrap();
         match value {
-            Value::Map(map) => {
-                assert_eq!(map.len(), 2);
+            Value::Named { name, content: NamedContent::Struct(fields) } => {
+                assert_eq!(name, "Point");
+                assert_eq!(fields.len(), 2);
+                // StructFields is Vec<(String, Value)>
+                assert_eq!(fields[0], (String::from("x"), Value::Number(Number::U8(1))));
+                assert_eq!(fields[1], (String::from("y"), Value::Number(Number::U8(2))));
             }
-            _ => panic!("expected map"),
+            _ => panic!("expected named struct, got {value:?}"),
         }
     }
 

@@ -5,7 +5,7 @@ use core::fmt::{self, Write};
 
 use crate::{
     error::{Error, Result},
-    value::{Map, Number, Value},
+    value::{Map, NamedContent, Number, StructFields, Value},
     Options,
 };
 
@@ -172,21 +172,8 @@ impl<W: Write> Serializer<W> {
                 self.write_escaped_char(*c)?;
                 self.writer.write_char('\'')?;
             }
-            Value::Map(map) => {
-                self.serialize_map(map)?;
-            }
             Value::Number(num) => {
                 self.serialize_number(num)?;
-            }
-            Value::Option(opt) => {
-                match opt {
-                    None => self.writer.write_str("None")?,
-                    Some(v) => {
-                        self.writer.write_str("Some(")?;
-                        self.serialize(v)?;
-                        self.writer.write_char(')')?;
-                    }
-                }
             }
             Value::String(s) => {
                 self.writer.write_char('"')?;
@@ -200,11 +187,33 @@ impl<W: Write> Serializer<W> {
                 }
                 self.writer.write_char('"')?;
             }
+            Value::Unit => {
+                self.writer.write_str("()")?;
+            }
+            Value::Option(opt) => {
+                match opt {
+                    None => self.writer.write_str("None")?,
+                    Some(v) => {
+                        self.writer.write_str("Some(")?;
+                        self.serialize(v)?;
+                        self.writer.write_char(')')?;
+                    }
+                }
+            }
             Value::Seq(seq) => {
                 self.serialize_seq(seq)?;
             }
-            Value::Unit => {
-                self.writer.write_str("()")?;
+            Value::Tuple(elements) => {
+                self.serialize_tuple(elements)?;
+            }
+            Value::Map(map) => {
+                self.serialize_map(map)?;
+            }
+            Value::Struct(fields) => {
+                self.serialize_struct_fields(None, fields)?;
+            }
+            Value::Named { name, content } => {
+                self.serialize_named(name, content)?;
             }
         }
         Ok(())
@@ -378,118 +387,180 @@ impl<W: Write> Serializer<W> {
         Ok(())
     }
 
-    fn serialize_map(&mut self, map: &Map) -> Result<()> {
-        // Check if this is a struct (keys are strings) or a map
-        let is_struct = map.keys().all(|k| matches!(k, Value::String(_)));
+    /// Serialize a tuple: `(a, b, c)`
+    fn serialize_tuple(&mut self, elements: &[Value]) -> Result<()> {
+        self.writer.write_char('(')?;
 
-        // Check for __type field (named struct)
-        let type_name = if is_struct {
-            map.get(&Value::String(String::from("__type")))
-                .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
-        } else {
-            None
-        };
-
-        if is_struct {
-            // Serialize as struct
-            if let Some(name) = type_name
-                && self.pretty.as_ref().is_none_or(|p| p.struct_names)
-            {
-                self.writer.write_str(name)?;
-            }
-
-            self.writer.write_char('(')?;
-
-            let entries: alloc::vec::Vec<_> = map.iter()
-                .filter(|(k, _)| {
-                    // Skip __type field
-                    !matches!(k, Value::String(s) if s == "__type")
-                })
-                .collect();
-
-            if entries.is_empty() {
-                self.writer.write_char(')')?;
-                return Ok(());
-            }
-
-            if self.pretty.is_some() {
-                self.write_newline()?;
-                self.current_indent += 1;
-            }
-
-            for (i, (key, value)) in entries.iter().enumerate() {
-                if self.pretty.is_some() {
-                    self.write_indent()?;
-                }
-
-                // Key should be a string for struct fields
-                if let Value::String(field_name) = key {
-                    self.writer.write_str(field_name)?;
-                } else {
-                    // Fallback
-                    self.serialize(key)?;
-                }
-
-                self.writer.write_str(": ")?;
-                self.serialize(value)?;
-
-                if i < entries.len() - 1 {
-                    self.writer.write_char(',')?;
-                }
-
-                if self.pretty.is_some() {
-                    self.write_newline()?;
-                }
-            }
-
-            if self.pretty.is_some() {
-                self.current_indent -= 1;
-                self.write_indent()?;
-            }
-
+        if elements.is_empty() {
             self.writer.write_char(')')?;
-        } else {
-            // Serialize as map
-            self.writer.write_char('{')?;
-
-            if map.is_empty() {
-                self.writer.write_char('}')?;
-                return Ok(());
-            }
-
-            if self.pretty.is_some() {
-                self.write_newline()?;
-                self.current_indent += 1;
-            }
-
-            let entries: alloc::vec::Vec<_> = map.iter().collect();
-
-            for (i, (key, value)) in entries.iter().enumerate() {
-                if self.pretty.is_some() {
-                    self.write_indent()?;
-                }
-
-                self.serialize(key)?;
-                self.writer.write_str(": ")?;
-                self.serialize(value)?;
-
-                if i < entries.len() - 1 {
-                    self.writer.write_char(',')?;
-                }
-
-                if self.pretty.is_some() {
-                    self.write_newline()?;
-                }
-            }
-
-            if self.pretty.is_some() {
-                self.current_indent -= 1;
-                self.write_indent()?;
-            }
-
-            self.writer.write_char('}')?;
+            return Ok(());
         }
 
+        if self.pretty.is_some() {
+            self.write_newline()?;
+            self.current_indent += 1;
+        }
+
+        for (i, item) in elements.iter().enumerate() {
+            if self.pretty.is_some() {
+                self.write_indent()?;
+            }
+
+            self.serialize(item)?;
+
+            if i < elements.len() - 1 {
+                self.writer.write_char(',')?;
+            }
+
+            if self.pretty.is_some() {
+                self.write_newline()?;
+            }
+        }
+
+        if self.pretty.is_some() {
+            self.current_indent -= 1;
+            self.write_indent()?;
+        }
+
+        self.writer.write_char(')')?;
+        Ok(())
+    }
+
+    /// Serialize a map: `{ key: value, ... }`
+    fn serialize_map(&mut self, map: &Map) -> Result<()> {
+        self.writer.write_char('{')?;
+
+        if map.is_empty() {
+            self.writer.write_char('}')?;
+            return Ok(());
+        }
+
+        if self.pretty.is_some() {
+            self.write_newline()?;
+            self.current_indent += 1;
+        }
+
+        let entries: alloc::vec::Vec<_> = map.iter().collect();
+
+        for (i, (key, value)) in entries.iter().enumerate() {
+            if self.pretty.is_some() {
+                self.write_indent()?;
+            }
+
+            self.serialize(key)?;
+            self.writer.write_str(": ")?;
+            self.serialize(value)?;
+
+            if i < entries.len() - 1 {
+                self.writer.write_char(',')?;
+            }
+
+            if self.pretty.is_some() {
+                self.write_newline()?;
+            }
+        }
+
+        if self.pretty.is_some() {
+            self.current_indent -= 1;
+            self.write_indent()?;
+        }
+
+        self.writer.write_char('}')?;
+        Ok(())
+    }
+
+    /// Serialize struct fields: `(x: 1, y: 2)` with optional name prefix
+    fn serialize_struct_fields(&mut self, name: Option<&str>, fields: &StructFields) -> Result<()> {
+        if let Some(name) = name {
+            self.writer.write_str(name)?;
+        }
+
+        self.writer.write_char('(')?;
+
+        if fields.is_empty() {
+            self.writer.write_char(')')?;
+            return Ok(());
+        }
+
+        if self.pretty.is_some() {
+            self.write_newline()?;
+            self.current_indent += 1;
+        }
+
+        for (i, (field_name, value)) in fields.iter().enumerate() {
+            if self.pretty.is_some() {
+                self.write_indent()?;
+            }
+
+            self.writer.write_str(field_name)?;
+            self.writer.write_str(": ")?;
+            self.serialize(value)?;
+
+            if i < fields.len() - 1 {
+                self.writer.write_char(',')?;
+            }
+
+            if self.pretty.is_some() {
+                self.write_newline()?;
+            }
+        }
+
+        if self.pretty.is_some() {
+            self.current_indent -= 1;
+            self.write_indent()?;
+        }
+
+        self.writer.write_char(')')?;
+        Ok(())
+    }
+
+    /// Serialize a named type: `Point`, `Point(1, 2)`, or `Point(x: 1, y: 2)`
+    fn serialize_named(&mut self, name: &str, content: &NamedContent) -> Result<()> {
+        match content {
+            NamedContent::Unit => {
+                self.writer.write_str(name)?;
+            }
+            NamedContent::Tuple(elements) => {
+                self.writer.write_str(name)?;
+                self.writer.write_char('(')?;
+
+                if elements.is_empty() {
+                    self.writer.write_char(')')?;
+                    return Ok(());
+                }
+
+                if self.pretty.is_some() {
+                    self.write_newline()?;
+                    self.current_indent += 1;
+                }
+
+                for (i, item) in elements.iter().enumerate() {
+                    if self.pretty.is_some() {
+                        self.write_indent()?;
+                    }
+
+                    self.serialize(item)?;
+
+                    if i < elements.len() - 1 {
+                        self.writer.write_char(',')?;
+                    }
+
+                    if self.pretty.is_some() {
+                        self.write_newline()?;
+                    }
+                }
+
+                if self.pretty.is_some() {
+                    self.current_indent -= 1;
+                    self.write_indent()?;
+                }
+
+                self.writer.write_char(')')?;
+            }
+            NamedContent::Struct(fields) => {
+                self.serialize_struct_fields(Some(name), fields)?;
+            }
+        }
         Ok(())
     }
 
@@ -619,9 +690,9 @@ mod tests {
         map.insert(Value::String(String::from("y")), Value::Number(Number::U8(2)));
 
         let result = to_string(&Value::Map(map)).unwrap();
-        // Struct format (keys are strings)
-        assert!(result.contains("x: 1"));
-        assert!(result.contains("y: 2"));
+        // Maps use brace syntax with Value keys serialized
+        assert!(result.contains("\"x\": 1"));
+        assert!(result.contains("\"y\": 2"));
     }
 
     #[test]

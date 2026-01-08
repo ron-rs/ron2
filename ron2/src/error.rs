@@ -4,7 +4,7 @@ use core::{
     str::Utf8Error,
 };
 
-use crate::parse::{is_ident_first_char, is_ident_raw_char};
+use crate::chars::{is_ident_first_char, is_ident_raw_char};
 use unicode_ident::is_xid_continue;
 
 #[cfg(feature = "std")]

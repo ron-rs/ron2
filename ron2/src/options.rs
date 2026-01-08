@@ -4,19 +4,15 @@ use alloc::string::String;
 use core::fmt;
 
 use crate::{
-    de::Deserializer,
-    error::{Result, SpannedResult},
+    ast::{parse_document, to_value},
+    error::{Error, Position, Result, Span, SpannedError, SpannedResult},
     extensions::Extensions,
     ser::{PrettyConfig, Serializer},
     value::Value,
 };
 
 #[cfg(feature = "std")]
-use {
-    crate::error::{Position, Span, SpannedError},
-    alloc::vec::Vec,
-    std::io,
-};
+use {alloc::vec::Vec, std::io};
 
 /// Roundtrip options for serialization and deserialization.
 #[derive(Clone, Debug)]
@@ -109,26 +105,43 @@ impl Options {
         })
     }
 
-    /// A convenience function for building a deserializer
-    /// and deserializing a Value from a string.
+    /// Parse a RON string into a Value using the AST parser.
     pub fn from_str(&self, s: &str) -> SpannedResult<Value> {
-        let mut deserializer = Deserializer::from_str_with_options(s, self)?;
-        let value = deserializer
-            .parse_value()
-            .map_err(|e| deserializer.span_error(e))?;
-        deserializer.end().map_err(|e| deserializer.span_error(e))?;
-        Ok(value)
+        let doc = parse_document(s)?;
+
+        match to_value(&doc) {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(e)) => {
+                // Conversion error - create a spanned error at document start
+                Err(SpannedError {
+                    code: e,
+                    span: Span {
+                        start: Position { line: 1, col: 1 },
+                        end: Position::from_src_end(s),
+                        start_offset: 0,
+                        end_offset: s.len(),
+                    },
+                })
+            }
+            None => {
+                // Empty document - return Unit
+                Ok(Value::Unit)
+            }
+        }
     }
 
-    /// A convenience function for building a deserializer
-    /// and deserializing a Value from bytes.
+    /// Parse RON bytes into a Value using the AST parser.
     pub fn from_bytes(&self, s: &[u8]) -> SpannedResult<Value> {
-        let mut deserializer = Deserializer::from_bytes_with_options(s, self)?;
-        let value = deserializer
-            .parse_value()
-            .map_err(|e| deserializer.span_error(e))?;
-        deserializer.end().map_err(|e| deserializer.span_error(e))?;
-        Ok(value)
+        let s = core::str::from_utf8(s).map_err(|e| SpannedError {
+            code: Error::Utf8Error(e),
+            span: Span {
+                start: Position { line: 1, col: 1 },
+                end: Position { line: 1, col: 1 },
+                start_offset: 0,
+                end_offset: 0,
+            },
+        })?;
+        self.from_str(s)
     }
 
     /// Serializes a Value into `writer`.

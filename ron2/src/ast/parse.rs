@@ -3,7 +3,7 @@
 //! This module provides parsing of RON source into a full AST that preserves
 //! all trivia (whitespace and comments) for round-trip editing.
 
-use alloc::{boxed::Box, string::String, vec, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, string::String, vec, vec::Vec};
 use core::iter::Peekable;
 
 use crate::ast::{
@@ -116,14 +116,14 @@ impl<'a> AstParser<'a> {
                 TokenKind::LineComment => {
                     comments.push(Comment {
                         span: tok.span,
-                        text: tok.text,
+                        text: Cow::Borrowed(tok.text),
                         kind: CommentKind::Line,
                     });
                 }
                 TokenKind::BlockComment => {
                     comments.push(Comment {
                         span: tok.span,
-                        text: tok.text,
+                        text: Cow::Borrowed(tok.text),
                         kind: CommentKind::Block,
                     });
                 }
@@ -134,9 +134,9 @@ impl<'a> AstParser<'a> {
         // For whitespace, we concatenate the ranges into a single slice if contiguous
         // For simplicity, just use the first whitespace token's text or empty
         let whitespace = if let Some((start, end)) = whitespace_ranges.first() {
-            &self.source[*start..*end]
+            Cow::Borrowed(&self.source[*start..*end])
         } else {
-            ""
+            Cow::Borrowed("")
         };
 
         Trivia {
@@ -190,7 +190,7 @@ impl<'a> AstParser<'a> {
         }
 
         Ok(Document {
-            source: self.source,
+            source: Cow::Borrowed(self.source),
             leading,
             attributes,
             pre_value,
@@ -252,7 +252,7 @@ impl<'a> AstParser<'a> {
                     return Err(Self::error(name_tok.span, Error::ExpectedString));
                 }
                 let value_tok = self.next_token();
-                AttributeContent::Value(value_tok.text)
+                AttributeContent::Value(Cow::Borrowed(value_tok.text))
             }
             TokenKind::LParen => {
                 let _lparen = self.next_token();
@@ -264,7 +264,7 @@ impl<'a> AstParser<'a> {
                         TokenKind::RParen => break,
                         TokenKind::Ident => {
                             let arg_tok = self.next_token();
-                            args.push(arg_tok.text);
+                            args.push(Cow::Borrowed(arg_tok.text));
 
                             // Check for comma
                             if self.peek_kind() == TokenKind::Comma {
@@ -305,7 +305,7 @@ impl<'a> AstParser<'a> {
         Ok(Attribute {
             span,
             leading,
-            name,
+            name: Cow::Borrowed(name),
             content,
         })
     }
@@ -317,8 +317,8 @@ impl<'a> AstParser<'a> {
             TokenKind::LBracket => self.parse_seq(),
             TokenKind::LBrace => self.parse_map(),
             TokenKind::Ident => self.parse_ident_expr(),
-            TokenKind::Integer => self.parse_integer(),
-            TokenKind::Float => self.parse_float(),
+            TokenKind::Integer => Ok(self.parse_integer()),
+            TokenKind::Float => Ok(self.parse_float()),
             TokenKind::String => self.parse_string(),
             TokenKind::ByteString => self.parse_bytes(),
             TokenKind::Char => self.parse_char(),
@@ -489,7 +489,7 @@ impl<'a> AstParser<'a> {
                 leading,
                 name: Ident {
                     span: name_tok.span.clone(),
-                    name: name_tok.text,
+                    name: Cow::Borrowed(name_tok.text),
                 },
                 pre_colon,
                 colon: colon_tok.span,
@@ -696,10 +696,10 @@ impl<'a> AstParser<'a> {
             "Some" => self.parse_some(ident_tok),
             "inf" | "NaN" => Ok(Expr::Number(NumberExpr {
                 span: ident_tok.span,
-                raw: ident_tok.text,
+                raw: Cow::Borrowed(ident_tok.text),
                 kind: NumberKind::SpecialFloat,
             })),
-            _ => self.parse_struct_or_variant(ident_tok),
+            _ => self.parse_struct_or_variant(&ident_tok),
         }
     }
 
@@ -737,13 +737,18 @@ impl<'a> AstParser<'a> {
     }
 
     /// Parse a struct or enum variant: `Name(...)` or `Name { ... }` or `Name`.
-    fn parse_struct_or_variant(&mut self, name_tok: Token<'a>) -> SpannedResult<Expr<'a>> {
+    ///
+    /// In RON, named struct fields use paren syntax: `Point(x: 1, y: 2)`.
+    /// Tuple structs also use parens: `Point(1, 2)`.
+    /// The parser looks ahead to detect if the first element is `ident: value` (struct)
+    /// or just a value (tuple).
+    fn parse_struct_or_variant(&mut self, name_tok: &Token<'a>) -> SpannedResult<Expr<'a>> {
         let name = Ident {
             span: name_tok.span.clone(),
-            name: name_tok.text,
+            name: Cow::Borrowed(name_tok.text),
         };
 
-        // Collect trivia between name and body (e.g., "Point { ... }" has space before `{`)
+        // Collect trivia between name and body (e.g., "Point ( ... )" has space)
         let pre_body = self.collect_leading_trivia();
 
         let body = match self.peek_kind() {
@@ -751,7 +756,7 @@ impl<'a> AstParser<'a> {
                 let open_paren = self.next_token();
                 let leading = self.collect_leading_trivia();
 
-                // Check for empty tuple
+                // Check for empty tuple/struct
                 if self.peek_kind() == TokenKind::RParen {
                     let close_paren = self.next_token();
                     Some(StructBody::Tuple(TupleBody {
@@ -762,25 +767,13 @@ impl<'a> AstParser<'a> {
                         close_paren: close_paren.span,
                     }))
                 } else {
-                    // Check for named fields
-                    let elements = self.parse_tuple_elements(leading)?;
-                    let trailing = self.collect_leading_trivia();
-
-                    if self.peek_kind() != TokenKind::RParen {
-                        return Err(Self::error(open_paren.span, Error::ExpectedStructLikeEnd));
-                    }
-                    let close_paren = self.next_token();
-
-                    Some(StructBody::Tuple(TupleBody {
-                        open_paren: open_paren.span,
-                        leading: Trivia::empty(),
-                        elements,
-                        trailing,
-                        close_paren: close_paren.span,
-                    }))
+                    // Determine if this is named fields or tuple elements
+                    // by looking at the first token and what follows
+                    self.parse_struct_body_contents(open_paren, leading)?
                 }
             }
             TokenKind::LBrace => {
+                // Brace syntax: Name { field: value } - also valid in some RON variants
                 let open_brace = self.next_token();
                 let leading = self.collect_leading_trivia();
 
@@ -857,6 +850,325 @@ impl<'a> AstParser<'a> {
         Ok(elements)
     }
 
+    /// Parse the body contents of a named struct: either named fields or tuple elements.
+    /// Determines the type by looking at the first token: if it's `ident:`, it's named fields.
+    fn parse_struct_body_contents(
+        &mut self,
+        open_paren: Token<'a>,
+        leading: Trivia<'a>,
+    ) -> SpannedResult<Option<StructBody<'a>>> {
+        // Check if first token is an identifier
+        if self.peek_kind() == TokenKind::Ident {
+            // Consume the identifier
+            let first_tok = self.next_token();
+            let post_ident_trivia = self.collect_leading_trivia();
+
+            // Check if followed by colon (named field)
+            if self.peek_kind() == TokenKind::Colon {
+                // Named fields: Point(x: 1, y: 2)
+                let (fields, trailing) = self.parse_struct_fields_from_first(
+                    leading,
+                    &first_tok,
+                    post_ident_trivia,
+                )?;
+
+                if self.peek_kind() != TokenKind::RParen {
+                    return Err(Self::error(open_paren.span, Error::ExpectedStructLikeEnd));
+                }
+                let close_paren = self.next_token();
+
+                Ok(Some(StructBody::Fields(FieldsBody {
+                    open_brace: open_paren.span,
+                    leading: Trivia::empty(),
+                    fields,
+                    trailing,
+                    close_brace: close_paren.span,
+                })))
+            } else {
+                // Tuple elements: Point(x, y) where x is a struct/enum name
+                // Convert the identifier to an expression
+                let first_expr = self.ident_token_to_expr(first_tok, post_ident_trivia)?;
+                let (elements, trailing) = self.parse_tuple_elements_from_first(leading, first_expr)?;
+
+                if self.peek_kind() != TokenKind::RParen {
+                    return Err(Self::error(open_paren.span, Error::ExpectedStructLikeEnd));
+                }
+                let close_paren = self.next_token();
+
+                Ok(Some(StructBody::Tuple(TupleBody {
+                    open_paren: open_paren.span,
+                    leading: Trivia::empty(),
+                    elements,
+                    trailing,
+                    close_paren: close_paren.span,
+                })))
+            }
+        } else {
+            // Not starting with identifier, must be tuple elements
+            let elements = self.parse_tuple_elements(leading)?;
+            let trailing = self.collect_leading_trivia();
+
+            if self.peek_kind() != TokenKind::RParen {
+                return Err(Self::error(open_paren.span, Error::ExpectedStructLikeEnd));
+            }
+            let close_paren = self.next_token();
+
+            Ok(Some(StructBody::Tuple(TupleBody {
+                open_paren: open_paren.span,
+                leading: Trivia::empty(),
+                elements,
+                trailing,
+                close_paren: close_paren.span,
+            })))
+        }
+    }
+
+    /// Convert an identifier token to an expression.
+    /// Handles booleans, None, Some, inf/NaN, and named structs.
+    fn ident_token_to_expr(
+        &mut self,
+        tok: Token<'a>,
+        pre_body: Trivia<'a>,
+    ) -> SpannedResult<Expr<'a>> {
+        match tok.text {
+            "true" => Ok(Expr::Bool(BoolExpr {
+                span: tok.span,
+                value: true,
+            })),
+            "false" => Ok(Expr::Bool(BoolExpr {
+                span: tok.span,
+                value: false,
+            })),
+            "None" => Ok(Expr::Option(Box::new(OptionExpr {
+                span: tok.span,
+                value: None,
+            }))),
+            "Some" => self.parse_some(tok),
+            "inf" | "NaN" => Ok(Expr::Number(NumberExpr {
+                span: tok.span,
+                raw: Cow::Borrowed(tok.text),
+                kind: NumberKind::SpecialFloat,
+            })),
+            _ => {
+                // Named struct/enum - check for body
+                let name = Ident {
+                    span: tok.span.clone(),
+                    name: Cow::Borrowed(tok.text),
+                };
+
+                let body = match self.peek_kind() {
+                    TokenKind::LParen => {
+                        let open_paren = self.next_token();
+                        let leading = self.collect_leading_trivia();
+
+                        if self.peek_kind() == TokenKind::RParen {
+                            let close_paren = self.next_token();
+                            Some(StructBody::Tuple(TupleBody {
+                                open_paren: open_paren.span,
+                                leading,
+                                elements: Vec::new(),
+                                trailing: Trivia::empty(),
+                                close_paren: close_paren.span,
+                            }))
+                        } else {
+                            self.parse_struct_body_contents(open_paren, leading)?
+                        }
+                    }
+                    _ => None,
+                };
+
+                let span = if let Some(ref b) = body {
+                    let end_span = match b {
+                        StructBody::Tuple(t) => &t.close_paren,
+                        StructBody::Fields(f) => &f.close_brace,
+                    };
+                    Span {
+                        start: tok.span.start,
+                        end: end_span.end,
+                        start_offset: tok.span.start_offset,
+                        end_offset: end_span.end_offset,
+                    }
+                } else {
+                    tok.span.clone()
+                };
+
+                Ok(Expr::Struct(StructExpr {
+                    span,
+                    name,
+                    pre_body,
+                    body,
+                }))
+            }
+        }
+    }
+
+    /// Parse struct fields starting with the first field name already consumed.
+    fn parse_struct_fields_from_first(
+        &mut self,
+        leading: Trivia<'a>,
+        first_name: &Token<'a>,
+        pre_colon: Trivia<'a>,
+    ) -> SpannedResult<(Vec<StructField<'a>>, Trivia<'a>)> {
+        let mut fields = Vec::new();
+
+        // Parse the first field (name already consumed)
+        let colon_tok = self.next_token();
+        debug_assert_eq!(colon_tok.kind, TokenKind::Colon);
+
+        let post_colon = self.collect_leading_trivia();
+        let value = self.parse_expr()?;
+        let trailing = self.collect_leading_trivia();
+
+        let comma = if self.peek_kind() == TokenKind::Comma {
+            let comma_tok = self.next_token();
+            Some(comma_tok.span)
+        } else {
+            None
+        };
+        let has_comma = comma.is_some();
+
+        fields.push(StructField {
+            leading,
+            name: Ident {
+                span: first_name.span.clone(),
+                name: Cow::Borrowed(first_name.text),
+            },
+            pre_colon,
+            colon: colon_tok.span,
+            post_colon,
+            value,
+            trailing,
+            comma,
+        });
+
+        if !has_comma {
+            return Ok((fields, self.collect_leading_trivia()));
+        }
+
+        // Parse remaining fields
+        let mut leading = self.collect_leading_trivia();
+
+        loop {
+            if self.peek_kind() == TokenKind::RParen {
+                break;
+            }
+
+            // Expect field name
+            if self.peek_kind() != TokenKind::Ident {
+                let tok = self.next_token();
+                return Err(Self::error(tok.span, Error::ExpectedIdentifier));
+            }
+            let name_tok = self.next_token();
+
+            let pre_colon = self.collect_leading_trivia();
+
+            if self.peek_kind() != TokenKind::Colon {
+                return Err(Self::error(name_tok.span, Error::ExpectedMapColon));
+            }
+            let colon_tok = self.next_token();
+
+            let post_colon = self.collect_leading_trivia();
+            let value = self.parse_expr()?;
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            fields.push(StructField {
+                leading,
+                name: Ident {
+                    span: name_tok.span.clone(),
+                    name: Cow::Borrowed(name_tok.text),
+                },
+                pre_colon,
+                colon: colon_tok.span,
+                post_colon,
+                value,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                break;
+            }
+        }
+
+        Ok((fields, leading))
+    }
+
+    /// Parse tuple elements starting with the first expression already parsed.
+    fn parse_tuple_elements_from_first(
+        &mut self,
+        leading: Trivia<'a>,
+        first_expr: Expr<'a>,
+    ) -> SpannedResult<(Vec<TupleElement<'a>>, Trivia<'a>)> {
+        let mut elements = Vec::new();
+
+        // Handle the first element
+        let trailing = self.collect_leading_trivia();
+
+        let comma = if self.peek_kind() == TokenKind::Comma {
+            let comma_tok = self.next_token();
+            Some(comma_tok.span)
+        } else {
+            None
+        };
+        let has_comma = comma.is_some();
+
+        elements.push(TupleElement {
+            leading,
+            expr: first_expr,
+            trailing,
+            comma,
+        });
+
+        if !has_comma {
+            return Ok((elements, self.collect_leading_trivia()));
+        }
+
+        // Parse remaining elements
+        let mut leading = self.collect_leading_trivia();
+
+        loop {
+            if self.peek_kind() == TokenKind::RParen {
+                break;
+            }
+
+            let expr = self.parse_expr()?;
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            elements.push(TupleElement {
+                leading,
+                expr,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                break;
+            }
+        }
+
+        Ok((elements, leading))
+    }
+
     /// Parse struct fields until closing brace.
     /// Returns the fields and any trailing trivia before the closing brace.
     fn parse_struct_fields(&mut self, mut leading: Trivia<'a>) -> SpannedResult<(Vec<StructField<'a>>, Trivia<'a>)> {
@@ -897,7 +1209,7 @@ impl<'a> AstParser<'a> {
                 leading,
                 name: Ident {
                     span: name_tok.span.clone(),
-                    name: name_tok.text,
+                    name: Cow::Borrowed(name_tok.text),
                 },
                 pre_colon,
                 colon: colon_tok.span,
@@ -919,7 +1231,7 @@ impl<'a> AstParser<'a> {
     }
 
     /// Parse an integer literal.
-    fn parse_integer(&mut self) -> SpannedResult<Expr<'a>> {
+    fn parse_integer(&mut self) -> Expr<'a> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::Integer);
 
@@ -929,23 +1241,23 @@ impl<'a> AstParser<'a> {
             NumberKind::Integer
         };
 
-        Ok(Expr::Number(NumberExpr {
+        Expr::Number(NumberExpr {
             span: tok.span,
-            raw: tok.text,
+            raw: Cow::Borrowed(tok.text),
             kind,
-        }))
+        })
     }
 
     /// Parse a float literal.
-    fn parse_float(&mut self) -> SpannedResult<Expr<'a>> {
+    fn parse_float(&mut self) -> Expr<'a> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::Float);
 
-        Ok(Expr::Number(NumberExpr {
+        Expr::Number(NumberExpr {
             span: tok.span,
-            raw: tok.text,
+            raw: Cow::Borrowed(tok.text),
             kind: NumberKind::Float,
-        }))
+        })
     }
 
     /// Parse a string literal.
@@ -953,41 +1265,43 @@ impl<'a> AstParser<'a> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::String);
 
-        let (value, kind) = self
-            .decode_string(tok.text)
+        let (value, kind) = Self::decode_string(tok.text)
             .map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::String(StringExpr {
             span: tok.span,
-            raw: tok.text,
+            raw: Cow::Borrowed(tok.text),
             value,
             kind,
         }))
     }
 
     /// Decode a string literal.
-    fn decode_string(&self, raw: &str) -> Result<(String, StringKind)> {
+    fn decode_string(raw: &str) -> Result<(String, StringKind)> {
         if raw.starts_with('r') {
             // Raw string
             let hash_count = raw.chars().skip(1).take_while(|&c| c == '#').count();
             let delim_len = 1 + hash_count + 1; // r + hashes + quote
-            let content = &raw[delim_len..raw.len() - delim_len + 1];
+            let content = &raw[delim_len..=raw.len() - delim_len];
+            // Hash count is bounded by string length, which fits in u8 for practical use
+            #[allow(clippy::cast_possible_truncation)]
+            let hash_count_u8 = hash_count as u8;
             Ok((
                 String::from(content),
                 StringKind::Raw {
-                    hash_count: hash_count as u8,
+                    hash_count: hash_count_u8,
                 },
             ))
         } else {
             // Regular string - need to process escapes
             let content = &raw[1..raw.len() - 1]; // Strip quotes
-            let value = self.unescape_string(content)?;
+            let value = Self::unescape_string(content)?;
             Ok((value, StringKind::Regular))
         }
     }
 
     /// Process escape sequences in a string.
-    fn unescape_string(&self, s: &str) -> Result<String> {
+    fn unescape_string(s: &str) -> Result<String> {
         let mut result = String::new();
         let mut chars = s.chars().peekable();
 
@@ -1034,41 +1348,44 @@ impl<'a> AstParser<'a> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::ByteString);
 
-        let (value, kind) = self
-            .decode_byte_string(tok.text)
+        let (value, kind) = Self::decode_byte_string(tok.text)
             .map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::Bytes(BytesExpr {
             span: tok.span,
-            raw: tok.text,
+            raw: Cow::Borrowed(tok.text),
             value,
             kind,
         }))
     }
 
     /// Decode a byte string literal.
-    fn decode_byte_string(&self, raw: &str) -> Result<(Vec<u8>, BytesKind)> {
+    fn decode_byte_string(raw: &str) -> Result<(Vec<u8>, BytesKind)> {
         if raw.starts_with("br") {
-            // Raw byte string
+            // Raw byte string: br"..." or br#"..."#
             let hash_count = raw.chars().skip(2).take_while(|&c| c == '#').count();
-            let delim_len = 2 + hash_count + 1; // br + hashes + quote
-            let content = &raw[delim_len..raw.len() - delim_len + 1];
+            let start = 2 + hash_count + 1; // br + hashes + opening quote
+            let end = raw.len() - 1 - hash_count; // closing quote + hashes
+            let content = &raw[start..end];
+            // Hash count is bounded by string length, which fits in u8 for practical use
+            #[allow(clippy::cast_possible_truncation)]
+            let hash_count_u8 = hash_count as u8;
             Ok((
                 content.as_bytes().to_vec(),
                 BytesKind::Raw {
-                    hash_count: hash_count as u8,
+                    hash_count: hash_count_u8,
                 },
             ))
         } else {
             // Regular byte string b"..."
             let content = &raw[2..raw.len() - 1]; // Strip b" and "
-            let value = self.unescape_bytes(content)?;
+            let value = Self::unescape_bytes(content)?;
             Ok((value, BytesKind::Regular))
         }
     }
 
     /// Process escape sequences in a byte string.
-    fn unescape_bytes(&self, s: &str) -> Result<Vec<u8>> {
+    fn unescape_bytes(s: &str) -> Result<Vec<u8>> {
         let mut result = Vec::new();
         let mut chars = s.chars().peekable();
 
@@ -1109,31 +1426,29 @@ impl<'a> AstParser<'a> {
         // Check if it's a byte literal b'x'
         if tok.text.starts_with("b'") {
             let content = &tok.text[2..tok.text.len() - 1];
-            let value = self
-                .unescape_byte_char(content)
+            let value = Self::unescape_byte_char(content)
                 .map_err(|e| Self::error(tok.span.clone(), e))?;
             return Ok(Expr::Byte(ByteExpr {
                 span: tok.span,
-                raw: tok.text,
+                raw: Cow::Borrowed(tok.text),
                 value,
             }));
         }
 
         // Regular char literal 'x'
         let content = &tok.text[1..tok.text.len() - 1];
-        let value = self
-            .unescape_char(content)
+        let value = Self::unescape_char(content)
             .map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::Char(CharExpr {
             span: tok.span,
-            raw: tok.text,
+            raw: Cow::Borrowed(tok.text),
             value,
         }))
     }
 
     /// Unescape a single character.
-    fn unescape_char(&self, s: &str) -> Result<char> {
+    fn unescape_char(s: &str) -> Result<char> {
         let mut chars = s.chars();
         let c = chars.next().ok_or(Error::ExpectedChar)?;
 
@@ -1168,7 +1483,7 @@ impl<'a> AstParser<'a> {
     }
 
     /// Unescape a byte character.
-    fn unescape_byte_char(&self, s: &str) -> Result<u8> {
+    fn unescape_byte_char(s: &str) -> Result<u8> {
         let mut chars = s.chars();
         let c = chars.next().ok_or(Error::ExpectedByteLiteral)?;
 
@@ -1397,7 +1712,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_struct_with_fields() {
+    fn parse_struct_with_fields_braces() {
         let doc = parse_document("Point { x: 1, y: 2 }").unwrap();
         match doc.value {
             Some(Expr::Struct(s)) => {
@@ -1407,6 +1722,26 @@ mod tests {
                         assert_eq!(f.fields.len(), 2);
                     }
                     _ => panic!("expected fields body"),
+                }
+            }
+            _ => panic!("expected struct"),
+        }
+    }
+
+    #[test]
+    fn parse_struct_with_fields_parens() {
+        // RON standard syntax for named fields uses parens: Point(x: 1, y: 2)
+        let doc = parse_document("Point(x: 1, y: 2)").unwrap();
+        match doc.value {
+            Some(Expr::Struct(s)) => {
+                assert_eq!(s.name.name, "Point");
+                match s.body {
+                    Some(StructBody::Fields(f)) => {
+                        assert_eq!(f.fields.len(), 2);
+                        assert_eq!(f.fields[0].name.name, "x");
+                        assert_eq!(f.fields[1].name.name, "y");
+                    }
+                    _ => panic!("expected fields body, got {:?}", s.body),
                 }
             }
             _ => panic!("expected struct"),
