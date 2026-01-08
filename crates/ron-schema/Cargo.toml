@@ -6,7 +6,7 @@ license.workspace = true
 description = "Schema types, validation, and storage for RON files"
 
 [dependencies]
-ron.workspace = true
+ron2 = { workspace = true, features = ["serde"] }
 serde.workspace = true
 thiserror.workspace = true
 dirs = "5"

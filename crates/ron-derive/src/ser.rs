@@ -26,7 +26,7 @@ pub fn derive_ser_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         impl #impl_generics ::ron_schema::SerRon for #name #ty_generics #where_clause {
-            fn to_ron_value(&self) -> ::std::result::Result<::ron::Value, ::ron_schema::RonError> {
+            fn to_ron_value(&self) -> ::std::result::Result<::ron2::Value, ::ron_schema::RonError> {
                 #body
             }
         }
@@ -61,7 +61,7 @@ fn derive_struct_ser(
                     field_serializations.push(quote! {
                         if !#predicate(&self.#field_ident) {
                             map.insert(
-                                ::ron::Value::String(#field_name.to_string()),
+                                ::ron2::Value::String(#field_name.to_string()),
                                 #serialize_expr
                             );
                         }
@@ -69,7 +69,7 @@ fn derive_struct_ser(
                 } else {
                     field_serializations.push(quote! {
                         map.insert(
-                            ::ron::Value::String(#field_name.to_string()),
+                            ::ron2::Value::String(#field_name.to_string()),
                             #serialize_expr
                         );
                     });
@@ -77,9 +77,9 @@ fn derive_struct_ser(
             }
 
             Ok(quote! {
-                let mut map = ::ron::value::Map::new();
+                let mut map = ::ron2::value::Map::new();
                 #(#field_serializations)*
-                Ok(::ron::Value::Map(map))
+                Ok(::ron2::Value::Map(map))
             })
         }
         Fields::Unnamed(unnamed) => {
@@ -97,12 +97,12 @@ fn derive_struct_ser(
                 .collect();
 
             Ok(quote! {
-                Ok(::ron::Value::Seq(vec![#(#field_serializations),*]))
+                Ok(::ron2::Value::Seq(vec![#(#field_serializations),*]))
             })
         }
         Fields::Unit => {
             Ok(quote! {
-                Ok(::ron::Value::Unit)
+                Ok(::ron2::Value::Unit)
             })
         }
     }
@@ -132,12 +132,12 @@ fn derive_enum_ser(
                 quote! {
                     #name::#variant_ident => {
                         // For unit variants, use a map with the variant name as key
-                        let mut map = ::ron::value::Map::new();
+                        let mut map = ::ron2::value::Map::new();
                         map.insert(
-                            ::ron::Value::String(#variant_name.to_string()),
-                            ::ron::Value::Unit
+                            ::ron2::Value::String(#variant_name.to_string()),
+                            ::ron2::Value::Unit
                         );
-                        Ok(::ron::Value::Map(map))
+                        Ok(::ron2::Value::Map(map))
                     }
                 }
             }
@@ -156,24 +156,24 @@ fn derive_enum_ser(
                     let field = &field_names[0];
                     quote! {
                         #name::#variant_ident(#(#field_names),*) => {
-                            let mut map = ::ron::value::Map::new();
+                            let mut map = ::ron2::value::Map::new();
                             map.insert(
-                                ::ron::Value::String(#variant_name.to_string()),
+                                ::ron2::Value::String(#variant_name.to_string()),
                                 ::ron_schema::SerRon::to_ron_value(#field)?
                             );
-                            Ok(::ron::Value::Map(map))
+                            Ok(::ron2::Value::Map(map))
                         }
                     }
                 } else {
                     // Tuple variant: Variant(a, b) -> { "Variant": [a, b] }
                     quote! {
                         #name::#variant_ident(#(#field_names),*) => {
-                            let mut map = ::ron::value::Map::new();
+                            let mut map = ::ron2::value::Map::new();
                             map.insert(
-                                ::ron::Value::String(#variant_name.to_string()),
-                                ::ron::Value::Seq(vec![#(#field_values),*])
+                                ::ron2::Value::String(#variant_name.to_string()),
+                                ::ron2::Value::Seq(vec![#(#field_values),*])
                             );
-                            Ok(::ron::Value::Map(map))
+                            Ok(::ron2::Value::Map(map))
                         }
                     }
                 }
@@ -198,7 +198,7 @@ fn derive_enum_ser(
 
                     field_serializations.push(quote! {
                         inner_map.insert(
-                            ::ron::Value::String(#ron_name.to_string()),
+                            ::ron2::Value::String(#ron_name.to_string()),
                             ::ron_schema::SerRon::to_ron_value(#field_ident)?
                         );
                     });
@@ -206,14 +206,14 @@ fn derive_enum_ser(
 
                 quote! {
                     #name::#variant_ident { #(#field_names),* } => {
-                        let mut inner_map = ::ron::value::Map::new();
+                        let mut inner_map = ::ron2::value::Map::new();
                         #(#field_serializations)*
-                        let mut map = ::ron::value::Map::new();
+                        let mut map = ::ron2::value::Map::new();
                         map.insert(
-                            ::ron::Value::String(#variant_name.to_string()),
-                            ::ron::Value::Map(inner_map)
+                            ::ron2::Value::String(#variant_name.to_string()),
+                            ::ron2::Value::Map(inner_map)
                         );
-                        Ok(::ron::Value::Map(map))
+                        Ok(::ron2::Value::Map(map))
                     }
                 }
             }

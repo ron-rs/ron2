@@ -12,6 +12,7 @@ use core::{
 /// the `Number` enum is non-exhaustive.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Hash, Ord)]
 #[cfg_attr(doc, non_exhaustive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Number {
     I8(i8),
     I16(i16),
@@ -29,6 +30,7 @@ pub enum Number {
     F64(F64),
     #[cfg(not(doc))]
     #[allow(private_interfaces)]
+    #[cfg_attr(feature = "serde", serde(skip))]
     __NonExhaustive(private::Never),
 }
 
@@ -56,6 +58,8 @@ macro_rules! float_ty {
                     "for a total order comparison",
                 )]
         #[derive(Copy, Clone, Debug)] // GRCOV_EXCL_LINE
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[cfg_attr(feature = "serde", serde(transparent))]
         pub struct $ty(pub $float);
 
         impl $ty {

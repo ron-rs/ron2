@@ -6,7 +6,7 @@
 //! - Field and Variant builders
 //! - Nested types (Vec of Option of Struct, etc.)
 
-use ron_schema::{Field, Schema, TypeKind, Variant, VariantKind};
+use ron_schema::{DeRon, Field, PrettyConfig, Schema, SerRon, TypeKind, Variant, VariantKind};
 
 // ============================================================================
 // Schema tests
@@ -30,8 +30,8 @@ fn test_schema_with_doc() {
 fn test_schema_serialization_roundtrip_simple() {
     let schema = Schema::with_doc("Test schema", TypeKind::String);
 
-    let serialized = ron::ser::to_string_pretty(&schema, Default::default()).unwrap();
-    let deserialized: Schema = ron::from_str(&serialized).unwrap();
+    let serialized = schema.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let deserialized = Schema::from_ron(&serialized).unwrap();
 
     assert_eq!(schema, deserialized);
 }
@@ -40,11 +40,11 @@ fn test_schema_serialization_roundtrip_simple() {
 fn test_schema_serialization_without_doc() {
     let schema = Schema::new(TypeKind::I32);
 
-    let serialized = ron::ser::to_string_pretty(&schema, Default::default()).unwrap();
+    let serialized = schema.to_ron_pretty(&PrettyConfig::default()).unwrap();
     // doc should not appear in serialized output when None
     assert!(!serialized.contains("doc:"));
 
-    let deserialized: Schema = ron::from_str(&serialized).unwrap();
+    let deserialized = Schema::from_ron(&serialized).unwrap();
     assert_eq!(schema, deserialized);
 }
 
@@ -55,8 +55,8 @@ fn test_schema_serialization_without_doc() {
 #[test]
 fn test_type_kind_bool_roundtrip() {
     let kind = TypeKind::Bool;
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -76,8 +76,8 @@ fn test_type_kind_all_integers_roundtrip() {
     ];
 
     for kind in integer_types {
-        let serialized = ron::to_string(&kind).unwrap();
-        let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+        let serialized = kind.to_ron().unwrap();
+        let deserialized = TypeKind::from_ron(&serialized).unwrap();
         assert_eq!(kind, deserialized, "Failed for {:?}", kind);
     }
 }
@@ -87,8 +87,8 @@ fn test_type_kind_floats_roundtrip() {
     let float_types = vec![TypeKind::F32, TypeKind::F64];
 
     for kind in float_types {
-        let serialized = ron::to_string(&kind).unwrap();
-        let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+        let serialized = kind.to_ron().unwrap();
+        let deserialized = TypeKind::from_ron(&serialized).unwrap();
         assert_eq!(kind, deserialized, "Failed for {:?}", kind);
     }
 }
@@ -96,24 +96,24 @@ fn test_type_kind_floats_roundtrip() {
 #[test]
 fn test_type_kind_char_roundtrip() {
     let kind = TypeKind::Char;
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
 #[test]
 fn test_type_kind_string_roundtrip() {
     let kind = TypeKind::String;
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
 #[test]
 fn test_type_kind_unit_roundtrip() {
     let kind = TypeKind::Unit;
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -124,16 +124,16 @@ fn test_type_kind_unit_roundtrip() {
 #[test]
 fn test_type_kind_option_roundtrip() {
     let kind = TypeKind::Option(Box::new(TypeKind::String));
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
 #[test]
 fn test_type_kind_vec_roundtrip() {
     let kind = TypeKind::List(Box::new(TypeKind::I32));
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -143,24 +143,24 @@ fn test_type_kind_map_roundtrip() {
         key: Box::new(TypeKind::String),
         value: Box::new(TypeKind::I64),
     };
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
 #[test]
 fn test_type_kind_tuple_roundtrip() {
     let kind = TypeKind::Tuple(vec![TypeKind::I32, TypeKind::String, TypeKind::Bool]);
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
 #[test]
 fn test_type_kind_empty_tuple_roundtrip() {
     let kind = TypeKind::Tuple(vec![]);
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -172,16 +172,16 @@ fn test_type_kind_struct_roundtrip() {
             Field::new("age", TypeKind::U8),
         ],
     };
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
 #[test]
 fn test_type_kind_empty_struct_roundtrip() {
     let kind = TypeKind::Struct { fields: vec![] };
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -193,16 +193,16 @@ fn test_type_kind_enum_roundtrip() {
             Variant::tuple("Some", vec![TypeKind::String]),
         ],
     };
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
 #[test]
 fn test_type_kind_type_ref_roundtrip() {
     let kind = TypeKind::TypeRef("my_crate::config::AppConfig".to_string());
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -249,29 +249,29 @@ fn test_field_optional_with_doc() {
 #[test]
 fn test_field_serialization_skips_none_doc() {
     let field = Field::new("value", TypeKind::I32);
-    let serialized = ron::ser::to_string_pretty(&field, Default::default()).unwrap();
+    let serialized = field.to_ron_pretty(&PrettyConfig::default()).unwrap();
     assert!(!serialized.contains("doc:"));
 }
 
 #[test]
 fn test_field_serialization_skips_false_optional() {
     let field = Field::new("value", TypeKind::I32);
-    let serialized = ron::ser::to_string_pretty(&field, Default::default()).unwrap();
+    let serialized = field.to_ron_pretty(&PrettyConfig::default()).unwrap();
     assert!(!serialized.contains("optional:"));
 }
 
 #[test]
 fn test_field_serialization_includes_true_optional() {
     let field = Field::optional("value", TypeKind::I32);
-    let serialized = ron::ser::to_string_pretty(&field, Default::default()).unwrap();
+    let serialized = field.to_ron_pretty(&PrettyConfig::default()).unwrap();
     assert!(serialized.contains("optional: true"));
 }
 
 #[test]
 fn test_field_roundtrip() {
     let field = Field::optional("config", TypeKind::String).with_doc("Configuration path");
-    let serialized = ron::to_string(&field).unwrap();
-    let deserialized: Field = ron::from_str(&serialized).unwrap();
+    let serialized = field.to_ron().unwrap();
+    let deserialized = Field::from_ron(&serialized).unwrap();
     assert_eq!(field, deserialized);
 }
 
@@ -324,16 +324,16 @@ fn test_variant_with_doc() {
 #[test]
 fn test_variant_roundtrip_unit() {
     let variant = Variant::unit("Empty").with_doc("An empty value");
-    let serialized = ron::to_string(&variant).unwrap();
-    let deserialized: Variant = ron::from_str(&serialized).unwrap();
+    let serialized = variant.to_ron().unwrap();
+    let deserialized = Variant::from_ron(&serialized).unwrap();
     assert_eq!(variant, deserialized);
 }
 
 #[test]
 fn test_variant_roundtrip_tuple() {
     let variant = Variant::tuple("Rgb", vec![TypeKind::U8, TypeKind::U8, TypeKind::U8]);
-    let serialized = ron::to_string(&variant).unwrap();
-    let deserialized: Variant = ron::from_str(&serialized).unwrap();
+    let serialized = variant.to_ron().unwrap();
+    let deserialized = Variant::from_ron(&serialized).unwrap();
     assert_eq!(variant, deserialized);
 }
 
@@ -346,8 +346,8 @@ fn test_variant_roundtrip_struct() {
             Field::optional("age", TypeKind::U8),
         ],
     );
-    let serialized = ron::to_string(&variant).unwrap();
-    let deserialized: Variant = ron::from_str(&serialized).unwrap();
+    let serialized = variant.to_ron().unwrap();
+    let deserialized = Variant::from_ron(&serialized).unwrap();
     assert_eq!(variant, deserialized);
 }
 
@@ -358,16 +358,16 @@ fn test_variant_roundtrip_struct() {
 #[test]
 fn test_nested_vec_of_option() {
     let kind = TypeKind::List(Box::new(TypeKind::Option(Box::new(TypeKind::String))));
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
 #[test]
 fn test_nested_option_of_vec() {
     let kind = TypeKind::Option(Box::new(TypeKind::List(Box::new(TypeKind::I32))));
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -379,8 +379,8 @@ fn test_nested_map_with_complex_value() {
             TypeKind::I32,
         ))))),
     };
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -402,8 +402,8 @@ fn test_nested_struct_with_complex_fields() {
             ),
         ],
     };
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -417,8 +417,8 @@ fn test_deeply_nested_types() {
         ))))),
     }))));
 
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -438,8 +438,8 @@ fn test_enum_with_all_variant_types() {
         ],
     };
 
-    let serialized = ron::to_string(&kind).unwrap();
-    let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
+    let serialized = kind.to_ron().unwrap();
+    let deserialized = TypeKind::from_ron(&serialized).unwrap();
     assert_eq!(kind, deserialized);
 }
 
@@ -475,8 +475,8 @@ fn test_complex_schema_roundtrip() {
         },
     );
 
-    let serialized = ron::ser::to_string_pretty(&schema, Default::default()).unwrap();
-    let deserialized: Schema = ron::from_str(&serialized).unwrap();
+    let serialized = schema.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let deserialized = Schema::from_ron(&serialized).unwrap();
     assert_eq!(schema, deserialized);
 }
 
@@ -500,8 +500,8 @@ fn test_enum_schema_roundtrip() {
         },
     );
 
-    let serialized = ron::ser::to_string_pretty(&schema, Default::default()).unwrap();
-    let deserialized: Schema = ron::from_str(&serialized).unwrap();
+    let serialized = schema.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let deserialized = Schema::from_ron(&serialized).unwrap();
     assert_eq!(schema, deserialized);
 }
 
@@ -520,7 +520,7 @@ fn test_tuple_type_inside_struct() {
         ],
     });
 
-    let serialized = ron::to_string(&schema).unwrap();
-    let deserialized: Schema = ron::from_str(&serialized).unwrap();
+    let serialized = schema.to_ron().unwrap();
+    let deserialized = Schema::from_ron(&serialized).unwrap();
     assert_eq!(schema, deserialized);
 }

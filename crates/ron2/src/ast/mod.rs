@@ -274,7 +274,9 @@ pub enum Expr<'a> {
     Map(MapExpr<'a>),
     /// Tuple: `(a, b, c)`.
     Tuple(TupleExpr<'a>),
-    /// Struct: `Name(...)` or `Name { ... }`.
+    /// Anonymous struct: `(field: value, ...)`.
+    AnonStruct(AnonStructExpr<'a>),
+    /// Named struct: `Name(...)` or `Name { ... }`.
     Struct(StructExpr<'a>),
 }
 
@@ -294,6 +296,7 @@ impl Expr<'_> {
             Self::Seq(e) => &e.span,
             Self::Map(e) => &e.span,
             Self::Tuple(e) => &e.span,
+            Self::AnonStruct(e) => &e.span,
             Self::Struct(e) => &e.span,
         }
     }
@@ -313,6 +316,7 @@ impl Expr<'_> {
             Self::Seq(s) => Expr::Seq(s.into_owned()),
             Self::Map(m) => Expr::Map(m.into_owned()),
             Self::Tuple(t) => Expr::Tuple(t.into_owned()),
+            Self::AnonStruct(a) => Expr::AnonStruct(a.into_owned()),
             Self::Struct(s) => Expr::Struct(s.into_owned()),
         }
     }
@@ -713,6 +717,40 @@ impl TupleExpr<'_> {
             open_paren: self.open_paren,
             leading: self.leading.into_owned(),
             elements: self.elements.into_iter().map(TupleElement::into_owned).collect(),
+            trailing: self.trailing.into_owned(),
+            close_paren: self.close_paren,
+        }
+    }
+}
+
+/// Anonymous struct expression: `(field: value, ...)`.
+///
+/// This represents a struct-like value with named fields but no type name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnonStructExpr<'a> {
+    /// The span of the entire struct including parentheses.
+    pub span: Span,
+    /// Span of the opening parenthesis `(`.
+    pub open_paren: Span,
+    /// Leading trivia after the opening parenthesis.
+    pub leading: Trivia<'a>,
+    /// The struct fields.
+    pub fields: Vec<StructField<'a>>,
+    /// Trailing trivia before the closing parenthesis.
+    pub trailing: Trivia<'a>,
+    /// Span of the closing parenthesis `)`.
+    pub close_paren: Span,
+}
+
+impl AnonStructExpr<'_> {
+    /// Converts to an owned version with `'static` lifetime.
+    #[must_use]
+    pub fn into_owned(self) -> AnonStructExpr<'static> {
+        AnonStructExpr {
+            span: self.span,
+            open_paren: self.open_paren,
+            leading: self.leading.into_owned(),
+            fields: self.fields.into_iter().map(StructField::into_owned).collect(),
             trailing: self.trailing.into_owned(),
             close_paren: self.close_paren,
         }

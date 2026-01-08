@@ -9,12 +9,12 @@
 //! - Map validation with various key/value types
 //! - Tuple validation with length checking
 
-use ron::Value;
+use ron2::Value;
 use ron_schema::{validate, validate_type, Field, Schema, TypeKind, ValidationError, Variant};
 
 /// Helper to parse RON string into Value
 fn parse_ron(s: &str) -> Value {
-    ron::from_str(s).expect("Failed to parse RON")
+    ron2::from_str(s).expect("Failed to parse RON")
 }
 
 // ============================================================================

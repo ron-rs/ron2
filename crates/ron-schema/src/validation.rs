@@ -1,4 +1,4 @@
-use ron::Value;
+use ron2::Value;
 
 use crate::{Field, Schema, TypeKind, VariantKind};
 
@@ -116,7 +116,7 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
             _ => Err(type_mismatch("Map", value)),
         },
         TypeKind::Tuple(types) => match value {
-            Value::Seq(items) => {
+            Value::Tuple(items) | Value::Seq(items) => {
                 if items.len() != types.len() {
                     return Err(ValidationError::TupleLengthMismatch {
                         expected: types.len(),
@@ -144,58 +144,99 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
 }
 
 fn validate_struct(value: &Value, fields: &[Field]) -> Result<()> {
-    let map = match value {
-        Value::Map(m) => m,
-        _ => return Err(type_mismatch("Struct", value)),
-    };
+    // Helper to validate struct fields from an iterator of (name, value) pairs
+    fn validate_struct_fields<'a>(
+        field_iter: impl Iterator<Item = (&'a str, &'a Value)>,
+        fields: &[Field],
+        has_field: impl Fn(&str) -> bool,
+    ) -> Result<()> {
+        // Check all provided fields are valid
+        for (key_str, val) in field_iter {
+            let field = fields
+                .iter()
+                .find(|f| f.name == key_str)
+                .ok_or_else(|| ValidationError::UnknownField(key_str.to_string()))?;
 
-    // Check all provided fields are valid
-    for (key, val) in map.iter() {
-        let key_str = match key {
-            Value::String(s) => s.as_str(),
-            _ => return Err(type_mismatch("String (field name)", key)),
-        };
+            validate_type(val, &field.ty).map_err(|e| ValidationError::FieldError {
+                field: key_str.to_string(),
+                source: Box::new(e),
+            })?;
+        }
 
-        let field = fields
-            .iter()
-            .find(|f| f.name == key_str)
-            .ok_or_else(|| ValidationError::UnknownField(key_str.to_string()))?;
-
-        validate_type(val, &field.ty).map_err(|e| ValidationError::FieldError {
-            field: key_str.to_string(),
-            source: Box::new(e),
-        })?;
-    }
-
-    // Check all required fields are present
-    for field in fields {
-        if !field.optional {
-            let has_field = map.iter().any(|(k, _)| {
-                matches!(k, Value::String(s) if s == &field.name)
-            });
-            if !has_field {
+        // Check all required fields are present
+        for field in fields {
+            if !field.optional && !has_field(&field.name) {
                 return Err(ValidationError::MissingField(field.name.clone()));
             }
         }
+
+        Ok(())
     }
 
-    Ok(())
+    match value {
+        // Anonymous struct: (x: 1, y: 2)
+        Value::Struct(struct_fields) => {
+            validate_struct_fields(
+                struct_fields.iter().map(|(k, v)| (k.as_str(), v)),
+                fields,
+                |name| struct_fields.iter().any(|(k, _)| k == name),
+            )
+        }
+        // Named struct: Point(x: 1, y: 2)
+        Value::Named {
+            content: ron2::value::NamedContent::Struct(struct_fields),
+            ..
+        } => {
+            validate_struct_fields(
+                struct_fields.iter().map(|(k, v)| (k.as_str(), v)),
+                fields,
+                |name| struct_fields.iter().any(|(k, _)| k == name),
+            )
+        }
+        // Map with string keys (legacy RON format)
+        Value::Map(map) => {
+            // Extract string keys only
+            let string_fields: std::result::Result<Vec<_>, _> = map
+                .iter()
+                .map(|(k, v)| match k {
+                    Value::String(s) => Ok((s.as_str(), v)),
+                    _ => Err(type_mismatch("String (field name)", k)),
+                })
+                .collect();
+            let string_fields = string_fields?;
+
+            validate_struct_fields(
+                string_fields.iter().copied(),
+                fields,
+                |name| map.iter().any(|(k, _)| matches!(k, Value::String(s) if s == name)),
+            )
+        }
+        _ => Err(type_mismatch("Struct", value)),
+    }
 }
 
 fn validate_enum(value: &Value, variants: &[crate::Variant]) -> Result<()> {
-    // RON enums can be represented as:
-    // - Unit: just the variant name as a string, or Name
-    // - Tuple: Name(value1, value2)
-    // - Struct: Name(field: value)
+    use ron2::value::NamedContent;
 
-    let (variant_name, variant_value) = match value {
+    // Variant content can come from either NamedContent (for Named values)
+    // or directly as a Value (for Map-based representation)
+    enum VariantContent<'a> {
+        None,
+        Named(&'a NamedContent),
+        Value(&'a Value),
+    }
+
+    // Extract variant name and content from the value
+    let (variant_name, content): (&str, VariantContent) = match value {
         // Unit variant as string
-        Value::String(s) => (s.as_str(), None),
-        // Named variant with optional value
+        Value::String(s) => (s.as_str(), VariantContent::None),
+        // Named variant (ron2 style): Name, Name(values), Name(x: y)
+        Value::Named { name, content } => (name.as_str(), VariantContent::Named(content)),
+        // Map with single string key: { "Variant": content }
         Value::Map(map) if map.len() == 1 => {
             let (k, v) = map.iter().next().unwrap();
             match k {
-                Value::String(s) => (s.as_str(), Some(v)),
+                Value::String(s) => (s.as_str(), VariantContent::Value(v)),
                 _ => return Err(type_mismatch("Enum variant name", k)),
             }
         }
@@ -207,14 +248,40 @@ fn validate_enum(value: &Value, variants: &[crate::Variant]) -> Result<()> {
         .find(|v| v.name == variant_name)
         .ok_or_else(|| ValidationError::UnknownVariant(variant_name.to_string()))?;
 
-    match (&variant.kind, variant_value) {
-        (VariantKind::Unit, None) => Ok(()),
-        (VariantKind::Unit, Some(Value::Unit)) => Ok(()),
-        (VariantKind::Unit, Some(_)) => Err(ValidationError::VariantError {
-            variant: variant_name.to_string(),
-            source: Box::new(type_mismatch("Unit", variant_value.unwrap())),
-        }),
-        (VariantKind::Tuple(types), Some(Value::Seq(items))) => {
+    // Helper to validate struct fields
+    let validate_struct_fields =
+        |fields: &[crate::Field], struct_fields: &[(String, Value)]| -> Result<()> {
+            for (key, val) in struct_fields.iter() {
+                let field = fields.iter().find(|f| f.name == *key).ok_or_else(|| {
+                    ValidationError::VariantError {
+                        variant: variant_name.to_string(),
+                        source: Box::new(ValidationError::UnknownField(key.clone())),
+                    }
+                })?;
+
+                validate_type(val, &field.ty).map_err(|e| ValidationError::VariantError {
+                    variant: variant_name.to_string(),
+                    source: Box::new(ValidationError::FieldError {
+                        field: key.clone(),
+                        source: Box::new(e),
+                    }),
+                })?;
+            }
+            // Check required fields
+            for field in fields {
+                if !field.optional && !struct_fields.iter().any(|(k, _)| k == &field.name) {
+                    return Err(ValidationError::VariantError {
+                        variant: variant_name.to_string(),
+                        source: Box::new(ValidationError::MissingField(field.name.clone())),
+                    });
+                }
+            }
+            Ok(())
+        };
+
+    // Helper to validate tuple elements
+    let validate_tuple_elements =
+        |types: &[TypeKind], items: &[Value]| -> Result<()> {
             if items.len() != types.len() {
                 return Err(ValidationError::VariantError {
                     variant: variant_name.to_string(),
@@ -234,20 +301,56 @@ fn validate_enum(value: &Value, variants: &[crate::Variant]) -> Result<()> {
                 })?;
             }
             Ok(())
+        };
+
+    match (&variant.kind, content) {
+        // Unit variants
+        (VariantKind::Unit, VariantContent::None) => Ok(()),
+        (VariantKind::Unit, VariantContent::Named(NamedContent::Unit)) => Ok(()),
+        (VariantKind::Unit, VariantContent::Value(Value::Unit)) => Ok(()),
+
+        // Tuple variants from NamedContent
+        (VariantKind::Tuple(types), VariantContent::Named(NamedContent::Tuple(items))) => {
+            validate_tuple_elements(types, items)
         }
-        (VariantKind::Struct(fields), Some(v)) => {
-            validate_struct(v, fields).map_err(|e| ValidationError::VariantError {
-                variant: variant_name.to_string(),
-                source: Box::new(e),
-            })
+        // Tuple variants from Value (Map-style)
+        (VariantKind::Tuple(types), VariantContent::Value(Value::Seq(items))) => {
+            validate_tuple_elements(types, items)
         }
-        (_, None) => Err(ValidationError::VariantError {
+        (VariantKind::Tuple(types), VariantContent::Value(Value::Tuple(items))) => {
+            validate_tuple_elements(types, items)
+        }
+
+        // Struct variants from NamedContent
+        (VariantKind::Struct(fields), VariantContent::Named(NamedContent::Struct(struct_fields))) => {
+            validate_struct_fields(fields, struct_fields)
+        }
+        // Struct variants from Value (Map-style with anonymous struct)
+        (VariantKind::Struct(fields), VariantContent::Value(Value::Struct(struct_fields))) => {
+            validate_struct_fields(fields, struct_fields)
+        }
+
+        // Error cases
+        (VariantKind::Unit, _) => Err(ValidationError::VariantError {
             variant: variant_name.to_string(),
-            source: Box::new(type_mismatch("variant value", &Value::Unit)),
+            source: Box::new(ValidationError::TypeMismatch {
+                expected: "Unit".to_string(),
+                actual: "non-unit content".to_string(),
+            }),
         }),
-        (_, Some(v)) => Err(ValidationError::VariantError {
+        (_, VariantContent::None) => Err(ValidationError::VariantError {
             variant: variant_name.to_string(),
-            source: Box::new(type_mismatch("matching variant kind", v)),
+            source: Box::new(ValidationError::TypeMismatch {
+                expected: "variant content".to_string(),
+                actual: "none".to_string(),
+            }),
+        }),
+        (_, _) => Err(ValidationError::VariantError {
+            variant: variant_name.to_string(),
+            source: Box::new(ValidationError::TypeMismatch {
+                expected: format!("{:?}", variant.kind),
+                actual: "mismatched content".to_string(),
+            }),
         }),
     }
 }
@@ -256,13 +359,16 @@ fn type_mismatch(expected: &str, value: &Value) -> ValidationError {
     let actual = match value {
         Value::Bool(_) => "Bool",
         Value::Char(_) => "Char",
-        Value::Map(_) => "Map/Struct",
+        Value::Map(_) => "Map",
         Value::Number(_) => "Number",
         Value::Option(_) => "Option",
         Value::String(_) => "String",
-        Value::Seq(_) => "Seq/Tuple",
+        Value::Seq(_) => "Seq",
         Value::Unit => "Unit",
         Value::Bytes(_) => "Bytes",
+        Value::Tuple(_) => "Tuple",
+        Value::Struct(_) => "Struct",
+        Value::Named { .. } => "Named",
     };
     ValidationError::TypeMismatch {
         expected: expected.to_string(),
@@ -310,15 +416,15 @@ mod tests {
         });
 
         // Valid struct with all fields
-        let value: Value = ron::from_str("(port: 8080, host: \"localhost\")").unwrap();
+        let value: Value = ron2::from_str("(port: 8080, host: \"localhost\")").unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Valid struct with only required fields
-        let value: Value = ron::from_str("(port: 8080)").unwrap();
+        let value: Value = ron2::from_str("(port: 8080)").unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Missing required field
-        let value: Value = ron::from_str("(host: \"localhost\")").unwrap();
+        let value: Value = ron2::from_str("(host: \"localhost\")").unwrap();
         assert!(validate(&value, &schema).is_err());
     }
 
@@ -336,11 +442,11 @@ mod tests {
         });
 
         // Unit variant
-        let value: Value = ron::from_str("\"None\"").unwrap();
+        let value: Value = ron2::from_str("\"None\"").unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Unknown variant
-        let value: Value = ron::from_str("\"Unknown\"").unwrap();
+        let value: Value = ron2::from_str("\"Unknown\"").unwrap();
         assert!(validate(&value, &schema).is_err());
     }
 }

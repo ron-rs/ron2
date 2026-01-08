@@ -6,7 +6,7 @@ use std::fmt;
 #[derive(Debug)]
 pub enum RonError {
     /// RON parsing error.
-    Parse(ron::error::SpannedError),
+    Parse(ron2::error::SpannedError),
     /// Type mismatch during deserialization.
     TypeMismatch {
         expected: &'static str,
@@ -30,7 +30,7 @@ pub enum RonError {
     /// Formatting error during serialization.
     Fmt(fmt::Error),
     /// RON serialization error.
-    Serialize(ron::Error),
+    Serialize(ron2::Error),
     /// Custom error message.
     Custom(String),
 }
@@ -69,8 +69,8 @@ impl fmt::Display for RonError {
     }
 }
 
-impl From<ron::error::SpannedError> for RonError {
-    fn from(e: ron::error::SpannedError) -> Self {
+impl From<ron2::error::SpannedError> for RonError {
+    fn from(e: ron2::error::SpannedError) -> Self {
         RonError::Parse(e)
     }
 }
@@ -87,8 +87,8 @@ impl From<fmt::Error> for RonError {
     }
 }
 
-impl From<ron::Error> for RonError {
-    fn from(e: ron::Error) -> Self {
+impl From<ron2::Error> for RonError {
+    fn from(e: ron2::Error) -> Self {
         RonError::Serialize(e)
     }
 }

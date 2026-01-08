@@ -13,7 +13,7 @@ use alloc::string::String;
 use core::fmt::Write;
 
 use crate::ast::{
-    Attribute, Comment, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr,
+    AnonStructExpr, Attribute, Comment, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr,
     OptionExpr, SeqExpr, SeqItem, StructBody, StructExpr, StructField, Trivia, TupleBody,
     TupleElement, TupleExpr,
 };
@@ -146,6 +146,7 @@ impl<'a, W: Write> AstSerializer<'a, W> {
             Expr::Seq(seq) => self.write_seq(seq)?,
             Expr::Map(map) => self.write_map(map)?,
             Expr::Tuple(tuple) => self.write_tuple(tuple)?,
+            Expr::AnonStruct(s) => self.write_anon_struct(s)?,
             Expr::Struct(s) => self.write_struct(s)?,
         }
         Ok(())
@@ -315,6 +316,29 @@ impl<'a, W: Write> AstSerializer<'a, W> {
             let text = comma.slice(self.source);
             self.writer.write_str(text)?;
         }
+
+        Ok(())
+    }
+
+    fn write_anon_struct(&mut self, s: &AnonStructExpr<'_>) -> Result<()> {
+        // Write opening paren
+        let open_text = s.open_paren.slice(self.source);
+        self.writer.write_str(open_text)?;
+
+        // Write leading trivia
+        self.write_trivia(&s.leading)?;
+
+        // Write fields
+        for field in &s.fields {
+            self.write_struct_field(field)?;
+        }
+
+        // Write trailing trivia
+        self.write_trivia(&s.trailing)?;
+
+        // Write closing paren
+        let close_text = s.close_paren.slice(self.source);
+        self.writer.write_str(close_text)?;
 
         Ok(())
     }
@@ -572,5 +596,68 @@ Config {
     #[test]
     fn round_trip_comment_only() {
         assert_round_trip("// just a comment\n");
+    }
+
+    // =========================================================================
+    // Anonymous struct round-trip tests
+    // =========================================================================
+
+    #[test]
+    fn round_trip_anon_struct_simple() {
+        assert_round_trip(r#"(name: "test", value: 42)"#);
+    }
+
+    #[test]
+    fn round_trip_anon_struct_single_field() {
+        assert_round_trip("(x: 1)");
+    }
+
+    #[test]
+    fn round_trip_anon_struct_trailing_comma() {
+        assert_round_trip("(x: 1, y: 2,)");
+    }
+
+    #[test]
+    fn round_trip_anon_struct_nested() {
+        assert_round_trip("(outer: (inner: 42))");
+    }
+
+    #[test]
+    fn round_trip_anon_struct_with_whitespace() {
+        assert_round_trip("( x : 1 , y : 2 )");
+    }
+
+    #[test]
+    fn round_trip_anon_struct_multiline() {
+        assert_round_trip("(\n  x: 1,\n  y: 2\n)");
+    }
+
+    #[test]
+    fn round_trip_anon_struct_with_comments() {
+        assert_round_trip("(\n  // comment\n  x: 1\n)");
+    }
+
+    #[test]
+    fn round_trip_anon_struct_complex() {
+        let source = r#"(
+    name: "test",
+    // config section
+    config: (
+        enabled: true,
+        values: [1, 2, 3]
+    ),
+    optional: Some("value")
+)"#;
+        assert_round_trip(source);
+    }
+
+    #[test]
+    fn round_trip_anon_struct_vs_tuple() {
+        // Anonymous struct with named fields
+        assert_round_trip("(x: 1)");
+        // Tuple (no named fields)
+        assert_round_trip("(1, 2, 3)");
+        // Single element tuple
+        assert_round_trip("(x)");
     }
 }

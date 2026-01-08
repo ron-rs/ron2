@@ -3,7 +3,7 @@
 //! Provides auto-completion for struct fields and enum variants
 //! based on the schema.
 
-use ron::Value;
+use ron2::Value;
 use ron_schema::{Field, Schema, TypeKind, Variant, VariantKind};
 use tower_lsp::lsp_types::*;
 

@@ -11,8 +11,8 @@
 use alloc::{boxed::Box, string::String, vec::Vec};
 
 use crate::ast::{
-    BytesExpr, Document, Expr, FieldsBody, MapExpr, NumberExpr, NumberKind, OptionExpr, SeqExpr,
-    StringExpr, StructBody, StructExpr, TupleBody, TupleExpr,
+    AnonStructExpr, BytesExpr, Document, Expr, FieldsBody, MapExpr, NumberExpr, NumberKind,
+    OptionExpr, SeqExpr, StringExpr, StructBody, StructExpr, TupleBody, TupleExpr,
 };
 use crate::error::{Error, Result};
 use crate::value::{NamedContent, Number, StructFields, Value, F32, F64};
@@ -47,6 +47,7 @@ pub fn expr_to_value(expr: &Expr<'_>) -> Result<Value> {
         Expr::Seq(seq) => seq_to_value(seq),
         Expr::Map(map) => map_to_value(map),
         Expr::Tuple(tuple) => tuple_to_value(tuple),
+        Expr::AnonStruct(s) => anon_struct_to_value(s),
         Expr::Struct(s) => struct_to_value(s),
     }
 }
@@ -237,6 +238,22 @@ fn tuple_to_value(tuple: &TupleExpr<'_>) -> Result<Value> {
 /// - Unit: `Point` → Named { name: "Point", content: Unit }
 /// - Tuple: `Point(1, 2)` → Named { name: "Point", content: Tuple([1, 2]) }
 /// - Struct: `Point(x: 1)` → Named { name: "Point", content: Struct({x: 1}) }
+/// Convert anonymous struct `(field: value, ...)` to `Value::Struct`.
+fn anon_struct_to_value(s: &AnonStructExpr<'_>) -> Result<Value> {
+    let struct_fields: StructFields = s
+        .fields
+        .iter()
+        .map(|f| {
+            let name = f.name.name.to_string();
+            let value = expr_to_value(&f.value)?;
+            Ok((name, value))
+        })
+        .collect::<Result<_>>()?;
+
+    Ok(Value::Struct(struct_fields))
+}
+
+/// Convert named struct/enum to `Value::Named`.
 fn struct_to_value(s: &StructExpr<'_>) -> Result<Value> {
     let name = s.name.name.to_string();
 

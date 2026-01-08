@@ -149,7 +149,7 @@ fn main() {
     println!("\n6. Generated AppConfig schema:");
     println!("------------------------------");
     let schema = AppConfig::schema();
-    let schema_ron = ron::ser::to_string_pretty(&schema, Default::default()).unwrap();
+    let schema_ron = schema.to_ron_pretty(&ron_schema::PrettyConfig::default()).unwrap();
     println!("{}", schema_ron);
 
     // Roundtrip test

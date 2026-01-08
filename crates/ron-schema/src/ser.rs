@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, LinkedList, VecDeque};
 use std::hash::Hash;
 
-use ron::value::{Map, Number};
-use ron::Value;
+use ron2::value::{Map, Number};
+use ron2::Value;
 
 use crate::error::RonError;
 
@@ -39,9 +39,10 @@ impl Default for PrettyConfig {
 /// ```rust
 /// use ron_schema::SerRon;
 ///
+/// // ron2 uses compact format without spaces after commas
 /// let value = vec![1, 2, 3];
 /// let ron_string = value.to_ron().unwrap();
-/// assert_eq!(ron_string, "[1, 2, 3]");
+/// assert_eq!(ron_string, "[1,2,3]");
 /// ```
 pub trait SerRon {
     /// Serialize this value to a RON string.
@@ -50,7 +51,7 @@ pub trait SerRon {
         value_to_string(&value)
     }
 
-    /// Serialize this value to a `ron::Value`.
+    /// Serialize this value to a `ron2::Value`.
     fn to_ron_value(&self) -> Result<Value, RonError>;
 
     /// Serialize this value with pretty formatting.
@@ -60,21 +61,18 @@ pub trait SerRon {
     }
 }
 
-/// Convert a `ron::Value` to a RON string.
+/// Convert a `ron2::Value` to a RON string.
 pub fn value_to_string(value: &Value) -> Result<String, RonError> {
-    let config = ron::ser::PrettyConfig::default()
-        .struct_names(false)
-        .compact_arrays(true);
-    ron::ser::to_string_pretty(value, config).map_err(RonError::from)
+    ron2::ser::to_string(value).map_err(RonError::from)
 }
 
-/// Convert a `ron::Value` to a pretty-printed RON string.
+/// Convert a `ron2::Value` to a pretty-printed RON string.
 pub fn value_to_string_pretty(value: &Value, config: &PrettyConfig) -> Result<String, RonError> {
-    let ron_config = ron::ser::PrettyConfig::default()
+    let ron_config = ron2::ser::PrettyConfig::default()
         .struct_names(config.struct_names)
-        .indentor(config.indent.clone())
+        .indent(config.indent.clone())
         .new_line(config.new_line.clone());
-    ron::ser::to_string_pretty(value, ron_config).map_err(RonError::from)
+    ron2::ser::to_string_pretty(value, ron_config).map_err(RonError::from)
 }
 
 // =============================================================================
@@ -327,7 +325,8 @@ mod tests {
 
     #[test]
     fn test_collections() {
-        assert_eq!(vec![1, 2, 3].to_ron().unwrap(), "[1, 2, 3]");
+        // Note: ron2's compact serializer doesn't add spaces after commas
+        assert_eq!(vec![1, 2, 3].to_ron().unwrap(), "[1,2,3]");
         assert_eq!(Vec::<i32>::new().to_ron().unwrap(), "[]");
     }
 
@@ -339,10 +338,10 @@ mod tests {
 
     #[test]
     fn test_tuple() {
-        // Note: ron::Value::Seq is used for tuples, which serializes as [...]
-        // This is a limitation of the ron::Value intermediate representation
-        assert_eq!((1, 2).to_ron().unwrap(), "[1, 2]");
-        assert_eq!((1, "hello", true).to_ron().unwrap(), "[1, \"hello\", true]");
+        // Note: ron2::Value::Seq is used for tuples, which serializes as [...]
+        // ron2's compact serializer doesn't add spaces after commas
+        assert_eq!((1, 2).to_ron().unwrap(), "[1,2]");
+        assert_eq!((1, "hello", true).to_ron().unwrap(), "[1,\"hello\",true]");
     }
 
     #[test]

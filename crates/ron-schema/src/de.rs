@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, LinkedList, VecDequ
 use std::hash::Hash;
 use std::io::Read;
 
-use ron::value::Number;
-use ron::Value;
+use ron2::value::Number;
+use ron2::Value;
 
 use crate::error::RonError;
 
@@ -29,7 +29,7 @@ pub trait DeRon: Sized {
         Self::from_ron_value(value)
     }
 
-    /// Deserialize from a `ron::Value`.
+    /// Deserialize from a `ron2::Value`.
     fn from_ron_value(value: Value) -> Result<Self, RonError>;
 
     /// Deserialize from a reader.
@@ -40,9 +40,9 @@ pub trait DeRon: Sized {
     }
 }
 
-/// Parse a RON string into a `ron::Value`.
+/// Parse a RON string into a `ron2::Value`.
 pub fn parse_ron_value(s: &str) -> Result<Value, RonError> {
-    ron::from_str(s).map_err(RonError::from)
+    ron2::from_str(s).map_err(RonError::from)
 }
 
 // =============================================================================
@@ -377,25 +377,26 @@ macro_rules! impl_de_ron_tuple {
     ($first:ident $(, $rest:ident)*) => {
         impl<$first: DeRon $(, $rest: DeRon)*> DeRon for ($first, $($rest,)*) {
             fn from_ron_value(value: Value) -> Result<Self, RonError> {
-                match value {
-                    Value::Seq(mut seq) => {
-                        #[allow(unused_variables, unused_mut)]
-                        let expected = impl_de_ron_tuple!(@count $first $(, $rest)*);
-                        if seq.len() != expected {
-                            return Err(RonError::InvalidValue(format!(
-                                "expected tuple of {} elements, got {}",
-                                expected,
-                                seq.len()
-                            )));
-                        }
-                        seq.reverse();
-                        Ok((
-                            $first::from_ron_value(seq.pop().unwrap())?,
-                            $($rest::from_ron_value(seq.pop().unwrap())?,)*
-                        ))
-                    }
-                    other => Err(RonError::type_mismatch("tuple", other)),
+                // ron2 parses (a, b) as Value::Tuple, [a, b] as Value::Seq
+                let mut seq = match value {
+                    Value::Tuple(t) => t,
+                    Value::Seq(s) => s,
+                    other => return Err(RonError::type_mismatch("tuple", other)),
+                };
+                #[allow(unused_variables, unused_mut)]
+                let expected = impl_de_ron_tuple!(@count $first $(, $rest)*);
+                if seq.len() != expected {
+                    return Err(RonError::InvalidValue(format!(
+                        "expected tuple of {} elements, got {}",
+                        expected,
+                        seq.len()
+                    )));
                 }
+                seq.reverse();
+                Ok((
+                    $first::from_ron_value(seq.pop().unwrap())?,
+                    $($rest::from_ron_value(seq.pop().unwrap())?,)*
+                ))
             }
         }
         impl_de_ron_tuple!($($rest),*);
@@ -420,9 +421,18 @@ pub struct MapAccess {
 }
 
 impl MapAccess {
-    /// Create a new MapAccess from a ron::Value.
+    /// Create a new MapAccess from a ron2::Value.
     pub fn new(value: Value) -> Result<Self, RonError> {
         match value {
+            // ron2 parses (name: val) as Value::Struct
+            Value::Struct(fields) => {
+                let mut result = HashMap::with_capacity(fields.len());
+                for (name, v) in fields {
+                    result.insert(name, v);
+                }
+                Ok(Self { map: result })
+            }
+            // { key: val } is parsed as Value::Map
             Value::Map(map) => {
                 let mut result = HashMap::with_capacity(map.len());
                 for (k, v) in map {

@@ -7,4 +7,4 @@ publish = false
 [dependencies]
 ron-schema = { path = "../../crates/ron-schema" }
 ron-derive = { path = "../../crates/ron-derive" }
-ron = { path = "../../ron" }
+ron2 = { path = "../../crates/ron2" }

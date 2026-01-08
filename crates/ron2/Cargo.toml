@@ -15,11 +15,13 @@ rust-version = "1.90.0"
 default = ["std"]
 integer128 = []
 std = []
+serde = ["dep:serde"]
 internal-span-substring-test = ["dep:unicode-segmentation"]
 
 [dependencies]
 bitflags = { version = "2.1", default-features = false }
 indexmap = { version = "2.0", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
 unicode-ident = { version = "1.0", default-features = false }
 unicode-segmentation = { version = "1.11", default-features = false, optional = true }
 

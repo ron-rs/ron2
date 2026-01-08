@@ -26,7 +26,7 @@ pub fn derive_de_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         impl #impl_generics ::ron_schema::DeRon for #name #ty_generics #where_clause {
-            fn from_ron_value(value: ::ron::Value) -> ::std::result::Result<Self, ::ron_schema::RonError> {
+            fn from_ron_value(value: ::ron2::Value) -> ::std::result::Result<Self, ::ron_schema::RonError> {
                 #body
             }
         }
@@ -105,10 +105,10 @@ fn derive_struct_de(
 
             Ok(quote! {
                 let mut map = match value {
-                    ::ron::Value::Map(m) => {
+                    ::ron2::Value::Map(m) => {
                         let mut result = ::std::collections::HashMap::new();
                         for (k, v) in m {
-                            if let ::ron::Value::String(key) = k {
+                            if let ::ron2::Value::String(key) = k {
                                 result.insert(key, v);
                             }
                         }
@@ -149,7 +149,7 @@ fn derive_struct_de(
 
             Ok(quote! {
                 match value {
-                    ::ron::Value::Seq(mut seq) => {
+                    ::ron2::Value::Seq(mut seq) => {
                         if seq.len() != #field_count {
                             return Err(::ron_schema::RonError::InvalidValue(
                                 format!("expected {} elements, got {}", #field_count, seq.len())
@@ -165,9 +165,9 @@ fn derive_struct_de(
         Fields::Unit => {
             Ok(quote! {
                 match value {
-                    ::ron::Value::Unit => Ok(#name),
+                    ::ron2::Value::Unit => Ok(#name),
                     // Also accept empty map for compatibility
-                    ::ron::Value::Map(m) if m.is_empty() => Ok(#name),
+                    ::ron2::Value::Map(m) if m.is_empty() => Ok(#name),
                     other => Err(::ron_schema::RonError::type_mismatch("unit struct", other)),
                 }
             })
@@ -203,7 +203,7 @@ fn derive_enum_de(
                 quote! {
                     #variant_name => {
                         match inner {
-                            ::ron::Value::Unit => Ok(#name::#variant_ident),
+                            ::ron2::Value::Unit => Ok(#name::#variant_ident),
                             other => Err(::ron_schema::RonError::type_mismatch("unit variant", other)),
                         }
                     }
@@ -243,7 +243,7 @@ fn derive_enum_de(
                     quote! {
                         #variant_name => {
                             match inner {
-                                ::ron::Value::Seq(mut seq) => {
+                                ::ron2::Value::Seq(mut seq) => {
                                     if seq.len() != #field_count {
                                         return Err(::ron_schema::RonError::InvalidValue(
                                             format!("expected {} elements, got {}", #field_count, seq.len())
@@ -307,11 +307,11 @@ fn derive_enum_de(
                 quote! {
                     #variant_name => {
                         match inner {
-                            ::ron::Value::Map(m) => {
-                                let mut map: ::std::collections::HashMap<String, ::ron::Value> = {
+                            ::ron2::Value::Map(m) => {
+                                let mut map: ::std::collections::HashMap<String, ::ron2::Value> = {
                                     let mut result = ::std::collections::HashMap::new();
                                     for (k, v) in m {
-                                        if let ::ron::Value::String(key) = k {
+                                        if let ::ron2::Value::String(key) = k {
                                             result.insert(key, v);
                                         }
                                     }
@@ -346,7 +346,7 @@ fn derive_enum_de(
     Ok(quote! {
         // Enum in RON is typically { "Variant": value } or just "Variant" for unit
         match value {
-            ::ron::Value::Map(m) => {
+            ::ron2::Value::Map(m) => {
                 if m.len() != 1 {
                     return Err(::ron_schema::RonError::InvalidValue(
                         format!("expected map with single variant, got {} entries", m.len())
@@ -354,7 +354,7 @@ fn derive_enum_de(
                 }
                 let (variant_key, inner) = m.into_iter().next().unwrap();
                 let variant_name = match variant_key {
-                    ::ron::Value::String(s) => s,
+                    ::ron2::Value::String(s) => s,
                     other => return Err(::ron_schema::RonError::type_mismatch("string (variant name)", other)),
                 };
 
@@ -364,7 +364,7 @@ fn derive_enum_de(
                 }
             }
             // Also try to parse as string for unit variants only
-            ::ron::Value::String(s) => {
+            ::ron2::Value::String(s) => {
                 match s.as_str() {
                     #(#string_variant_arms)*
                     unknown => Err(::ron_schema::RonError::UnknownVariant(unknown.to_string())),

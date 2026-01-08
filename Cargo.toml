@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
-# members = ["crates/ron-schema", "crates/ron-derive", "crates/ron-lsp", "examples/config", "ron2"]
-members = ["ron2"]
+members = ["crates/ron2", "crates/ron-schema", "crates/ron-derive", "crates/ron-lsp", "examples/config"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,7 +9,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/torkleyy/ron-extras"
 
 [workspace.dependencies]
-ron2 = { path = "ron2" }
+ron2 = { path = "crates/ron2" }
 ron-schema = { path = "crates/ron-schema" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2"

@@ -7,10 +7,10 @@ use alloc::{borrow::Cow, boxed::Box, string::String, vec, vec::Vec};
 use core::iter::Peekable;
 
 use crate::ast::{
-    Attribute, AttributeContent, BoolExpr, ByteExpr, BytesExpr, BytesKind, CharExpr, Comment,
-    CommentKind, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr, NumberExpr, NumberKind,
-    OptionExpr, OptionValue, SeqExpr, SeqItem, StringExpr, StringKind, StructBody, StructExpr,
-    StructField, Trivia, TupleBody, TupleElement, TupleExpr, UnitExpr,
+    AnonStructExpr, Attribute, AttributeContent, BoolExpr, ByteExpr, BytesExpr, BytesKind,
+    CharExpr, Comment, CommentKind, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr,
+    NumberExpr, NumberKind, OptionExpr, OptionValue, SeqExpr, SeqItem, StringExpr, StringKind,
+    StructBody, StructExpr, StructField, Trivia, TupleBody, TupleElement, TupleExpr, UnitExpr,
 };
 use crate::error::{Error, Position, Result, Span, SpannedError, SpannedResult};
 use crate::lexer::Lexer;
@@ -36,6 +36,8 @@ struct AstParser<'a> {
     tokens: Peekable<Lexer<'a>>,
     /// Buffer for collecting trivia before a token.
     trivia_buffer: Vec<Token<'a>>,
+    /// Lookahead buffer for tokens that were peeked but need to be returned.
+    lookahead: Vec<Token<'a>>,
 }
 
 impl<'a> AstParser<'a> {
@@ -44,11 +46,17 @@ impl<'a> AstParser<'a> {
             source,
             tokens: lexer.peekable(),
             trivia_buffer: Vec::new(),
+            lookahead: Vec::new(),
         }
     }
 
     /// Peek at the next non-trivia token kind without consuming.
     fn peek_kind(&mut self) -> TokenKind {
+        // Check lookahead buffer first
+        if let Some(tok) = self.lookahead.last() {
+            return tok.kind;
+        }
+
         // Collect trivia into buffer and return next non-trivia token
         while let Some(tok) = self.tokens.peek() {
             if tok.kind.is_trivia() {
@@ -63,8 +71,52 @@ impl<'a> AstParser<'a> {
         TokenKind::Eof
     }
 
+    /// Peek at the next two non-trivia token kinds without consuming.
+    /// Returns (first_kind, second_kind).
+    fn peek_two_kinds(&mut self) -> (TokenKind, TokenKind) {
+        // First, ensure we have at least one token in lookahead
+        if self.lookahead.is_empty() {
+            // Collect trivia and find the first non-trivia token
+            while let Some(tok) = self.tokens.peek() {
+                if tok.kind.is_trivia() {
+                    if let Some(tok) = self.tokens.next() {
+                        self.trivia_buffer.push(tok);
+                    }
+                } else {
+                    break;
+                }
+            }
+            if let Some(tok) = self.tokens.next() {
+                self.lookahead.push(tok);
+            }
+        }
+
+        let first_kind = self.lookahead.last().map(|t| t.kind).unwrap_or(TokenKind::Eof);
+
+        // Now find the second non-trivia token
+        // Skip trivia to find second token
+        while let Some(tok) = self.tokens.peek() {
+            if tok.kind.is_trivia() {
+                if let Some(tok) = self.tokens.next() {
+                    self.trivia_buffer.push(tok);
+                }
+            } else {
+                break;
+            }
+        }
+
+        let second_kind = self.tokens.peek().map(|t| t.kind).unwrap_or(TokenKind::Eof);
+
+        (first_kind, second_kind)
+    }
+
     /// Consume and return the next non-trivia token, collecting trivia into buffer.
     fn next_token(&mut self) -> Token<'a> {
+        // Check lookahead buffer first
+        if let Some(tok) = self.lookahead.pop() {
+            return tok;
+        }
+
         // First collect any trivia
         while let Some(tok) = self.tokens.peek() {
             if tok.kind.is_trivia() {
@@ -364,19 +416,9 @@ impl<'a> AstParser<'a> {
 
     /// Check if the next tokens look like `ident:` (a named field).
     fn peek_is_named_field(&mut self) -> bool {
-        // This is tricky without multi-token lookahead
-        // For now, we'll use a heuristic: if we see Ident, peek further
-        if self.peek_kind() != TokenKind::Ident {
-            return false;
-        }
-
-        // We need to consume the ident and check for colon
-        // But we don't want to lose it - so this is a limitation
-        // For a proper implementation, we'd need a lookahead buffer
-
-        // For now, let's not try to distinguish and just parse as tuple
-        // A more sophisticated approach would use a lookahead mechanism
-        false
+        // Check if we have `ident:` pattern using two-token lookahead
+        let (first, second) = self.peek_two_kinds();
+        first == TokenKind::Ident && second == TokenKind::Colon
     }
 
     /// Parse a tuple expression starting after the opening paren.
@@ -518,7 +560,7 @@ impl<'a> AstParser<'a> {
         let close_paren = self.next_token();
 
         // Anonymous struct with fields
-        Ok(Expr::Tuple(TupleExpr {
+        Ok(Expr::AnonStruct(AnonStructExpr {
             span: Span {
                 start: open_paren.span.start,
                 end: close_paren.span.end,
@@ -527,7 +569,7 @@ impl<'a> AstParser<'a> {
             },
             open_paren: open_paren.span,
             leading: Trivia::empty(),
-            elements: vec![],
+            fields,
             trailing,
             close_paren: close_paren.span,
         }))
@@ -1765,6 +1807,186 @@ mod tests {
                 assert_eq!(args, &["unwrap_newtypes"]);
             }
             _ => panic!("expected args"),
+        }
+    }
+
+    // =========================================================================
+    // Anonymous struct parsing tests
+    // =========================================================================
+
+    #[test]
+    fn parse_anon_struct_simple() {
+        // Basic anonymous struct with named fields
+        let doc = parse_document(r#"(name: "test", value: 42)"#).unwrap();
+        match doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert_eq!(s.fields[0].name.name, "name");
+                assert_eq!(s.fields[1].name.name, "value");
+            }
+            _ => panic!("expected anonymous struct, got {:?}", doc.value),
+        }
+    }
+
+    #[test]
+    fn parse_anon_struct_single_field() {
+        // Anonymous struct with a single field
+        let doc = parse_document("(x: 1)").unwrap();
+        match doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 1);
+                assert_eq!(s.fields[0].name.name, "x");
+            }
+            _ => panic!("expected anonymous struct, got {:?}", doc.value),
+        }
+    }
+
+    #[test]
+    fn parse_anon_struct_trailing_comma() {
+        // Anonymous struct with trailing comma
+        let doc = parse_document("(x: 1, y: 2,)").unwrap();
+        match doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert!(s.fields[1].comma.is_some());
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn parse_anon_struct_nested_values() {
+        // Anonymous struct with nested complex values
+        let doc = parse_document(r#"(items: [1, 2, 3], config: (enabled: true))"#).unwrap();
+        match doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert_eq!(s.fields[0].name.name, "items");
+                assert_eq!(s.fields[1].name.name, "config");
+                // Check that the nested value is also an anonymous struct
+                match &s.fields[1].value {
+                    Expr::AnonStruct(inner) => {
+                        assert_eq!(inner.fields.len(), 1);
+                        assert_eq!(inner.fields[0].name.name, "enabled");
+                    }
+                    _ => panic!("expected nested anonymous struct"),
+                }
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn parse_empty_parens_is_unit() {
+        // Empty parentheses should produce Unit, not AnonStruct
+        let doc = parse_document("()").unwrap();
+        assert!(matches!(doc.value, Some(Expr::Unit(_))));
+    }
+
+    #[test]
+    fn parse_tuple_not_anon_struct() {
+        // Tuple values (no colons) should produce Tuple, not AnonStruct
+        let doc = parse_document("(1, 2, 3)").unwrap();
+        match doc.value {
+            Some(Expr::Tuple(t)) => {
+                assert_eq!(t.elements.len(), 3);
+            }
+            _ => panic!("expected tuple, got {:?}", doc.value),
+        }
+    }
+
+    #[test]
+    fn parse_single_element_tuple() {
+        // Single value in parens without colon should be a tuple
+        let doc = parse_document("(x)").unwrap();
+        match doc.value {
+            Some(Expr::Tuple(t)) => {
+                assert_eq!(t.elements.len(), 1);
+                // The element should be a struct (identifier `x`)
+                match &t.elements[0].expr {
+                    Expr::Struct(s) => {
+                        assert_eq!(s.name.name, "x");
+                        assert!(s.body.is_none());
+                    }
+                    _ => panic!("expected struct/identifier"),
+                }
+            }
+            _ => panic!("expected tuple, got {:?}", doc.value),
+        }
+    }
+
+    #[test]
+    fn parse_anon_struct_vs_single_element_tuple() {
+        // `(x: 1)` should be anonymous struct (has colon)
+        let anon = parse_document("(x: 1)").unwrap();
+        assert!(matches!(anon.value, Some(Expr::AnonStruct(_))));
+
+        // `(x)` should be tuple (no colon)
+        let tuple = parse_document("(x)").unwrap();
+        assert!(matches!(tuple.value, Some(Expr::Tuple(_))));
+    }
+
+    #[test]
+    fn parse_anon_struct_with_whitespace() {
+        // Anonymous struct with various whitespace
+        let doc = parse_document("( x : 1 , y : 2 )").unwrap();
+        match doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert_eq!(s.fields[0].name.name, "x");
+                assert_eq!(s.fields[1].name.name, "y");
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn parse_anon_struct_multiline() {
+        // Anonymous struct with newlines
+        let doc = parse_document("(\n  x: 1,\n  y: 2\n)").unwrap();
+        match doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn parse_anon_struct_with_comments() {
+        // Anonymous struct with comments
+        let doc = parse_document("(\n  // comment\n  x: 1\n)").unwrap();
+        match doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 1);
+                assert_eq!(s.fields[0].name.name, "x");
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn parse_anon_struct_field_values() {
+        // Verify various field value types are parsed correctly
+        let doc = parse_document(r#"(
+            bool_field: true,
+            int_field: 42,
+            str_field: "hello",
+            option_field: Some(1),
+            seq_field: [1, 2],
+            map_field: {"a": 1}
+        )"#).unwrap();
+        match doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 6);
+                assert!(matches!(s.fields[0].value, Expr::Bool(_)));
+                assert!(matches!(s.fields[1].value, Expr::Number(_)));
+                assert!(matches!(s.fields[2].value, Expr::String(_)));
+                assert!(matches!(s.fields[3].value, Expr::Option(_)));
+                assert!(matches!(s.fields[4].value, Expr::Seq(_)));
+                assert!(matches!(s.fields[5].value, Expr::Map(_)));
+            }
+            _ => panic!("expected anonymous struct"),
         }
     }
 }

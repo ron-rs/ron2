@@ -7,7 +7,7 @@ description = "Language server providing auto-completions for RON files"
 
 [dependencies]
 ron-schema.workspace = true
-ron.workspace = true
+ron2.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tower-lsp = "0.20"

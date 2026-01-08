@@ -15,10 +15,10 @@
 //! ```rust
 //! use ron_schema::{SerRon, DeRon};
 //!
-//! // Serialize
+//! // Serialize (ron2 uses compact format without spaces)
 //! let values = vec![1, 2, 3];
 //! let ron_string = values.to_ron().unwrap();
-//! assert_eq!(ron_string, "[1, 2, 3]");
+//! assert_eq!(ron_string, "[1,2,3]");
 //!
 //! // Deserialize
 //! let parsed: Vec<i32> = Vec::from_ron("[1, 2, 3]").unwrap();
@@ -71,8 +71,9 @@
 //!     },
 //! );
 //!
-//! // Serialize to RON
-//! let ron_str = ron::ser::to_string_pretty(&schema, Default::default()).unwrap();
+//! // Serialize to RON using the SerRon trait
+//! use ron_schema::SerRon;
+//! let ron_str = schema.to_ron().unwrap();
 //! println!("{}", ron_str);
 //! ```
 

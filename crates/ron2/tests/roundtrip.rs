@@ -1106,3 +1106,103 @@ fn roundtrip_comment_only() {
     let value = from_str("// just a comment\n").unwrap();
     assert_eq!(value, Value::Unit);
 }
+
+// =============================================================================
+// Anonymous Structs
+// =============================================================================
+
+#[test]
+fn roundtrip_anon_struct_simple() {
+    let value = roundtrip(r#"(name: "test", value: 42)"#);
+    assert_eq!(
+        value,
+        Value::Struct(vec![
+            (String::from("name"), Value::String(String::from("test"))),
+            (String::from("value"), Value::Number(Number::U8(42))),
+        ])
+    );
+}
+
+#[test]
+fn roundtrip_anon_struct_single_field() {
+    let value = roundtrip("(x: 1)");
+    assert_eq!(
+        value,
+        Value::Struct(vec![(String::from("x"), Value::Number(Number::U8(1)))])
+    );
+}
+
+#[test]
+fn roundtrip_anon_struct_trailing_comma() {
+    let value = roundtrip("(x: 1, y: 2,)");
+    assert_eq!(
+        value,
+        Value::Struct(vec![
+            (String::from("x"), Value::Number(Number::U8(1))),
+            (String::from("y"), Value::Number(Number::U8(2))),
+        ])
+    );
+}
+
+#[test]
+fn roundtrip_anon_struct_nested() {
+    let value = roundtrip("(outer: (inner: 42))");
+    assert_eq!(
+        value,
+        Value::Struct(vec![(
+            String::from("outer"),
+            Value::Struct(vec![(String::from("inner"), Value::Number(Number::U8(42)))])
+        )])
+    );
+}
+
+#[test]
+fn roundtrip_anon_struct_with_seq() {
+    let value = roundtrip("(items: [1, 2, 3])");
+    assert_eq!(
+        value,
+        Value::Struct(vec![(
+            String::from("items"),
+            Value::Seq(vec![
+                Value::Number(Number::U8(1)),
+                Value::Number(Number::U8(2)),
+                Value::Number(Number::U8(3)),
+            ])
+        )])
+    );
+}
+
+#[test]
+fn roundtrip_anon_struct_with_option() {
+    let value = roundtrip("(value: Some(42))");
+    assert_eq!(
+        value,
+        Value::Struct(vec![(
+            String::from("value"),
+            Value::Option(Some(Box::new(Value::Number(Number::U8(42)))))
+        )])
+    );
+}
+
+#[test]
+fn roundtrip_anon_struct_mixed_types() {
+    let value = roundtrip(r#"(name: "Alice", age: 30, active: true)"#);
+    assert_eq!(
+        value,
+        Value::Struct(vec![
+            (String::from("name"), Value::String(String::from("Alice"))),
+            (String::from("age"), Value::Number(Number::U8(30))),
+            (String::from("active"), Value::Bool(true)),
+        ])
+    );
+}
+
+#[test]
+fn roundtrip_anon_struct_pretty() {
+    roundtrip_pretty("(x: 1, y: 2)");
+}
+
+#[test]
+fn roundtrip_anon_struct_multiline() {
+    roundtrip_pretty("(\n    x: 1,\n    y: 2\n)");
+}

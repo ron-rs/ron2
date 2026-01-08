@@ -21,7 +21,7 @@ pub struct Document {
     /// Extracted schema attribute (`#![schema = "..."]`).
     pub schema_attr: Option<String>,
     /// Parsed RON value (if parsing succeeded).
-    pub parsed_value: Option<ron::Value>,
+    pub parsed_value: Option<ron2::Value>,
     /// Parse error (if parsing failed).
     pub parse_error: Option<ParseError>,
     /// Line offsets for position calculations.
@@ -150,7 +150,7 @@ impl Document {
         // Strip attributes before parsing
         let content_without_attrs = strip_inner_attributes(&self.content);
 
-        match ron::from_str::<ron::Value>(&content_without_attrs) {
+        match ron2::from_str(&content_without_attrs) {
             Ok(value) => {
                 self.parsed_value = Some(value);
             }
