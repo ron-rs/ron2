@@ -309,14 +309,33 @@ impl fmt::Display for Position {
 /// Spans select a range of text between two positions.
 /// Spans are used in [`SpannedError`] to indicate the start and end positions
 /// of the parser cursor before and after it encountered an error in parsing.
+///
+/// Spans also include byte offsets for direct source text slicing.
 pub struct Span {
+    /// The start position (line and column, 1-indexed).
     pub start: Position,
+    /// The end position (line and column, 1-indexed).
     pub end: Position,
+    /// The start byte offset in the source (0-indexed).
+    pub start_offset: usize,
+    /// The end byte offset in the source (0-indexed).
+    pub end_offset: usize,
+}
+
+impl Span {
+    /// Slice the given source text using this span's byte offsets.
+    ///
+    /// # Panics
+    /// Panics if the byte offsets are out of bounds for the source.
+    #[must_use]
+    pub fn slice<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.start_offset..self.end_offset]
+    }
 }
 
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Span { start, end } = self;
+        let Span { start, end, .. } = self;
         if start == end {
             write!(f, "{start}")
         } else {
@@ -461,6 +480,8 @@ mod tests {
                 span: Span {
                     start: Position { line: 1, col: 1 },
                     end: Position { line: 1, col: 5 },
+                    start_offset: 0,
+                    end_offset: 4,
                 }
             }),
             Error::Eof

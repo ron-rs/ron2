@@ -103,6 +103,8 @@ impl Options {
             span: Span {
                 start: Position { line: 1, col: 1 },
                 end: Position::from_src_end(valid_input),
+                start_offset: 0,
+                end_offset: valid_input.len(),
             },
         })
     }

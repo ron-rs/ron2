@@ -36,12 +36,16 @@ extern crate std;
 
 extern crate alloc;
 
+pub mod ast;
+pub mod chars;
 pub mod de;
 pub mod error;
 pub mod extensions;
+pub mod lexer;
 pub mod options;
 pub mod parse;
 pub mod ser;
+pub mod token;
 mod util;
 pub mod value;
 

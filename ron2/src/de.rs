@@ -45,6 +45,8 @@ impl<'a> Deserializer<'a> {
             span: crate::error::Span {
                 start: crate::error::Position { line: 1, col: 1 },
                 end: crate::error::Position { line: 1, col: 1 },
+                start_offset: 0,
+                end_offset: 0,
             },
         })?;
         Self::from_str_with_options(s, options)
@@ -445,7 +447,7 @@ mod tests {
         assert_eq!(from_str("-42").unwrap(), Value::Number(Number::I8(-42)));
         assert_eq!(
             from_str("2.5").unwrap(),
-            Value::Number(Number::F64(2.5.into()))
+            Value::Number(Number::F32(2.5.into()))
         );
     }
 

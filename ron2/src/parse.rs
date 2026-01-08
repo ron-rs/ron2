@@ -137,6 +137,8 @@ impl<'a> Parser<'a> {
             span: Span {
                 start: Position::from_src_end(&self.src[..self.prev_cursor.cursor]),
                 end: Position::from_src_end(&self.src[..self.cursor.cursor]),
+                start_offset: self.prev_cursor.cursor,
+                end_offset: self.cursor.cursor,
             },
         }
     }
