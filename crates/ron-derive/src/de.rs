@@ -105,6 +105,15 @@ fn derive_struct_de(
 
             Ok(quote! {
                 let mut map = match value {
+                    // ron2 parses (name: val) as Value::Struct
+                    ::ron2::Value::Struct(fields) => {
+                        let mut result = ::std::collections::HashMap::new();
+                        for (name, v) in fields {
+                            result.insert(name, v);
+                        }
+                        result
+                    }
+                    // { "name": val } is parsed as Value::Map
                     ::ron2::Value::Map(m) => {
                         let mut result = ::std::collections::HashMap::new();
                         for (k, v) in m {
@@ -114,7 +123,7 @@ fn derive_struct_de(
                         }
                         result
                     }
-                    other => return Err(::ron_schema::RonError::type_mismatch("struct (Map)", other)),
+                    other => return Err(::ron_schema::RonError::type_mismatch("struct", other)),
                 };
 
                 #(#field_extractions)*
@@ -306,24 +315,32 @@ fn derive_enum_de(
 
                 quote! {
                     #variant_name => {
-                        match inner {
-                            ::ron2::Value::Map(m) => {
-                                let mut map: ::std::collections::HashMap<String, ::ron2::Value> = {
-                                    let mut result = ::std::collections::HashMap::new();
-                                    for (k, v) in m {
-                                        if let ::ron2::Value::String(key) = k {
-                                            result.insert(key, v);
-                                        }
-                                    }
-                                    result
-                                };
-
-                                #(#field_extractions)*
-
-                                Ok(#name::#variant_ident { #(#field_names),* })
+                        let map: ::std::collections::HashMap<String, ::ron2::Value> = match inner {
+                            // ron2 parses (name: val) as Value::Struct
+                            ::ron2::Value::Struct(fields) => {
+                                let mut result = ::std::collections::HashMap::new();
+                                for (name, v) in fields {
+                                    result.insert(name, v);
+                                }
+                                result
                             }
-                            other => Err(::ron_schema::RonError::type_mismatch("struct variant (Map)", other)),
-                        }
+                            // { "name": val } is parsed as Value::Map
+                            ::ron2::Value::Map(m) => {
+                                let mut result = ::std::collections::HashMap::new();
+                                for (k, v) in m {
+                                    if let ::ron2::Value::String(key) = k {
+                                        result.insert(key, v);
+                                    }
+                                }
+                                result
+                            }
+                            other => return Err(::ron_schema::RonError::type_mismatch("struct variant", other)),
+                        };
+
+                        let mut map = map;
+                        #(#field_extractions)*
+
+                        Ok(#name::#variant_ident { #(#field_names),* })
                     }
                 }
             }

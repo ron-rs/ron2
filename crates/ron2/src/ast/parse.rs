@@ -3,7 +3,7 @@
 //! This module provides parsing of RON source into a full AST that preserves
 //! all trivia (whitespace and comments) for round-trip editing.
 
-use alloc::{borrow::Cow, boxed::Box, string::String, vec, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 use core::iter::Peekable;
 
 use crate::ast::{
