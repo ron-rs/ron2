@@ -86,9 +86,7 @@ impl Options {
     {
         let mut bytes = Vec::new();
 
-        let io_err = if let Err(err) = rdr.read_to_end(&mut bytes) {
-            err
-        } else {
+        let Err(io_err) = rdr.read_to_end(&mut bytes) else {
             return self.from_bytes(&bytes);
         };
 

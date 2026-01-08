@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_nan_hash() {
         use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use core::hash::{Hash, Hasher};
 
         fn hash<T: Hash>(v: &T) -> u64 {
             let mut state = DefaultHasher::new();

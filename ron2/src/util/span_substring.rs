@@ -1,7 +1,4 @@
-use crate::{
-    de::{Position, Span},
-    error::SpannedResult,
-};
+use crate::error::{Position, Span};
 use alloc::string::String;
 
 impl Position {
@@ -82,70 +79,9 @@ impl Span {
     }
 }
 
-/// Given a string `ron`, a [`SpannedResult`], and a substring, verify that trying to parse `ron` results in an error
-/// equal to the [`SpannedResult`] with a Span that exclusively (as in `[start..end]`) selects that substring.
-/// Note that there are two versions of this helper, inclusive and exclusive. This is because while the parser cursor
-/// arithmetic that computes span positions always produces exclusive spans (as in `[start..end]`),
-/// when doing validation against a target substring, the inclusive check including the final grapheme that triggered
-/// the error is often a more intuitive target to check against.
-/// Meanwhile, if the parser threw an EOF, for example, there is no final grapheme to check, and so
-/// only the exclusive check would produce a meaningful result.
-#[allow(clippy::unwrap_used)]
-#[allow(clippy::missing_panics_doc)]
-pub fn check_error_span_exclusive<T: serde::de::DeserializeOwned + PartialEq + core::fmt::Debug>(
-    ron: &str,
-    check: SpannedResult<T>,
-    substr: &str,
-) {
-    let res_str = crate::de::from_str::<T>(ron);
-    assert_eq!(res_str, check);
-
-    let res_bytes = crate::de::from_bytes::<T>(ron.as_bytes());
-    assert_eq!(res_bytes, check);
-
-    #[cfg(feature = "std")]
-    {
-        let res_reader = crate::de::from_reader::<&[u8], T>(ron.as_bytes());
-        assert_eq!(res_reader, check);
-    }
-
-    assert_eq!(
-        check.unwrap_err().span.substring_exclusive(ron).unwrap(),
-        substr
-    );
-}
-
-/// Given a string `ron`, a [`SpannedResult`], and a substring, verify that trying to parse `ron` results in an error
-/// equal to the [`SpannedResult`] with a Span that inclusively (as in `[start..=end`]) selects that substring.
-/// See [`check_error_span_exclusive`] for the rationale behind both versions of this helper.
-#[allow(clippy::unwrap_used)]
-#[allow(clippy::missing_panics_doc)]
-pub fn check_error_span_inclusive<T: serde::de::DeserializeOwned + PartialEq + core::fmt::Debug>(
-    ron: &str,
-    check: SpannedResult<T>,
-    substr: &str,
-) {
-    let res_str = crate::de::from_str::<T>(ron);
-    assert_eq!(res_str, check);
-
-    let res_bytes = crate::de::from_bytes::<T>(ron.as_bytes());
-    assert_eq!(res_bytes, check);
-
-    #[cfg(feature = "std")]
-    {
-        let res_reader = crate::de::from_reader::<&[u8], T>(ron.as_bytes());
-        assert_eq!(res_reader, check);
-    }
-
-    assert_eq!(
-        check.unwrap_err().span.substring_inclusive(ron).unwrap(),
-        substr
-    );
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::de::{Position, Span};
+    use crate::error::{Position, Span};
 
     fn span(start: Position, end: Position) -> Span {
         Span { start, end }

@@ -550,7 +550,7 @@ impl<'a> Parser<'a> {
         self.src()[index..]
             .chars()
             .next()
-            .map_or(false, is_xid_continue)
+            .is_some_and(is_xid_continue)
     }
 
     /// Check which type of struct we are currently parsing. The parsing state
@@ -782,20 +782,20 @@ impl<'a> Parser<'a> {
             }
 
             if let Some(suffix) = self.src().strip_prefix(literal) {
-                if let Some(post_suffix) = suffix.strip_prefix(F32_SUFFIX) {
-                    if !post_suffix.chars().next().map_or(false, is_xid_continue) {
-                        let float_ron = &self.src()[..literal.len() + F32_SUFFIX.len()];
-                        self.advance_bytes(literal.len() + F32_SUFFIX.len());
-                        return T::try_from_parsed_float(ParsedFloat::F32(*value_f32), float_ron);
-                    }
+                if let Some(post_suffix) = suffix.strip_prefix(F32_SUFFIX)
+                    && !post_suffix.chars().next().is_some_and(is_xid_continue)
+                {
+                    let float_ron = &self.src()[..literal.len() + F32_SUFFIX.len()];
+                    self.advance_bytes(literal.len() + F32_SUFFIX.len());
+                    return T::try_from_parsed_float(ParsedFloat::F32(*value_f32), float_ron);
                 }
 
-                if let Some(post_suffix) = suffix.strip_prefix(F64_SUFFIX) {
-                    if !post_suffix.chars().next().map_or(false, is_xid_continue) {
-                        let float_ron = &self.src()[..literal.len() + F64_SUFFIX.len()];
-                        self.advance_bytes(literal.len() + F64_SUFFIX.len());
-                        return T::try_from_parsed_float(ParsedFloat::F64(*value_f64), float_ron);
-                    }
+                if let Some(post_suffix) = suffix.strip_prefix(F64_SUFFIX)
+                    && !post_suffix.chars().next().is_some_and(is_xid_continue)
+                {
+                    let float_ron = &self.src()[..literal.len() + F64_SUFFIX.len()];
+                    self.advance_bytes(literal.len() + F64_SUFFIX.len());
+                    return T::try_from_parsed_float(ParsedFloat::F64(*value_f64), float_ron);
                 }
             }
         }
@@ -843,9 +843,7 @@ impl<'a> Parser<'a> {
                     break;
                 };
 
-                let parsed = if let Ok(parsed) = res {
-                    parsed
-                } else {
+                let Ok(parsed) = res else {
                     self.set_cursor(backup_cursor);
                     return Err(Error::ExpectedFloat);
                 };
@@ -1155,7 +1153,7 @@ impl<'a> Parser<'a> {
                         1 => s.push(c as u8),
                         len => {
                             let start = s.len();
-                            s.extend(core::iter::repeat(0).take(len));
+                            s.extend(core::iter::repeat_n(0, len));
                             c.encode_utf8(&mut s[start..]);
                         }
                     },
@@ -1650,7 +1648,7 @@ impl<'a> ParsedByteStr<'a> {
             const PADDING: u8 = b'=';
 
             // fast reject for missing padding
-            if (str.len() % 4) != 0 {
+            if !str.len().is_multiple_of(4) {
                 return None;
             }
 

@@ -326,10 +326,10 @@ impl fmt::Display for Span {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for SpannedError {}
+impl core::error::Error for SpannedError {}
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 impl From<Utf8Error> for Error {
     fn from(e: Utf8Error) -> Self {
@@ -395,7 +395,7 @@ impl fmt::Display for Identifier<'_> {
 
         let mut chars = self.0.chars();
 
-        if !chars.next().map_or(false, is_ident_first_char) || !chars.all(is_xid_continue) {
+        if !chars.next().is_some_and(is_ident_first_char) || !chars.all(is_xid_continue) {
             write!(f, "`r#{}`", self.0)
         } else {
             write!(f, "`{}`", self.0)
@@ -450,7 +450,7 @@ mod tests {
     }
 
     fn check_error_message<T: core::fmt::Display>(err: &T, msg: &str) {
-        assert_eq!(alloc::format!("{}", err), msg);
+        assert_eq!(alloc::format!("{err}"), msg);
     }
 
     #[test]

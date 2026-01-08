@@ -2,6 +2,7 @@
 
 Implements everything missing from RON (Rusty Object Notation):
 
+- ron2 (RON without serde but with AST)
 - ron-derive (fix serde limitations)
 - ron-schema (like JSON schema but for RON)
 - ron-lsp (auto completions for RON)
@@ -17,4 +18,3 @@ We introduce two new attributes:
 
 We define a central location in the system where we store the latest schema for each type. The schema attribute overrides the location.
 Our `ron-derive` can generate the schema automatically.
-

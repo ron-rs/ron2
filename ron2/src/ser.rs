@@ -212,8 +212,8 @@ impl<W: Write> Serializer<W> {
 
     #[allow(clippy::too_many_lines)]
     fn serialize_number(&mut self, num: &Number) -> Result<()> {
-        let type_suffix = self.pretty.as_ref().map_or(false, |p| p.integer_type_suffix);
-        let float_suffix = self.pretty.as_ref().map_or(false, |p| p.float_type_suffix);
+        let type_suffix = self.pretty.as_ref().is_some_and(|p| p.integer_type_suffix);
+        let float_suffix = self.pretty.as_ref().is_some_and(|p| p.float_type_suffix);
 
         match num {
             Number::I8(v) => {
@@ -392,10 +392,10 @@ impl<W: Write> Serializer<W> {
 
         if is_struct {
             // Serialize as struct
-            if let Some(name) = type_name {
-                if self.pretty.as_ref().map_or(true, |p| p.struct_names) {
-                    self.writer.write_str(name)?;
-                }
+            if let Some(name) = type_name
+                && self.pretty.as_ref().is_none_or(|p| p.struct_names)
+            {
+                self.writer.write_str(name)?;
             }
 
             self.writer.write_char('(')?;
@@ -580,8 +580,8 @@ mod tests {
         assert_eq!(to_string(&Value::Number(Number::U8(42))).unwrap(), "42");
         assert_eq!(to_string(&Value::Number(Number::I8(-42))).unwrap(), "-42");
         assert_eq!(
-            to_string(&Value::Number(Number::F64(3.14.into()))).unwrap(),
-            "3.14"
+            to_string(&Value::Number(Number::F64(2.5.into()))).unwrap(),
+            "2.5"
         );
     }
 

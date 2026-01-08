@@ -236,30 +236,30 @@ impl<'a> Deserializer<'a> {
         }
 
         // Skip identifier
-        if let Some(&c) = chars.peek() {
-            if crate::parse::is_ident_first_char(c) {
-                chars.next();
-                while let Some(&c) = chars.peek() {
-                    if unicode_ident::is_xid_continue(c) {
-                        chars.next();
-                    } else {
-                        break;
-                    }
+        if let Some(&c) = chars.peek()
+            && crate::parse::is_ident_first_char(c)
+        {
+            chars.next();
+            while let Some(&c) = chars.peek() {
+                if unicode_ident::is_xid_continue(c) {
+                    chars.next();
+                } else {
+                    break;
                 }
+            }
 
-                // Skip whitespace again
-                while let Some(&c) = chars.peek() {
-                    if c.is_whitespace() {
-                        chars.next();
-                    } else {
-                        break;
-                    }
+            // Skip whitespace again
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() {
+                    chars.next();
+                } else {
+                    break;
                 }
+            }
 
-                // Check for colon
-                if let Some(&':') = chars.peek() {
-                    return true;
-                }
+            // Check for colon
+            if let Some(&':') = chars.peek() {
+                return true;
             }
         }
 
@@ -444,8 +444,8 @@ mod tests {
         assert_eq!(from_str("42").unwrap(), Value::Number(Number::U8(42)));
         assert_eq!(from_str("-42").unwrap(), Value::Number(Number::I8(-42)));
         assert_eq!(
-            from_str("3.14").unwrap(),
-            Value::Number(Number::F64(3.14.into()))
+            from_str("2.5").unwrap(),
+            Value::Number(Number::F64(2.5.into()))
         );
     }
 
@@ -490,6 +490,7 @@ mod tests {
     #[test]
     fn test_map() {
         let result = from_str("{\"a\": 1, \"b\": 2}").unwrap();
+        assert!(matches!(result, Value::Map(_)));
         if let Value::Map(map) = result {
             assert_eq!(
                 map.get(&Value::String(String::from("a"))),
@@ -499,14 +500,13 @@ mod tests {
                 map.get(&Value::String(String::from("b"))),
                 Some(&Value::Number(Number::U8(2)))
             );
-        } else {
-            panic!("Expected map");
         }
     }
 
     #[test]
     fn test_struct() {
         let result = from_str("(x: 1, y: 2)").unwrap();
+        assert!(matches!(result, Value::Map(_)));
         if let Value::Map(map) = result {
             assert_eq!(
                 map.get(&Value::String(String::from("x"))),
@@ -516,14 +516,13 @@ mod tests {
                 map.get(&Value::String(String::from("y"))),
                 Some(&Value::Number(Number::U8(2)))
             );
-        } else {
-            panic!("Expected map");
         }
     }
 
     #[test]
     fn test_named_struct() {
         let result = from_str("Point(x: 1, y: 2)").unwrap();
+        assert!(matches!(result, Value::Map(_)));
         if let Value::Map(map) = result {
             assert_eq!(
                 map.get(&Value::String(String::from("__type"))),
@@ -533,8 +532,6 @@ mod tests {
                 map.get(&Value::String(String::from("x"))),
                 Some(&Value::Number(Number::U8(1)))
             );
-        } else {
-            panic!("Expected map");
         }
     }
 }

@@ -9,19 +9,20 @@ authors = [
 edition = "2024"
 description = "Rusty Object Notation - Value-only variant without serde"
 categories = ["encoding"]
-rust-version = "1.87.0"
+rust-version = "1.90.0"
 
 [features]
 default = ["std"]
 integer128 = []
 std = []
 indexmap = ["std", "dep:indexmap"]
-internal-span-substring-test = []
+internal-span-substring-test = ["dep:unicode-segmentation"]
 
 [dependencies]
 bitflags = { version = "2.1", default-features = false }
 indexmap = { version = "2.0", default-features = false, optional = true }
 unicode-ident = { version = "1.0", default-features = false }
+unicode-segmentation = { version = "1.11", default-features = false, optional = true }
 
 [dev-dependencies]
 
