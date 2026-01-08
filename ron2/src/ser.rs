@@ -150,6 +150,58 @@ impl<W: Write> Serializer<W> {
         Ok(())
     }
 
+    /// Helper for serializing delimited collections with consistent formatting.
+    ///
+    /// Handles the common pattern: `open` items... `close` with proper pretty printing.
+    fn serialize_delimited<I, F>(
+        &mut self,
+        open: char,
+        close: char,
+        items: I,
+        len: usize,
+        mut serialize_item: F,
+    ) -> Result<()>
+    where
+        I: Iterator,
+        F: FnMut(&mut Self, I::Item) -> Result<()>,
+    {
+        self.writer.write_char(open)?;
+
+        if len == 0 {
+            self.writer.write_char(close)?;
+            return Ok(());
+        }
+
+        if self.pretty.is_some() {
+            self.write_newline()?;
+            self.current_indent += 1;
+        }
+
+        for (i, item) in items.enumerate() {
+            if self.pretty.is_some() {
+                self.write_indent()?;
+            }
+
+            serialize_item(self, item)?;
+
+            if i < len - 1 {
+                self.writer.write_char(',')?;
+            }
+
+            if self.pretty.is_some() {
+                self.write_newline()?;
+            }
+        }
+
+        if self.pretty.is_some() {
+            self.current_indent -= 1;
+            self.write_indent()?;
+        }
+
+        self.writer.write_char(close)?;
+        Ok(())
+    }
+
     /// Serialize a Value to the writer.
     pub fn serialize(&mut self, value: &Value) -> Result<()> {
         self.enter_recursion()?;
@@ -219,124 +271,53 @@ impl<W: Write> Serializer<W> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_lines)]
     fn serialize_number(&mut self, num: &Number) -> Result<()> {
-        let type_suffix = self.pretty.as_ref().is_some_and(|p| p.integer_type_suffix);
+        let int_suffix = self.pretty.as_ref().is_some_and(|p| p.integer_type_suffix);
         let float_suffix = self.pretty.as_ref().is_some_and(|p| p.float_type_suffix);
 
+        macro_rules! serialize_int {
+            ($v:expr, $suffix:literal) => {{
+                write!(self.writer, "{}", $v)?;
+                if int_suffix {
+                    self.writer.write_str($suffix)?;
+                }
+            }};
+        }
+
+        macro_rules! serialize_float {
+            ($v:expr, $suffix:literal) => {{
+                let f = $v.get();
+                if f.is_nan() {
+                    self.writer.write_str(if f.is_sign_negative() { "-NaN" } else { "NaN" })?;
+                } else if f.is_infinite() {
+                    self.writer.write_str(if f.is_sign_negative() { "-inf" } else { "inf" })?;
+                } else {
+                    write!(self.writer, "{f}")?;
+                    if !Self::has_decimal_point(f) {
+                        self.writer.write_str(".0")?;
+                    }
+                }
+                if float_suffix {
+                    self.writer.write_str($suffix)?;
+                }
+            }};
+        }
+
         match num {
-            Number::I8(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("i8")?;
-                }
-            }
-            Number::I16(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("i16")?;
-                }
-            }
-            Number::I32(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("i32")?;
-                }
-            }
-            Number::I64(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("i64")?;
-                }
-            }
+            Number::I8(v) => serialize_int!(v, "i8"),
+            Number::I16(v) => serialize_int!(v, "i16"),
+            Number::I32(v) => serialize_int!(v, "i32"),
+            Number::I64(v) => serialize_int!(v, "i64"),
             #[cfg(feature = "integer128")]
-            Number::I128(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("i128")?;
-                }
-            }
-            Number::U8(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("u8")?;
-                }
-            }
-            Number::U16(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("u16")?;
-                }
-            }
-            Number::U32(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("u32")?;
-                }
-            }
-            Number::U64(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("u64")?;
-                }
-            }
+            Number::I128(v) => serialize_int!(v, "i128"),
+            Number::U8(v) => serialize_int!(v, "u8"),
+            Number::U16(v) => serialize_int!(v, "u16"),
+            Number::U32(v) => serialize_int!(v, "u32"),
+            Number::U64(v) => serialize_int!(v, "u64"),
             #[cfg(feature = "integer128")]
-            Number::U128(v) => {
-                write!(self.writer, "{v}")?;
-                if type_suffix {
-                    self.writer.write_str("u128")?;
-                }
-            }
-            Number::F32(v) => {
-                let f = v.get();
-                if f.is_nan() {
-                    if f.is_sign_negative() {
-                        self.writer.write_str("-NaN")?;
-                    } else {
-                        self.writer.write_str("NaN")?;
-                    }
-                } else if f.is_infinite() {
-                    if f.is_sign_negative() {
-                        self.writer.write_str("-inf")?;
-                    } else {
-                        self.writer.write_str("inf")?;
-                    }
-                } else {
-                    write!(self.writer, "{f}")?;
-                    // Ensure we have a decimal point
-                    if !Self::has_decimal_point(f) {
-                        self.writer.write_str(".0")?;
-                    }
-                }
-                if float_suffix {
-                    self.writer.write_str("f32")?;
-                }
-            }
-            Number::F64(v) => {
-                let f = v.get();
-                if f.is_nan() {
-                    if f.is_sign_negative() {
-                        self.writer.write_str("-NaN")?;
-                    } else {
-                        self.writer.write_str("NaN")?;
-                    }
-                } else if f.is_infinite() {
-                    if f.is_sign_negative() {
-                        self.writer.write_str("-inf")?;
-                    } else {
-                        self.writer.write_str("inf")?;
-                    }
-                } else {
-                    write!(self.writer, "{f}")?;
-                    // Ensure we have a decimal point
-                    if !Self::has_decimal_point(f) {
-                        self.writer.write_str(".0")?;
-                    }
-                }
-                if float_suffix {
-                    self.writer.write_str("f64")?;
-                }
-            }
+            Number::U128(v) => serialize_int!(v, "u128"),
+            Number::F32(v) => serialize_float!(v, "f32"),
+            Number::F64(v) => serialize_float!(v, "f64"),
             #[cfg(not(doc))]
             Number::__NonExhaustive(never) => never.never(),
         }
@@ -350,123 +331,25 @@ impl<W: Write> Serializer<W> {
     }
 
     fn serialize_seq(&mut self, seq: &[Value]) -> Result<()> {
-        self.writer.write_char('[')?;
-
-        if seq.is_empty() {
-            self.writer.write_char(']')?;
-            return Ok(());
-        }
-
-        if self.pretty.is_some() {
-            self.write_newline()?;
-            self.current_indent += 1;
-        }
-
-        for (i, item) in seq.iter().enumerate() {
-            if self.pretty.is_some() {
-                self.write_indent()?;
-            }
-
-            self.serialize(item)?;
-
-            if i < seq.len() - 1 {
-                self.writer.write_char(',')?;
-            }
-
-            if self.pretty.is_some() {
-                self.write_newline()?;
-            }
-        }
-
-        if self.pretty.is_some() {
-            self.current_indent -= 1;
-            self.write_indent()?;
-        }
-
-        self.writer.write_char(']')?;
-        Ok(())
+        self.serialize_delimited('[', ']', seq.iter(), seq.len(), |s, item| {
+            s.serialize(item)
+        })
     }
 
     /// Serialize a tuple: `(a, b, c)`
     fn serialize_tuple(&mut self, elements: &[Value]) -> Result<()> {
-        self.writer.write_char('(')?;
-
-        if elements.is_empty() {
-            self.writer.write_char(')')?;
-            return Ok(());
-        }
-
-        if self.pretty.is_some() {
-            self.write_newline()?;
-            self.current_indent += 1;
-        }
-
-        for (i, item) in elements.iter().enumerate() {
-            if self.pretty.is_some() {
-                self.write_indent()?;
-            }
-
-            self.serialize(item)?;
-
-            if i < elements.len() - 1 {
-                self.writer.write_char(',')?;
-            }
-
-            if self.pretty.is_some() {
-                self.write_newline()?;
-            }
-        }
-
-        if self.pretty.is_some() {
-            self.current_indent -= 1;
-            self.write_indent()?;
-        }
-
-        self.writer.write_char(')')?;
-        Ok(())
+        self.serialize_delimited('(', ')', elements.iter(), elements.len(), |s, item| {
+            s.serialize(item)
+        })
     }
 
     /// Serialize a map: `{ key: value, ... }`
     fn serialize_map(&mut self, map: &Map) -> Result<()> {
-        self.writer.write_char('{')?;
-
-        if map.is_empty() {
-            self.writer.write_char('}')?;
-            return Ok(());
-        }
-
-        if self.pretty.is_some() {
-            self.write_newline()?;
-            self.current_indent += 1;
-        }
-
-        let entries: alloc::vec::Vec<_> = map.iter().collect();
-
-        for (i, (key, value)) in entries.iter().enumerate() {
-            if self.pretty.is_some() {
-                self.write_indent()?;
-            }
-
-            self.serialize(key)?;
-            self.writer.write_str(": ")?;
-            self.serialize(value)?;
-
-            if i < entries.len() - 1 {
-                self.writer.write_char(',')?;
-            }
-
-            if self.pretty.is_some() {
-                self.write_newline()?;
-            }
-        }
-
-        if self.pretty.is_some() {
-            self.current_indent -= 1;
-            self.write_indent()?;
-        }
-
-        self.writer.write_char('}')?;
-        Ok(())
+        self.serialize_delimited('{', '}', map.iter(), map.len(), |s, (key, value)| {
+            s.serialize(key)?;
+            s.writer.write_str(": ")?;
+            s.serialize(value)
+        })
     }
 
     /// Serialize struct fields: `(x: 1, y: 2)` with optional name prefix
@@ -474,44 +357,11 @@ impl<W: Write> Serializer<W> {
         if let Some(name) = name {
             self.writer.write_str(name)?;
         }
-
-        self.writer.write_char('(')?;
-
-        if fields.is_empty() {
-            self.writer.write_char(')')?;
-            return Ok(());
-        }
-
-        if self.pretty.is_some() {
-            self.write_newline()?;
-            self.current_indent += 1;
-        }
-
-        for (i, (field_name, value)) in fields.iter().enumerate() {
-            if self.pretty.is_some() {
-                self.write_indent()?;
-            }
-
-            self.writer.write_str(field_name)?;
-            self.writer.write_str(": ")?;
-            self.serialize(value)?;
-
-            if i < fields.len() - 1 {
-                self.writer.write_char(',')?;
-            }
-
-            if self.pretty.is_some() {
-                self.write_newline()?;
-            }
-        }
-
-        if self.pretty.is_some() {
-            self.current_indent -= 1;
-            self.write_indent()?;
-        }
-
-        self.writer.write_char(')')?;
-        Ok(())
+        self.serialize_delimited('(', ')', fields.iter(), fields.len(), |s, (field_name, value)| {
+            s.writer.write_str(field_name)?;
+            s.writer.write_str(": ")?;
+            s.serialize(value)
+        })
     }
 
     /// Serialize a named type: `Point`, `Point(1, 2)`, or `Point(x: 1, y: 2)`
@@ -522,40 +372,9 @@ impl<W: Write> Serializer<W> {
             }
             NamedContent::Tuple(elements) => {
                 self.writer.write_str(name)?;
-                self.writer.write_char('(')?;
-
-                if elements.is_empty() {
-                    self.writer.write_char(')')?;
-                    return Ok(());
-                }
-
-                if self.pretty.is_some() {
-                    self.write_newline()?;
-                    self.current_indent += 1;
-                }
-
-                for (i, item) in elements.iter().enumerate() {
-                    if self.pretty.is_some() {
-                        self.write_indent()?;
-                    }
-
-                    self.serialize(item)?;
-
-                    if i < elements.len() - 1 {
-                        self.writer.write_char(',')?;
-                    }
-
-                    if self.pretty.is_some() {
-                        self.write_newline()?;
-                    }
-                }
-
-                if self.pretty.is_some() {
-                    self.current_indent -= 1;
-                    self.write_indent()?;
-                }
-
-                self.writer.write_char(')')?;
+                self.serialize_delimited('(', ')', elements.iter(), elements.len(), |s, item| {
+                    s.serialize(item)
+                })?;
             }
             NamedContent::Struct(fields) => {
                 self.serialize_struct_fields(Some(name), fields)?;
