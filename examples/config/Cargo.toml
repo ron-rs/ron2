@@ -1,0 +1,10 @@
+[package]
+name = "config-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ron-schema = { path = "../../crates/ron-schema" }
+ron-derive = { path = "../../crates/ron-derive" }
+ron = { path = "../../ron" }

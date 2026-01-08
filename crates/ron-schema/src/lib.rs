@@ -5,6 +5,25 @@
 //! - Trait-based schema system for custom types
 //! - Storage utilities for reading/writing schema files
 //! - Validation of RON values against schemas
+//! - Serde-independent serialization ([`SerRon`]) and deserialization ([`DeRon`]) traits
+//!
+//! # Serialization and Deserialization
+//!
+//! The [`SerRon`] and [`DeRon`] traits provide serde-independent serialization
+//! and deserialization for RON format:
+//!
+//! ```rust
+//! use ron_schema::{SerRon, DeRon};
+//!
+//! // Serialize
+//! let values = vec![1, 2, 3];
+//! let ron_string = values.to_ron().unwrap();
+//! assert_eq!(ron_string, "[1, 2, 3]");
+//!
+//! // Deserialize
+//! let parsed: Vec<i32> = Vec::from_ron("[1, 2, 3]").unwrap();
+//! assert_eq!(parsed, vec![1, 2, 3]);
+//! ```
 //!
 //! # Trait-Based Schema System
 //!
@@ -57,11 +76,17 @@
 //! println!("{}", ron_str);
 //! ```
 
+pub mod de;
+pub mod error;
+pub mod ser;
 pub mod storage;
 pub mod traits;
 pub mod types;
 pub mod validation;
 
+pub use de::{parse_ron_value, DeRon, MapAccess};
+pub use error::RonError;
+pub use ser::{value_to_string, value_to_string_pretty, PrettyConfig, SerRon};
 pub use storage::{
     find_schema, find_schema_in, read_schema, resolve_schema_dir, write_schema, StorageError,
     SCHEMA_DIR_ENV,

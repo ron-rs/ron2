@@ -1,0 +1,34 @@
+(
+    doc: Some("Application configuration for a web server."),
+    kind: Struct(
+        fields: [
+            (
+                name: "port",
+                ty: U16,
+                doc: Some("Server port number."),
+            ),
+            (
+                name: "host",
+                ty: String,
+                doc: Some("Server hostname."),
+                optional: true,
+            ),
+            (
+                name: "debug",
+                ty: Bool,
+                doc: Some("Whether debug mode is enabled."),
+                optional: true,
+            ),
+            (
+                name: "features",
+                ty: List(TypeRef("Feature")),
+                doc: Some("List of enabled features."),
+            ),
+            (
+                name: "database",
+                ty: TypeRef("DatabaseConfig"),
+                doc: Some("Database configuration."),
+            ),
+        ],
+    ),
+)

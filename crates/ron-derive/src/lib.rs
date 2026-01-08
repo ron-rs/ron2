@@ -1,94 +1,145 @@
-//! RON Schema derive macro for generating schemas at compile time.
+//! RON derive macros for serialization, deserialization, and schema generation.
 //!
-//! This crate provides the `#[derive(RonSchema)]` macro which generates RON schema
-//! files at compile time for Rust structs and enums.
+//! This crate provides three derive macros:
+//!
+//! - `#[derive(RonSchema)]` - Generate RON schema files at compile time
+//! - `#[derive(SerRon)]` - Serialize to RON without serde
+//! - `#[derive(DeRon)]` - Deserialize from RON without serde
+//!
+//! All three derives share the `#[ron(...)]` attribute namespace.
 //!
 //! # Example
 //!
 //! ```ignore
-//! use ron_derive::RonSchema;
+//! use ron_derive::{RonSchema, SerRon, DeRon};
 //!
-//! #[derive(RonSchema)]
-//! #[ron_schema(output = "schemas/")]  // Optional: relative to crate root
+//! #[derive(Debug, PartialEq, RonSchema, SerRon, DeRon)]
+//! #[ron(output = "schemas/")]  // Optional: relative to crate root
 //! /// Application configuration
 //! struct AppConfig {
 //!     /// Server port
 //!     port: u16,
 //!     /// Optional hostname
-//!     #[ron_schema(default)]
+//!     #[ron(default)]
 //!     host: Option<String>,
 //! }
 //! ```
 //!
-//! This will generate `schemas/crate_name/AppConfig.schema.ron` at compile time.
+//! # Container Attributes
+//!
+//! - `#[ron(rename = "Name")]` - Rename the type in RON output
+//! - `#[ron(rename_all = "camelCase")]` - Rename all fields (camelCase, snake_case, PascalCase, etc.)
+//! - `#[ron(output = "path/")]` - Set schema output directory (RonSchema only)
+//! - `#[ron(deny_unknown_fields)]` - Error on unknown fields during deserialization
 //!
 //! # Field Attributes
 //!
-//! The following attributes can be used on struct fields:
+//! - `#[ron(rename = "name")]` - Rename this field
+//! - `#[ron(skip)]` - Skip this field entirely
+//! - `#[ron(skip_serializing)]` - Skip during serialization only
+//! - `#[ron(skip_deserializing)]` - Skip during deserialization (use default)
+//! - `#[ron(default)]` - Use `Default::default()` if missing
+//! - `#[ron(default = "path::to::fn")]` - Use custom default function
+//! - `#[ron(flatten)]` - Flatten nested struct fields into parent
+//! - `#[ron(skip_serializing_if = "path::to::fn")]` - Skip if predicate returns true
 //!
-//! - `#[ron_schema(default)]` - Mark field as optional (has a default value)
-//! - `#[ron_schema(flatten)]` - Flatten nested struct fields into the parent
-//! - `#[ron_schema(skip)]` - Skip this field in the schema
+//! # Variant Attributes
 //!
-//! ## Flattening Example
+//! - `#[ron(rename = "Name")]` - Rename this variant
+//! - `#[ron(skip)]` - Skip this variant
 //!
-//! ```ignore
-//! #[derive(RonSchema)]
-//! struct Base {
-//!     name: String,
-//!     age: u32,
-//! }
+//! # Legacy Support
 //!
-//! #[derive(RonSchema)]
-//! struct Extended {
-//!     #[ron_schema(flatten)]
-//!     base: Base,
-//!     extra: String,
-//! }
-//! // Results in schema with fields: name, age, extra
-//! ```
+//! The `#[ron_schema(...)]` attribute is still supported for backwards compatibility
+//! but is deprecated in favor of `#[ron(...)]`.
+
+mod attr;
+mod de;
+mod ser;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Field, Fields, GenericArgument, Ident,
-    PathArguments, Type,
+    parse_macro_input, Data, DeriveInput, Fields, GenericArgument, Ident, PathArguments, Type,
 };
+
+use attr::{extract_doc_comment, ContainerAttrs, FieldAttrs};
 
 /// Derive macro for generating RON schemas at compile time.
 ///
 /// # Attributes
 ///
-/// ## Type-level attributes
+/// ## Container attributes
 ///
-/// - `#[ron_schema(output = "path/")]` - Set custom output directory relative to crate root
+/// - `#[ron(output = "path/")]` - Set custom output directory relative to crate root
+/// - `#[ron(rename = "Name")]` - Rename the type
+/// - `#[ron(rename_all = "camelCase")]` - Rename all fields
 ///
-/// ## Field-level attributes
+/// ## Field attributes
 ///
-/// - `#[ron_schema(default)]` - Mark field as optional (has a default value)
-/// - `#[ron_schema(flatten)]` - Flatten nested struct fields into the parent
-/// - `#[ron_schema(skip)]` - Skip this field in the schema
-///
-/// # Example
-///
-/// ```ignore
-/// #[derive(RonSchema)]
-/// /// My struct documentation
-/// struct MyStruct {
-///     /// Field documentation
-///     field: u32,
-///     #[ron_schema(default)]
-///     optional_field: Option<String>,
-///     #[ron_schema(flatten)]
-///     nested: OtherStruct,
-/// }
-/// ```
-#[proc_macro_derive(RonSchema, attributes(ron_schema))]
+/// - `#[ron(default)]` - Mark field as optional (has a default value)
+/// - `#[ron(flatten)]` - Flatten nested struct fields into the parent
+/// - `#[ron(skip)]` - Skip this field in the schema
+/// - `#[ron(rename = "name")]` - Rename this field
+#[proc_macro_derive(RonSchema, attributes(ron, ron_schema))]
 pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     match impl_ron_schema(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derive macro for serializing to RON without serde.
+///
+/// # Example
+///
+/// ```ignore
+/// use ron_derive::SerRon;
+/// use ron_schema::SerRon;
+///
+/// #[derive(SerRon)]
+/// struct Point {
+///     x: f32,
+///     y: f32,
+/// }
+///
+/// let point = Point { x: 1.0, y: 2.0 };
+/// let ron = point.to_ron().unwrap();
+/// ```
+#[proc_macro_derive(SerRon, attributes(ron, ron_schema))]
+pub fn derive_ser_ron(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    match ser::derive_ser_ron(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derive macro for deserializing from RON without serde.
+///
+/// # Example
+///
+/// ```ignore
+/// use ron_derive::DeRon;
+/// use ron_schema::DeRon;
+///
+/// #[derive(DeRon)]
+/// struct Point {
+///     x: f32,
+///     y: f32,
+/// }
+///
+/// let point: Point = Point::from_ron("(x: 1.0, y: 2.0)").unwrap();
+/// ```
+#[proc_macro_derive(DeRon, attributes(ron, ron_schema))]
+pub fn derive_de_ron(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    match de::derive_de_ron(&input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
@@ -101,13 +152,13 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // Extract doc comment
     let doc = extract_doc_comment(&input.attrs);
 
-    // Extract output path from #[ron_schema(output = "...")] attribute
-    let output_path = extract_output_path(&input.attrs)?;
+    // Extract container attributes
+    let container_attrs = ContainerAttrs::from_ast(&input.attrs)?;
 
     // Generate the TypeKind based on the data type
     let type_kind_tokens = match &input.data {
-        Data::Struct(data_struct) => generate_struct_kind(&data_struct.fields)?,
-        Data::Enum(data_enum) => generate_enum_kind(data_enum)?,
+        Data::Struct(data_struct) => generate_struct_kind(&data_struct.fields, &container_attrs)?,
+        Data::Enum(data_enum) => generate_enum_kind(data_enum, &container_attrs)?,
         Data::Union(_) => {
             return Err(syn::Error::new_spanned(
                 input,
@@ -128,7 +179,7 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     // Generate output directory resolution
-    let output_dir_tokens = if let Some(path) = output_path {
+    let output_dir_tokens = if let Some(ref path) = container_attrs.output {
         quote! {
             // Relative to CARGO_MANIFEST_DIR (crate root)
             let manifest_dir = ::std::env::var("CARGO_MANIFEST_DIR")
@@ -147,8 +198,10 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let schema_fn_name = Ident::new(&format!("__ron_schema_{}", snake_name), name.span());
     let write_fn_name = Ident::new(&format!("__ron_schema_write_{}", snake_name), name.span());
 
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
     let expanded = quote! {
-        impl #name {
+        impl #impl_generics #name #ty_generics #where_clause {
             /// Returns the RON schema for this type.
             #[doc(hidden)]
             pub fn #schema_fn_name() -> ::ron_schema::Schema {
@@ -180,14 +233,14 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         // Implement RonSchemaType trait
-        impl ::ron_schema::RonSchemaType for #name {
+        impl #impl_generics ::ron_schema::RonSchemaType for #name #ty_generics #where_clause {
             fn type_kind() -> ::ron_schema::TypeKind {
                 #type_kind_tokens
             }
         }
 
         // Implement RonSchema trait
-        impl ::ron_schema::RonSchema for #name {
+        impl #impl_generics ::ron_schema::RonSchema for #name #ty_generics #where_clause {
             fn schema() -> ::ron_schema::Schema {
                 Self::#schema_fn_name()
             }
@@ -205,121 +258,21 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
     Ok(expanded)
 }
 
-/// Extract the doc comment from attributes.
-fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
-    let mut docs = Vec::new();
-
-    for attr in attrs {
-        if attr.path().is_ident("doc") {
-            if let syn::Meta::NameValue(meta) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(lit_str),
-                    ..
-                }) = &meta.value
-                {
-                    let value = lit_str.value();
-                    // Trim leading space that's typically added by rustdoc
-                    let trimmed = value.strip_prefix(' ').unwrap_or(&value);
-                    docs.push(trimmed.to_string());
-                }
-            }
-        }
-    }
-
-    if docs.is_empty() {
-        None
-    } else {
-        Some(docs.join("\n"))
-    }
-}
-
-/// Extract the output path from #[ron_schema(output = "...")] attribute.
-fn extract_output_path(attrs: &[Attribute]) -> syn::Result<Option<String>> {
-    for attr in attrs {
-        if attr.path().is_ident("ron_schema") {
-            let nested = attr.parse_args_with(
-                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-            )?;
-
-            for meta in nested {
-                if let syn::Meta::NameValue(nv) = meta {
-                    if nv.path.is_ident("output") {
-                        if let syn::Expr::Lit(syn::ExprLit {
-                            lit: syn::Lit::Str(lit_str),
-                            ..
-                        }) = &nv.value
-                        {
-                            return Ok(Some(lit_str.value()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-/// Field attributes parsed from #[ron_schema(...)] attributes.
-#[derive(Default)]
-struct FieldAttrs {
-    /// Field has a default value and is optional.
-    default: bool,
-    /// Field should be flattened (its struct fields merged into parent).
-    flatten: bool,
-    /// Field should be skipped in the schema.
-    skip: bool,
-}
-
-/// Parse ron_schema attributes from a field.
-fn parse_field_attrs(attrs: &[Attribute]) -> syn::Result<FieldAttrs> {
-    let mut result = FieldAttrs::default();
-
-    for attr in attrs {
-        if attr.path().is_ident("ron_schema") {
-            let nested = attr.parse_args_with(
-                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-            )?;
-
-            for meta in nested {
-                match &meta {
-                    syn::Meta::Path(path) => {
-                        if path.is_ident("default") {
-                            result.default = true;
-                        } else if path.is_ident("flatten") {
-                            result.flatten = true;
-                        } else if path.is_ident("skip") {
-                            result.skip = true;
-                        }
-                    }
-                    syn::Meta::NameValue(nv) if nv.path.is_ident("default") => {
-                        // Support #[ron_schema(default = "...")] syntax too
-                        result.default = true;
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    Ok(result)
-}
-
 /// Generate TypeKind tokens for a struct's fields.
-fn generate_struct_kind(fields: &Fields) -> syn::Result<TokenStream2> {
+fn generate_struct_kind(fields: &Fields, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
     match fields {
         Fields::Named(named) => {
             let mut field_tokens: Vec<TokenStream2> = Vec::new();
 
             for f in named.named.iter() {
-                let attrs = parse_field_attrs(&f.attrs)?;
+                let attrs = FieldAttrs::from_ast(&f.attrs)?;
 
-                // Skip fields marked with #[ron_schema(skip)]
+                // Skip fields marked with #[ron(skip)]
                 if attrs.skip {
                     continue;
                 }
 
-                field_tokens.push(generate_field(f, &attrs)?);
+                field_tokens.push(generate_field(f, &attrs, container_attrs)?);
             }
 
             Ok(quote! {
@@ -350,11 +303,11 @@ fn generate_struct_kind(fields: &Fields) -> syn::Result<TokenStream2> {
 }
 
 /// Generate TypeKind tokens for an enum.
-fn generate_enum_kind(data_enum: &syn::DataEnum) -> syn::Result<TokenStream2> {
+fn generate_enum_kind(data_enum: &syn::DataEnum, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
     let variant_tokens: Vec<TokenStream2> = data_enum
         .variants
         .iter()
-        .map(|v| generate_variant(v))
+        .map(|v| generate_variant(v, container_attrs))
         .collect::<syn::Result<Vec<_>>>()?;
 
     Ok(quote! {
@@ -365,16 +318,21 @@ fn generate_enum_kind(data_enum: &syn::DataEnum) -> syn::Result<TokenStream2> {
 }
 
 /// Generate Field tokens for a struct field.
-fn generate_field(field: &Field, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
-    let name = field
+fn generate_field(
+    field: &syn::Field,
+    attrs: &FieldAttrs,
+    container_attrs: &ContainerAttrs,
+) -> syn::Result<TokenStream2> {
+    let original_name = field
         .ident
         .as_ref()
         .ok_or_else(|| syn::Error::new_spanned(field, "Expected named field"))?
         .to_string();
 
+    let name = attrs.effective_name(&original_name, container_attrs);
     let type_kind = type_to_type_kind(&field.ty)?;
     let doc = extract_doc_comment(&field.attrs);
-    let optional = attrs.default;
+    let optional = attrs.has_default();
     let flattened = attrs.flatten;
 
     let doc_tokens = match doc {
@@ -394,8 +352,10 @@ fn generate_field(field: &Field, attrs: &FieldAttrs) -> syn::Result<TokenStream2
 }
 
 /// Generate Variant tokens for an enum variant.
-fn generate_variant(variant: &syn::Variant) -> syn::Result<TokenStream2> {
-    let name = variant.ident.to_string();
+fn generate_variant(variant: &syn::Variant, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
+    let variant_attrs = attr::VariantAttrs::from_ast(&variant.attrs)?;
+    let original_name = variant.ident.to_string();
+    let name = variant_attrs.effective_name(&original_name, container_attrs);
     let doc = extract_doc_comment(&variant.attrs);
 
     let doc_tokens = match doc {
@@ -420,14 +380,14 @@ fn generate_variant(variant: &syn::Variant) -> syn::Result<TokenStream2> {
             let mut field_tokens: Vec<TokenStream2> = Vec::new();
 
             for f in named.named.iter() {
-                let attrs = parse_field_attrs(&f.attrs)?;
+                let attrs = FieldAttrs::from_ast(&f.attrs)?;
 
-                // Skip fields marked with #[ron_schema(skip)]
+                // Skip fields marked with #[ron(skip)]
                 if attrs.skip {
                     continue;
                 }
 
-                field_tokens.push(generate_field(f, &attrs)?);
+                field_tokens.push(generate_field(f, &attrs, container_attrs)?);
             }
 
             quote! {

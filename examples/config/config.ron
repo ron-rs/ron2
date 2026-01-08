@@ -1,0 +1,38 @@
+// Example RON configuration file
+// This file demonstrates the RON format used with ron-derive
+
+(
+    // Server port number
+    port: 8080,
+
+    // Server hostname (optional - has default)
+    host: "localhost",
+
+    // Debug mode (optional - defaults to false)
+    debug: true,
+
+    // List of enabled features
+    features: [
+        // Unit variant
+        {"Logging": ()},
+
+        // Another unit variant
+        {"Metrics": ()},
+
+        // Struct variant with fields
+        {"Auth": (
+            provider: "oauth2",
+            require_email: true,
+        )},
+
+        // Newtype variant
+        {"RateLimit": 100},
+    ],
+
+    // Database configuration
+    database: (
+        url: "postgres://localhost/myapp",
+        max_connections: 20,
+        timeout_secs: 60,
+    ),
+)

@@ -1,0 +1,30 @@
+[package]
+name = "ron2"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+keywords = ["parser", "serialization", "ron"]
+authors = [
+	"Thomas Schaller <torkleyy@gmail.com>",
+]
+edition = "2024"
+description = "Rusty Object Notation - Value-only variant without serde"
+categories = ["encoding"]
+rust-version = "1.87.0"
+
+[features]
+default = ["std"]
+integer128 = []
+std = []
+indexmap = ["std", "dep:indexmap"]
+internal-span-substring-test = []
+
+[dependencies]
+bitflags = { version = "2.1", default-features = false }
+indexmap = { version = "2.0", default-features = false, optional = true }
+unicode-ident = { version = "1.0", default-features = false }
+
+[dev-dependencies]
+
+[package.metadata.docs.rs]
+features = ["integer128", "indexmap"]
+rustdoc-args = ["--generate-link-to-definition"]
