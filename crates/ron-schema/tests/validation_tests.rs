@@ -188,13 +188,13 @@ fn test_validate_nested_option() {
 
 #[test]
 fn test_validate_vec_empty() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::I32));
+    let kind = TypeKind::List(Box::new(TypeKind::I32));
     assert!(validate_type(&Value::Seq(vec![]), &kind).is_ok());
 }
 
 #[test]
 fn test_validate_vec_with_elements() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::I32));
+    let kind = TypeKind::List(Box::new(TypeKind::I32));
     let value = Value::Seq(vec![
         Value::Number(1.into()),
         Value::Number(2.into()),
@@ -205,7 +205,7 @@ fn test_validate_vec_with_elements() {
 
 #[test]
 fn test_validate_vec_with_wrong_element_type() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::I32));
+    let kind = TypeKind::List(Box::new(TypeKind::I32));
     let value = Value::Seq(vec![
         Value::Number(1.into()),
         Value::String("bad".into()),
@@ -220,7 +220,7 @@ fn test_validate_vec_with_wrong_element_type() {
 
 #[test]
 fn test_validate_vec_all_wrong_type() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::String));
+    let kind = TypeKind::List(Box::new(TypeKind::String));
     let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
     let result = validate_type(&value, &kind);
     assert!(matches!(
@@ -231,14 +231,14 @@ fn test_validate_vec_all_wrong_type() {
 
 #[test]
 fn test_validate_vec_mismatch() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::I32));
+    let kind = TypeKind::List(Box::new(TypeKind::I32));
     let result = validate_type(&Value::String("not a vec".into()), &kind);
     assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
 }
 
 #[test]
 fn test_validate_vec_of_options() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::Option(Box::new(TypeKind::String))));
+    let kind = TypeKind::List(Box::new(TypeKind::Option(Box::new(TypeKind::String))));
     let value = Value::Seq(vec![
         Value::Option(Some(Box::new(Value::String("hello".into())))),
         Value::Option(None),
@@ -392,7 +392,7 @@ fn test_validate_map_mismatch() {
 fn test_validate_map_complex_value() {
     let kind = TypeKind::Map {
         key: Box::new(TypeKind::String),
-        value: Box::new(TypeKind::Vec(Box::new(TypeKind::I32))),
+        value: Box::new(TypeKind::List(Box::new(TypeKind::I32))),
     };
     let value: Value = parse_ron(r#"{ "nums": [1, 2, 3], "more": [4, 5] }"#);
     assert!(validate_type(&value, &kind).is_ok());
@@ -716,12 +716,12 @@ fn test_validate_deeply_nested_structure() {
     let schema = Schema::new(TypeKind::Struct {
         fields: vec![Field::new(
             "data",
-            TypeKind::Vec(Box::new(TypeKind::Map {
+            TypeKind::List(Box::new(TypeKind::Map {
                 key: Box::new(TypeKind::String),
                 value: Box::new(TypeKind::Option(Box::new(TypeKind::Struct {
                     fields: vec![
                         Field::new("id", TypeKind::I32),
-                        Field::optional("tags", TypeKind::Vec(Box::new(TypeKind::String))),
+                        Field::optional("tags", TypeKind::List(Box::new(TypeKind::String))),
                     ],
                 }))),
             })),
@@ -750,7 +750,7 @@ fn test_validate_error_path_in_nested_structure() {
     let schema = Schema::new(TypeKind::Struct {
         fields: vec![Field::new(
             "items",
-            TypeKind::Vec(Box::new(TypeKind::Struct {
+            TypeKind::List(Box::new(TypeKind::Struct {
                 fields: vec![Field::new("value", TypeKind::I32)],
             })),
         )],
@@ -845,7 +845,7 @@ fn test_error_tuple_length_mismatch_message() {
 
 #[test]
 fn test_error_element_error_index() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::I32));
+    let kind = TypeKind::List(Box::new(TypeKind::I32));
     let value = Value::Seq(vec![
         Value::Number(1.into()),
         Value::Number(2.into()),

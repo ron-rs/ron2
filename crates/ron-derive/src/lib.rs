@@ -15,12 +15,38 @@
 //!     /// Server port
 //!     port: u16,
 //!     /// Optional hostname
-//!     #[serde(default)]
+//!     #[ron_schema(default)]
 //!     host: Option<String>,
 //! }
 //! ```
 //!
 //! This will generate `schemas/crate_name/AppConfig.schema.ron` at compile time.
+//!
+//! # Field Attributes
+//!
+//! The following attributes can be used on struct fields:
+//!
+//! - `#[ron_schema(default)]` - Mark field as optional (has a default value)
+//! - `#[ron_schema(flatten)]` - Flatten nested struct fields into the parent
+//! - `#[ron_schema(skip)]` - Skip this field in the schema
+//!
+//! ## Flattening Example
+//!
+//! ```ignore
+//! #[derive(RonSchema)]
+//! struct Base {
+//!     name: String,
+//!     age: u32,
+//! }
+//!
+//! #[derive(RonSchema)]
+//! struct Extended {
+//!     #[ron_schema(flatten)]
+//!     base: Base,
+//!     extra: String,
+//! }
+//! // Results in schema with fields: name, age, extra
+//! ```
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -34,7 +60,15 @@ use syn::{
 ///
 /// # Attributes
 ///
+/// ## Type-level attributes
+///
 /// - `#[ron_schema(output = "path/")]` - Set custom output directory relative to crate root
+///
+/// ## Field-level attributes
+///
+/// - `#[ron_schema(default)]` - Mark field as optional (has a default value)
+/// - `#[ron_schema(flatten)]` - Flatten nested struct fields into the parent
+/// - `#[ron_schema(skip)]` - Skip this field in the schema
 ///
 /// # Example
 ///
@@ -44,11 +78,13 @@ use syn::{
 /// struct MyStruct {
 ///     /// Field documentation
 ///     field: u32,
-///     #[serde(default)]
+///     #[ron_schema(default)]
 ///     optional_field: Option<String>,
+///     #[ron_schema(flatten)]
+///     nested: OtherStruct,
 /// }
 /// ```
-#[proc_macro_derive(RonSchema, attributes(ron_schema, serde))]
+#[proc_macro_derive(RonSchema, attributes(ron_schema))]
 pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -143,6 +179,13 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
 
+        // Implement RonSchemaType trait
+        impl ::ron_schema::RonSchemaType for #name {
+            fn type_kind() -> ::ron_schema::TypeKind {
+                #type_kind_tokens
+            }
+        }
+
         // Implement RonSchema trait
         impl ::ron_schema::RonSchema for #name {
             fn schema() -> ::ron_schema::Schema {
@@ -217,35 +260,67 @@ fn extract_output_path(attrs: &[Attribute]) -> syn::Result<Option<String>> {
     Ok(None)
 }
 
-/// Check if a field has #[serde(default)] or #[serde(default = "...")] attribute.
-fn has_serde_default(attrs: &[Attribute]) -> bool {
+/// Field attributes parsed from #[ron_schema(...)] attributes.
+#[derive(Default)]
+struct FieldAttrs {
+    /// Field has a default value and is optional.
+    default: bool,
+    /// Field should be flattened (its struct fields merged into parent).
+    flatten: bool,
+    /// Field should be skipped in the schema.
+    skip: bool,
+}
+
+/// Parse ron_schema attributes from a field.
+fn parse_field_attrs(attrs: &[Attribute]) -> syn::Result<FieldAttrs> {
+    let mut result = FieldAttrs::default();
+
     for attr in attrs {
-        if attr.path().is_ident("serde") {
-            if let Ok(nested) = attr.parse_args_with(
+        if attr.path().is_ident("ron_schema") {
+            let nested = attr.parse_args_with(
                 syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-            ) {
-                for meta in nested {
-                    match &meta {
-                        syn::Meta::Path(path) if path.is_ident("default") => return true,
-                        syn::Meta::NameValue(nv) if nv.path.is_ident("default") => return true,
-                        _ => {}
+            )?;
+
+            for meta in nested {
+                match &meta {
+                    syn::Meta::Path(path) => {
+                        if path.is_ident("default") {
+                            result.default = true;
+                        } else if path.is_ident("flatten") {
+                            result.flatten = true;
+                        } else if path.is_ident("skip") {
+                            result.skip = true;
+                        }
                     }
+                    syn::Meta::NameValue(nv) if nv.path.is_ident("default") => {
+                        // Support #[ron_schema(default = "...")] syntax too
+                        result.default = true;
+                    }
+                    _ => {}
                 }
             }
         }
     }
-    false
+
+    Ok(result)
 }
 
 /// Generate TypeKind tokens for a struct's fields.
 fn generate_struct_kind(fields: &Fields) -> syn::Result<TokenStream2> {
     match fields {
         Fields::Named(named) => {
-            let field_tokens: Vec<TokenStream2> = named
-                .named
-                .iter()
-                .map(|f| generate_field(f))
-                .collect::<syn::Result<Vec<_>>>()?;
+            let mut field_tokens: Vec<TokenStream2> = Vec::new();
+
+            for f in named.named.iter() {
+                let attrs = parse_field_attrs(&f.attrs)?;
+
+                // Skip fields marked with #[ron_schema(skip)]
+                if attrs.skip {
+                    continue;
+                }
+
+                field_tokens.push(generate_field(f, &attrs)?);
+            }
 
             Ok(quote! {
                 ::ron_schema::TypeKind::Struct {
@@ -290,7 +365,7 @@ fn generate_enum_kind(data_enum: &syn::DataEnum) -> syn::Result<TokenStream2> {
 }
 
 /// Generate Field tokens for a struct field.
-fn generate_field(field: &Field) -> syn::Result<TokenStream2> {
+fn generate_field(field: &Field, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
     let name = field
         .ident
         .as_ref()
@@ -299,7 +374,8 @@ fn generate_field(field: &Field) -> syn::Result<TokenStream2> {
 
     let type_kind = type_to_type_kind(&field.ty)?;
     let doc = extract_doc_comment(&field.attrs);
-    let optional = has_serde_default(&field.attrs);
+    let optional = attrs.default;
+    let flattened = attrs.flatten;
 
     let doc_tokens = match doc {
         Some(d) => quote! { Some(#d.to_string()) },
@@ -312,6 +388,7 @@ fn generate_field(field: &Field) -> syn::Result<TokenStream2> {
             ty: #type_kind,
             doc: #doc_tokens,
             optional: #optional,
+            flattened: #flattened,
         }
     })
 }
@@ -340,11 +417,18 @@ fn generate_variant(variant: &syn::Variant) -> syn::Result<TokenStream2> {
             }
         }
         Fields::Named(named) => {
-            let field_tokens: Vec<TokenStream2> = named
-                .named
-                .iter()
-                .map(|f| generate_field(f))
-                .collect::<syn::Result<Vec<_>>>()?;
+            let mut field_tokens: Vec<TokenStream2> = Vec::new();
+
+            for f in named.named.iter() {
+                let attrs = parse_field_attrs(&f.attrs)?;
+
+                // Skip fields marked with #[ron_schema(skip)]
+                if attrs.skip {
+                    continue;
+                }
+
+                field_tokens.push(generate_field(f, &attrs)?);
+            }
 
             quote! {
                 ::ron_schema::VariantKind::Struct(vec![#(#field_tokens),*])
@@ -413,10 +497,13 @@ fn type_to_type_kind(ty: &Type) -> syn::Result<TokenStream2> {
                                 ::ron_schema::TypeKind::Option(Box::new(#inner))
                             });
                         }
-                        "Vec" if generic_args.len() == 1 => {
+                        // List-like types: Vec, VecDeque, HashSet, BTreeSet, LinkedList
+                        "Vec" | "VecDeque" | "HashSet" | "BTreeSet" | "LinkedList"
+                            if generic_args.len() == 1 =>
+                        {
                             let inner = type_to_type_kind(generic_args[0])?;
                             return Ok(quote! {
-                                ::ron_schema::TypeKind::Vec(Box::new(#inner))
+                                ::ron_schema::TypeKind::List(Box::new(#inner))
                             });
                         }
                         "HashMap" | "BTreeMap" if generic_args.len() == 2 => {
@@ -467,17 +554,17 @@ fn type_to_type_kind(ty: &Type) -> syn::Result<TokenStream2> {
             type_to_type_kind(&reference.elem)
         }
         Type::Array(array) => {
-            // Treat arrays like Vec for schema purposes
+            // Treat arrays as List for schema purposes
             let inner = type_to_type_kind(&array.elem)?;
             Ok(quote! {
-                ::ron_schema::TypeKind::Vec(Box::new(#inner))
+                ::ron_schema::TypeKind::List(Box::new(#inner))
             })
         }
         Type::Slice(slice) => {
-            // Treat slices like Vec for schema purposes
+            // Treat slices as List for schema purposes
             let inner = type_to_type_kind(&slice.elem)?;
             Ok(quote! {
-                ::ron_schema::TypeKind::Vec(Box::new(#inner))
+                ::ron_schema::TypeKind::List(Box::new(#inner))
             })
         }
         _ => {

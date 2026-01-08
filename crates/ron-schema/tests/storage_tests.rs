@@ -15,6 +15,7 @@ use ron_schema::{
     find_schema_in, read_schema, resolve_schema_dir, write_schema, Field, Schema, TypeKind,
     SCHEMA_DIR_ENV,
 };
+use serial_test::serial;
 
 /// Create a temporary directory for testing.
 fn create_temp_dir() -> tempfile::TempDir {
@@ -114,7 +115,7 @@ fn test_write_and_read_schema_complex() {
                 Field::optional("host", TypeKind::String).with_doc("Hostname"),
                 Field::new(
                     "tags",
-                    TypeKind::Vec(Box::new(TypeKind::String)),
+                    TypeKind::List(Box::new(TypeKind::String)),
                 ),
             ],
         },
@@ -208,6 +209,7 @@ fn test_find_schema_not_found_in_directory() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_resolve_schema_dir_with_env_var() {
     let temp_dir = create_temp_dir();
     let temp_path = temp_dir.path().to_string_lossy().to_string();
@@ -229,6 +231,7 @@ fn test_resolve_schema_dir_with_env_var() {
 }
 
 #[test]
+#[serial]
 fn test_resolve_schema_dir_without_env_var_uses_xdg() {
     // Store original value
     let original = env::var(SCHEMA_DIR_ENV).ok();

@@ -1,7 +1,7 @@
 //! Tests for the RonSchema derive macro.
 
 use ron_derive::RonSchema;
-use ron_schema::{RonSchema as RonSchemaTrait, Schema, TypeKind, Field, Variant, VariantKind};
+use ron_schema::{RonSchema as RonSchemaTrait, TypeKind, VariantKind};
 
 /// A simple struct for testing.
 #[derive(RonSchema)]
@@ -41,8 +41,8 @@ fn test_simple_struct() {
 struct StructWithOptional {
     /// Required field.
     required: i32,
-    /// Optional field with serde default.
-    #[serde(default)]
+    /// Optional field with default.
+    #[ron_schema(default)]
     optional: Option<String>,
 }
 
@@ -143,12 +143,12 @@ fn test_collection_types() {
 
     match &schema.kind {
         TypeKind::Struct { fields } => {
-            // Vec field
+            // Vec field (represented as List)
             match &fields[0].ty {
-                TypeKind::Vec(inner) => {
+                TypeKind::List(inner) => {
                     assert_eq!(**inner, TypeKind::I32);
                 }
-                _ => panic!("Expected Vec type"),
+                _ => panic!("Expected List type"),
             }
 
             // HashMap field
@@ -318,5 +318,143 @@ fn test_box_unwrapping() {
             assert_eq!(fields[0].ty, TypeKind::I32);
         }
         _ => panic!("Expected struct type kind"),
+    }
+}
+
+// =============================================================================
+// New Feature Tests: flatten, skip, default
+// =============================================================================
+
+/// Base struct for flattening test.
+#[derive(RonSchema)]
+struct BaseConfig {
+    /// The name.
+    name: String,
+    /// The version.
+    version: u32,
+}
+
+/// Struct with flattened field.
+#[derive(RonSchema)]
+struct ExtendedConfig {
+    /// Base configuration (flattened).
+    #[ron_schema(flatten)]
+    base: BaseConfig,
+    /// Additional setting.
+    extra: String,
+}
+
+#[test]
+fn test_flatten_attribute() {
+    let schema = ExtendedConfig::schema();
+
+    match &schema.kind {
+        TypeKind::Struct { fields } => {
+            assert_eq!(fields.len(), 2);
+
+            // First field should be flattened
+            assert_eq!(fields[0].name, "base");
+            assert!(fields[0].flattened, "Expected base field to be flattened");
+
+            // Second field should not be flattened
+            assert_eq!(fields[1].name, "extra");
+            assert!(!fields[1].flattened);
+        }
+        _ => panic!("Expected struct type kind"),
+    }
+}
+
+/// Struct with skipped field.
+#[derive(RonSchema)]
+struct WithSkippedField {
+    /// Visible field.
+    visible: String,
+    /// Internal field (skipped).
+    #[ron_schema(skip)]
+    internal: i32,
+    /// Another visible field.
+    another: bool,
+}
+
+#[test]
+fn test_skip_attribute() {
+    let schema = WithSkippedField::schema();
+
+    match &schema.kind {
+        TypeKind::Struct { fields } => {
+            // Should only have 2 fields, not 3
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "visible");
+            assert_eq!(fields[1].name, "another");
+        }
+        _ => panic!("Expected struct type kind"),
+    }
+}
+
+/// Struct with multiple attributes.
+#[derive(RonSchema)]
+struct WithMultipleAttrs {
+    /// Normal field.
+    normal: String,
+    /// Optional flattened field.
+    #[ron_schema(default, flatten)]
+    optional_nested: BaseConfig,
+}
+
+#[test]
+fn test_multiple_attributes() {
+    let schema = WithMultipleAttrs::schema();
+
+    match &schema.kind {
+        TypeKind::Struct { fields } => {
+            assert_eq!(fields.len(), 2);
+
+            assert_eq!(fields[0].name, "normal");
+            assert!(!fields[0].optional);
+            assert!(!fields[0].flattened);
+
+            assert_eq!(fields[1].name, "optional_nested");
+            assert!(fields[1].optional, "Expected optional_nested to be optional");
+            assert!(
+                fields[1].flattened,
+                "Expected optional_nested to be flattened"
+            );
+        }
+        _ => panic!("Expected struct type kind"),
+    }
+}
+
+/// Enum with skipped variant field.
+#[derive(RonSchema)]
+enum EnumWithSkippedField {
+    /// Variant with internal field skipped.
+    Data {
+        /// Public data.
+        public: String,
+        /// Internal cache (skipped).
+        #[ron_schema(skip)]
+        cache: Vec<u8>,
+    },
+}
+
+#[test]
+fn test_enum_skip_variant_field() {
+    let schema = EnumWithSkippedField::schema();
+
+    match &schema.kind {
+        TypeKind::Enum { variants } => {
+            assert_eq!(variants.len(), 1);
+            assert_eq!(variants[0].name, "Data");
+
+            match &variants[0].kind {
+                VariantKind::Struct(fields) => {
+                    // Should only have 1 field (cache is skipped)
+                    assert_eq!(fields.len(), 1);
+                    assert_eq!(fields[0].name, "public");
+                }
+                _ => panic!("Expected struct variant"),
+            }
+        }
+        _ => panic!("Expected enum type kind"),
     }
 }

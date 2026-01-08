@@ -131,7 +131,7 @@ fn test_type_kind_option_roundtrip() {
 
 #[test]
 fn test_type_kind_vec_roundtrip() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::I32));
+    let kind = TypeKind::List(Box::new(TypeKind::I32));
     let serialized = ron::to_string(&kind).unwrap();
     let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
     assert_eq!(kind, deserialized);
@@ -357,7 +357,7 @@ fn test_variant_roundtrip_struct() {
 
 #[test]
 fn test_nested_vec_of_option() {
-    let kind = TypeKind::Vec(Box::new(TypeKind::Option(Box::new(TypeKind::String))));
+    let kind = TypeKind::List(Box::new(TypeKind::Option(Box::new(TypeKind::String))));
     let serialized = ron::to_string(&kind).unwrap();
     let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
     assert_eq!(kind, deserialized);
@@ -365,7 +365,7 @@ fn test_nested_vec_of_option() {
 
 #[test]
 fn test_nested_option_of_vec() {
-    let kind = TypeKind::Option(Box::new(TypeKind::Vec(Box::new(TypeKind::I32))));
+    let kind = TypeKind::Option(Box::new(TypeKind::List(Box::new(TypeKind::I32))));
     let serialized = ron::to_string(&kind).unwrap();
     let deserialized: TypeKind = ron::from_str(&serialized).unwrap();
     assert_eq!(kind, deserialized);
@@ -375,7 +375,7 @@ fn test_nested_option_of_vec() {
 fn test_nested_map_with_complex_value() {
     let kind = TypeKind::Map {
         key: Box::new(TypeKind::String),
-        value: Box::new(TypeKind::Vec(Box::new(TypeKind::Option(Box::new(
+        value: Box::new(TypeKind::List(Box::new(TypeKind::Option(Box::new(
             TypeKind::I32,
         ))))),
     };
@@ -388,7 +388,7 @@ fn test_nested_map_with_complex_value() {
 fn test_nested_struct_with_complex_fields() {
     let kind = TypeKind::Struct {
         fields: vec![
-            Field::new("items", TypeKind::Vec(Box::new(TypeKind::String))),
+            Field::new("items", TypeKind::List(Box::new(TypeKind::String))),
             Field::optional(
                 "metadata",
                 TypeKind::Map {
@@ -410,9 +410,9 @@ fn test_nested_struct_with_complex_fields() {
 #[test]
 fn test_deeply_nested_types() {
     // Vec<Option<Map<String, Vec<Option<i32>>>>>
-    let kind = TypeKind::Vec(Box::new(TypeKind::Option(Box::new(TypeKind::Map {
+    let kind = TypeKind::List(Box::new(TypeKind::Option(Box::new(TypeKind::Map {
         key: Box::new(TypeKind::String),
-        value: Box::new(TypeKind::Vec(Box::new(TypeKind::Option(Box::new(
+        value: Box::new(TypeKind::List(Box::new(TypeKind::Option(Box::new(
             TypeKind::I32,
         ))))),
     }))));
@@ -457,7 +457,7 @@ fn test_complex_schema_roundtrip() {
                 Field::optional("host", TypeKind::String).with_doc("Hostname"),
                 Field::new(
                     "endpoints",
-                    TypeKind::Vec(Box::new(TypeKind::Struct {
+                    TypeKind::List(Box::new(TypeKind::Struct {
                         fields: vec![
                             Field::new("path", TypeKind::String),
                             Field::new("method", TypeKind::String),

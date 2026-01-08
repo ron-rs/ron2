@@ -193,7 +193,7 @@ fn completions_for_value(kind: &TypeKind) -> Vec<CompletionItem> {
             items
         }
         TypeKind::Enum { variants } => completions_for_enum_variants(variants),
-        TypeKind::Vec(_) => vec![CompletionItem {
+        TypeKind::List(_) => vec![CompletionItem {
             label: "[]".to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
             detail: Some("Empty list".to_string()),
@@ -273,7 +273,7 @@ fn type_kind_to_string(kind: &TypeKind) -> String {
         TypeKind::String => "String".to_string(),
         TypeKind::Unit => "()".to_string(),
         TypeKind::Option(inner) => format!("Option<{}>", type_kind_to_string(inner)),
-        TypeKind::Vec(inner) => format!("Vec<{}>", type_kind_to_string(inner)),
+        TypeKind::List(inner) => format!("List<{}>", type_kind_to_string(inner)),
         TypeKind::Map { key, value } => {
             format!(
                 "Map<{}, {}>",

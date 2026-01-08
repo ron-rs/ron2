@@ -11,6 +11,15 @@ pub struct Schema {
 }
 
 /// Represents all possible Rust types that can be serialized to RON.
+///
+/// # Trait-Based Design
+///
+/// This enum works alongside the trait system in `crate::traits`:
+/// - `List` represents any type implementing `RonList` (Vec, VecDeque, custom types)
+/// - `Map` represents any type implementing `RonMap` (HashMap, BTreeMap, custom types)
+///
+/// Custom types implementing these traits will serialize to the same `TypeKind`
+/// variants, allowing the validation and LSP systems to work uniformly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TypeKind {
     // Primitives
@@ -35,7 +44,23 @@ pub enum TypeKind {
 
     // Compound types
     Option(Box<TypeKind>),
-    Vec(Box<TypeKind>),
+
+    /// List/sequence type - represents any type implementing `RonList`.
+    ///
+    /// This includes `Vec<T>`, `VecDeque<T>`, `HashSet<T>`, `BTreeSet<T>`,
+    /// arrays, and any custom types implementing `RonList`.
+    ///
+    /// # Serde Compatibility
+    ///
+    /// For backwards compatibility, this variant also deserializes from "Vec"
+    /// in existing schema files.
+    #[serde(alias = "Vec")]
+    List(Box<TypeKind>),
+
+    /// Map/dictionary type - represents any type implementing `RonMap`.
+    ///
+    /// This includes `HashMap<K, V>`, `BTreeMap<K, V>`, and any custom types
+    /// implementing `RonMap`.
     Map {
         key: Box<TypeKind>,
         value: Box<TypeKind>,
@@ -67,6 +92,10 @@ pub struct Field {
     /// Whether this field is optional (has a default value).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub optional: bool,
+    /// Whether this field is flattened (its fields are merged into the parent).
+    /// Only valid when `ty` is a Struct or TypeRef to a struct.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flattened: bool,
 }
 
 /// A variant in an enum.
@@ -115,6 +144,7 @@ impl Field {
             ty,
             doc: None,
             optional: false,
+            flattened: false,
         }
     }
 
@@ -125,12 +155,31 @@ impl Field {
             ty,
             doc: None,
             optional: true,
+            flattened: false,
+        }
+    }
+
+    /// Create a new flattened field.
+    /// Flattened fields have their inner struct fields merged into the parent.
+    pub fn flattened(name: impl Into<String>, ty: TypeKind) -> Self {
+        Self {
+            name: name.into(),
+            ty,
+            doc: None,
+            optional: false,
+            flattened: true,
         }
     }
 
     /// Add documentation to this field.
     pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
         self.doc = Some(doc.into());
+        self
+    }
+
+    /// Mark this field as flattened.
+    pub fn with_flatten(mut self) -> Self {
+        self.flattened = true;
         self
     }
 }

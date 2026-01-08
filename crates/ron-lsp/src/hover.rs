@@ -104,7 +104,7 @@ fn search_in_type_kind(word: &str, kind: &TypeKind) -> Option<String> {
             None
         }
         TypeKind::Option(inner) => search_in_type_kind(word, inner),
-        TypeKind::Vec(inner) => search_in_type_kind(word, inner),
+        TypeKind::List(inner) => search_in_type_kind(word, inner),
         TypeKind::Map { key, value } => search_in_type_kind(word, key)
             .or_else(|| search_in_type_kind(word, value)),
         TypeKind::Tuple(types) => {
@@ -233,7 +233,7 @@ fn type_kind_to_string(kind: &TypeKind) -> String {
         TypeKind::String => "String".to_string(),
         TypeKind::Unit => "()".to_string(),
         TypeKind::Option(inner) => format!("Option<{}>", type_kind_to_string(inner)),
-        TypeKind::Vec(inner) => format!("Vec<{}>", type_kind_to_string(inner)),
+        TypeKind::List(inner) => format!("List<{}>", type_kind_to_string(inner)),
         TypeKind::Map { key, value } => {
             format!(
                 "Map<{}, {}>",

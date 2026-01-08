@@ -12,6 +12,7 @@ use ron_schema::{
     find_schema_in, read_schema, validate, write_schema, Field, Schema, TypeKind, Variant,
     SCHEMA_DIR_ENV,
 };
+use serial_test::serial;
 
 /// Create a temporary directory for testing.
 fn create_temp_dir() -> tempfile::TempDir {
@@ -141,13 +142,13 @@ fn test_complete_workflow_nested_structures() {
                 Field::new("app_name", TypeKind::String),
                 Field::new(
                     "servers",
-                    TypeKind::Vec(Box::new(TypeKind::Struct {
+                    TypeKind::List(Box::new(TypeKind::Struct {
                         fields: vec![
                             Field::new("host", TypeKind::String),
                             Field::new("port", TypeKind::U16),
                             Field::optional(
                                 "tags",
-                                TypeKind::Vec(Box::new(TypeKind::String)),
+                                TypeKind::List(Box::new(TypeKind::String)),
                             ),
                         ],
                     })),
@@ -218,6 +219,7 @@ fn test_find_schema_in_specific_directory() {
 }
 
 #[test]
+#[serial]
 fn test_schema_resolution_with_env_var() {
     let temp_dir = create_temp_dir();
     let schema = Schema::new(TypeKind::String);
@@ -247,6 +249,7 @@ fn test_schema_resolution_with_env_var() {
 }
 
 #[test]
+#[serial]
 fn test_output_dir_takes_precedence_over_env_var() {
     let temp_dir1 = create_temp_dir();
     let temp_dir2 = create_temp_dir();
@@ -306,7 +309,7 @@ fn test_multiple_schemas_in_project() {
                 Field::new("author_id", TypeKind::U64),
                 Field::new(
                     "tags",
-                    TypeKind::Vec(Box::new(TypeKind::String)),
+                    TypeKind::List(Box::new(TypeKind::String)),
                 ),
             ],
         },
@@ -318,7 +321,7 @@ fn test_multiple_schemas_in_project() {
             fields: vec![
                 Field::new(
                     "posts",
-                    TypeKind::Vec(Box::new(TypeKind::TypeRef("blog::Post".to_string()))),
+                    TypeKind::List(Box::new(TypeKind::TypeRef("blog::Post".to_string()))),
                 ),
                 Field::optional("cursor", TypeKind::String),
             ],
@@ -420,7 +423,7 @@ fn test_validation_error_provides_useful_context() {
     let schema = Schema::new(TypeKind::Struct {
         fields: vec![Field::new(
             "items",
-            TypeKind::Vec(Box::new(TypeKind::Struct {
+            TypeKind::List(Box::new(TypeKind::Struct {
                 fields: vec![
                     Field::new("id", TypeKind::I32),
                     Field::new("name", TypeKind::String),
@@ -518,7 +521,7 @@ fn test_all_type_kinds_roundtrip_through_file() {
             "option",
             Schema::new(TypeKind::Option(Box::new(TypeKind::I32))),
         ),
-        ("vec", Schema::new(TypeKind::Vec(Box::new(TypeKind::String)))),
+        ("vec", Schema::new(TypeKind::List(Box::new(TypeKind::String)))),
         (
             "map",
             Schema::new(TypeKind::Map {

@@ -88,7 +88,7 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
             Value::Option(Some(v)) => validate_type(v, inner),
             _ => Err(type_mismatch("Option", value)),
         },
-        TypeKind::Vec(inner) => match value {
+        TypeKind::List(inner) => match value {
             Value::Seq(items) => {
                 for (i, item) in items.iter().enumerate() {
                     validate_type(item, inner).map_err(|e| ValidationError::ElementError {
@@ -98,7 +98,7 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
                 }
                 Ok(())
             }
-            _ => Err(type_mismatch("Vec", value)),
+            _ => Err(type_mismatch("List", value)),
         },
         TypeKind::Map { key, value: val_ty } => match value {
             Value::Map(map) => {
@@ -291,13 +291,13 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_vec() {
-        let vec_type = TypeKind::Vec(Box::new(TypeKind::I32));
+    fn test_validate_list() {
+        let list_type = TypeKind::List(Box::new(TypeKind::I32));
         let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
-        assert!(validate_type(&value, &vec_type).is_ok());
+        assert!(validate_type(&value, &list_type).is_ok());
 
         let bad_value = Value::Seq(vec![Value::Number(1.into()), Value::String("bad".into())]);
-        assert!(validate_type(&bad_value, &vec_type).is_err());
+        assert!(validate_type(&bad_value, &list_type).is_err());
     }
 
     #[test]
