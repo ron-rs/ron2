@@ -57,6 +57,17 @@ impl Map {
     }
 
     /// Removes an element by its `key`.
+    ///
+    /// # Implementation Note
+    ///
+    /// With the `std` feature enabled, this uses `IndexMap::shift_remove()` which is O(n)
+    /// but preserves insertion order of remaining elements.
+    ///
+    /// Without `std`, this uses `BTreeMap::remove()` which is O(log n) but maintains
+    /// sorted order (not insertion order).
+    ///
+    /// This behavioral difference is intentional: each backing store provides its
+    /// natural removal semantics.
     pub fn remove(&mut self, key: &Value) -> Option<Value> {
         #[cfg(feature = "std")]
         {
@@ -115,6 +126,7 @@ impl Map {
 impl Index<&Value> for Map {
     type Output = Value;
 
+    // Panic on missing key is the standard Index trait contract (same as HashMap/BTreeMap).
     #[allow(clippy::expect_used)]
     fn index(&self, index: &Value) -> &Self::Output {
         self.get(index).expect("no entry found for key")
@@ -122,6 +134,7 @@ impl Index<&Value> for Map {
 }
 
 impl IndexMut<&Value> for Map {
+    // Panic on missing key is the standard IndexMut trait contract.
     #[allow(clippy::expect_used)]
     fn index_mut(&mut self, index: &Value) -> &mut Self::Output {
         self.get_mut(index).expect("no entry found for key")

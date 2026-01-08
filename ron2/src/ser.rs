@@ -165,6 +165,8 @@ impl<W: Write> Serializer<W> {
         I: Iterator,
         F: FnMut(&mut Self, I::Item) -> Result<()>,
     {
+        let is_pretty = self.pretty.is_some();
+
         self.writer.write_char(open)?;
 
         if len == 0 {
@@ -172,13 +174,13 @@ impl<W: Write> Serializer<W> {
             return Ok(());
         }
 
-        if self.pretty.is_some() {
+        if is_pretty {
             self.write_newline()?;
             self.current_indent += 1;
         }
 
         for (i, item) in items.enumerate() {
-            if self.pretty.is_some() {
+            if is_pretty {
                 self.write_indent()?;
             }
 
@@ -188,12 +190,12 @@ impl<W: Write> Serializer<W> {
                 self.writer.write_char(',')?;
             }
 
-            if self.pretty.is_some() {
+            if is_pretty {
                 self.write_newline()?;
             }
         }
 
-        if self.pretty.is_some() {
+        if is_pretty {
             self.current_indent -= 1;
             self.write_indent()?;
         }
@@ -203,6 +205,14 @@ impl<W: Write> Serializer<W> {
     }
 
     /// Serialize a Value to the writer.
+    ///
+    /// # Recursion Safety
+    ///
+    /// This function uses manual enter/exit recursion tracking. The pattern is safe
+    /// because `serialize_inner` always returns (never panics with unwinding in `no_std`),
+    /// and `exit_recursion` is called unconditionally after. If modifying this code,
+    /// ensure `exit_recursion` is always called exactly once after `enter_recursion`
+    /// succeeds, even on error paths.
     pub fn serialize(&mut self, value: &Value) -> Result<()> {
         self.enter_recursion()?;
         let result = self.serialize_inner(value);
@@ -391,32 +401,38 @@ impl<W: Write> Serializer<W> {
     }
 
     fn write_escaped_char(&mut self, c: char) -> fmt::Result {
+        // Only use common_escape for ASCII characters to avoid truncation of multi-byte chars
+        if c.is_ascii() && let Some(escaped) = common_escape(c as u8) {
+            return self.writer.write_str(escaped);
+        }
         match c {
-            '\\' => self.writer.write_str("\\\\"),
-            '"' => self.writer.write_str("\\\""),
             '\'' => self.writer.write_str("\\'"),
-            '\n' => self.writer.write_str("\\n"),
-            '\r' => self.writer.write_str("\\r"),
-            '\t' => self.writer.write_str("\\t"),
-            '\0' => self.writer.write_str("\\0"),
-            c if c.is_ascii_control() => {
-                write!(self.writer, "\\x{:02x}", c as u8)
-            }
+            c if c.is_ascii_control() => write!(self.writer, "\\x{:02x}", c as u8),
             c => self.writer.write_char(c),
         }
     }
 
     fn write_escaped_byte(&mut self, b: u8) -> fmt::Result {
-        match b {
-            b'\\' => self.writer.write_str("\\\\"),
-            b'"' => self.writer.write_str("\\\""),
-            b'\n' => self.writer.write_str("\\n"),
-            b'\r' => self.writer.write_str("\\r"),
-            b'\t' => self.writer.write_str("\\t"),
-            b'\0' => self.writer.write_str("\\0"),
-            b if b.is_ascii_graphic() || b == b' ' => self.writer.write_char(char::from(b)),
-            b => write!(self.writer, "\\x{b:02x}"),
+        if let Some(escaped) = common_escape(b) {
+            self.writer.write_str(escaped)
+        } else if b.is_ascii_graphic() || b == b' ' {
+            self.writer.write_char(char::from(b))
+        } else {
+            write!(self.writer, "\\x{b:02x}")
         }
+    }
+}
+
+/// Returns the escape sequence for common characters shared between char and byte escaping.
+fn common_escape(b: u8) -> Option<&'static str> {
+    match b {
+        b'\\' => Some("\\\\"),
+        b'"' => Some("\\\""),
+        b'\n' => Some("\\n"),
+        b'\r' => Some("\\r"),
+        b'\t' => Some("\\t"),
+        b'\0' => Some("\\0"),
+        _ => None,
     }
 }
 

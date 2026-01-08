@@ -109,6 +109,37 @@ pub enum Error {
     ExpectedStructName(String),
 }
 
+impl SpannedError {
+    /// Creates a `SpannedError` that wraps the given error code with a span
+    /// covering from position (1,1) to the end of the source.
+    #[must_use]
+    pub fn wrap(code: Error, source: &str) -> Self {
+        Self {
+            code,
+            span: Span {
+                start: Position { line: 1, col: 1 },
+                end: Position::from_src_end(source),
+                start_offset: 0,
+                end_offset: source.len(),
+            },
+        }
+    }
+
+    /// Creates a `SpannedError` at position (1,1) with zero-length span.
+    #[must_use]
+    pub fn at_start(code: Error) -> Self {
+        Self {
+            code,
+            span: Span {
+                start: Position { line: 1, col: 1 },
+                end: Position { line: 1, col: 1 },
+                start_offset: 0,
+                end_offset: 0,
+            },
+        }
+    }
+}
+
 impl fmt::Display for SpannedError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.span, self.code)

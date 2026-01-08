@@ -5,7 +5,7 @@ use core::fmt;
 
 use crate::{
     ast::{parse_document, to_value},
-    error::{Error, Position, Result, Span, SpannedError, SpannedResult},
+    error::{Error, Result, SpannedError, SpannedResult},
     extensions::Extensions,
     ser::{PrettyConfig, Serializer},
     value::Value,
@@ -74,7 +74,9 @@ impl Options {
     ///
     /// # Panics
     ///
-    /// This function will not panic under normal circumstances.
+    /// This function contains an `expect()` call that cannot panic in practice:
+    /// when UTF-8 validation fails, we slice up to `valid_up_to()` which is
+    /// guaranteed to be valid UTF-8 by the `Utf8Error` contract.
     #[cfg(feature = "std")]
     pub fn from_reader<R>(&self, mut rdr: R) -> SpannedResult<Value>
     where
@@ -82,27 +84,18 @@ impl Options {
     {
         let mut bytes = Vec::new();
 
-        let Err(io_err) = rdr.read_to_end(&mut bytes) else {
-            return self.from_bytes(&bytes);
-        };
+        if let Err(io_err) = rdr.read_to_end(&mut bytes) {
+            // Try to compute a good error position for the I/O error
+            #[allow(clippy::expect_used)]
+            let valid_input = match core::str::from_utf8(&bytes) {
+                Ok(valid_input) => valid_input,
+                Err(err) => core::str::from_utf8(&bytes[..err.valid_up_to()])
+                    .expect("source is valid up to error"),
+            };
+            return Err(SpannedError::wrap(io_err.into(), valid_input));
+        }
 
-        // Try to compute a good error position for the I/O error
-        #[allow(clippy::expect_used)]
-        let valid_input = match core::str::from_utf8(&bytes) {
-            Ok(valid_input) => valid_input,
-            Err(err) => core::str::from_utf8(&bytes[..err.valid_up_to()])
-                .expect("source is valid up to error"),
-        };
-
-        Err(SpannedError {
-            code: io_err.into(),
-            span: Span {
-                start: Position { line: 1, col: 1 },
-                end: Position::from_src_end(valid_input),
-                start_offset: 0,
-                end_offset: valid_input.len(),
-            },
-        })
+        self.from_bytes(&bytes)
     }
 
     /// Parse a RON string into a Value using the AST parser.
@@ -113,15 +106,7 @@ impl Options {
             Some(Ok(value)) => Ok(value),
             Some(Err(e)) => {
                 // Conversion error - create a spanned error at document start
-                Err(SpannedError {
-                    code: e,
-                    span: Span {
-                        start: Position { line: 1, col: 1 },
-                        end: Position::from_src_end(s),
-                        start_offset: 0,
-                        end_offset: s.len(),
-                    },
-                })
+                Err(SpannedError::wrap(e, s))
             }
             None => {
                 // Empty document - return Unit
@@ -132,15 +117,8 @@ impl Options {
 
     /// Parse RON bytes into a Value using the AST parser.
     pub fn from_bytes(&self, s: &[u8]) -> SpannedResult<Value> {
-        let s = core::str::from_utf8(s).map_err(|e| SpannedError {
-            code: Error::Utf8Error(e),
-            span: Span {
-                start: Position { line: 1, col: 1 },
-                end: Position { line: 1, col: 1 },
-                start_offset: 0,
-                end_offset: 0,
-            },
-        })?;
+        let s = core::str::from_utf8(s)
+            .map_err(|e| SpannedError::at_start(Error::Utf8Error(e)))?;
         self.from_str(s)
     }
 
