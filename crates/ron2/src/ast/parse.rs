@@ -791,7 +791,7 @@ impl<'a> AstParser<'a> {
         })))
     }
 
-    /// Parse a struct or enum variant: `Name(...)` or `Name { ... }` or `Name`.
+    /// Parse a struct or enum variant: `Name(...)` or `Name`.
     ///
     /// In RON, named struct fields use paren syntax: `Point(x: 1, y: 2)`.
     /// Tuple structs also use parens: `Point(1, 2)`.
@@ -826,26 +826,6 @@ impl<'a> AstParser<'a> {
                     // by looking at the first token and what follows
                     self.parse_struct_body_contents(open_paren, leading)?
                 }
-            }
-            TokenKind::LBrace => {
-                // Brace syntax: Name { field: value } - also valid in some RON variants
-                let open_brace = self.next_token();
-                let leading = self.collect_leading_trivia();
-
-                let (fields, trailing) = self.parse_struct_fields(leading)?;
-
-                if self.peek_kind() != TokenKind::RBrace {
-                    return Err(Self::error(open_brace.span, Error::ExpectedMapEnd));
-                }
-                let close_brace = self.next_token();
-
-                Some(StructBody::Fields(FieldsBody {
-                    open_brace: open_brace.span,
-                    leading: Trivia::empty(),
-                    fields,
-                    trailing,
-                    close_brace: close_brace.span,
-                }))
             }
             _ => None,
         };
@@ -1228,70 +1208,6 @@ impl<'a> AstParser<'a> {
         }
 
         Ok((elements, leading))
-    }
-
-    /// Parse struct fields until closing brace.
-    /// Returns the fields and any trailing trivia before the closing brace.
-    fn parse_struct_fields(
-        &mut self,
-        mut leading: Trivia<'a>,
-    ) -> SpannedResult<(Vec<StructField<'a>>, Trivia<'a>)> {
-        let mut fields = Vec::new();
-
-        loop {
-            if self.peek_kind() == TokenKind::RBrace {
-                break;
-            }
-
-            // Expect field name
-            if self.peek_kind() != TokenKind::Ident {
-                let tok = self.next_token();
-                return Err(Self::error(tok.span, Error::ExpectedIdentifier));
-            }
-            let name_tok = self.next_token();
-
-            let pre_colon = self.collect_leading_trivia();
-
-            if self.peek_kind() != TokenKind::Colon {
-                return Err(Self::error(name_tok.span, Error::ExpectedMapColon { context: Some("struct field") }));
-            }
-            let colon_tok = self.next_token();
-
-            let post_colon = self.collect_leading_trivia();
-            let value = self.parse_expr()?;
-            let trailing = self.collect_leading_trivia();
-
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
-
-            fields.push(StructField {
-                leading,
-                name: Ident {
-                    span: name_tok.span.clone(),
-                    name: Cow::Borrowed(name_tok.text),
-                },
-                pre_colon,
-                colon: colon_tok.span,
-                post_colon,
-                value,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma {
-                break;
-            }
-        }
-
-        // Return fields and leftover leading trivia (which becomes trailing trivia of the body)
-        Ok((fields, leading))
     }
 
     /// Parse an integer literal.
@@ -1775,20 +1691,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_struct_with_fields_braces() {
-        let doc = parse_document("Point { x: 1, y: 2 }").unwrap();
-        match doc.value {
-            Some(Expr::Struct(s)) => {
-                assert_eq!(s.name.name, "Point");
-                match s.body {
-                    Some(StructBody::Fields(f)) => {
-                        assert_eq!(f.fields.len(), 2);
-                    }
-                    _ => panic!("expected fields body"),
-                }
-            }
-            _ => panic!("expected struct"),
-        }
+    fn parse_brace_after_ident_is_separate_map() {
+        // Braces after an identifier are NOT struct syntax - they're a separate map
+        // "Point { x: 1 }" should fail because it parses as "Point" followed by a map,
+        // but maps require string keys, not identifiers
+        let result = parse_document("Point { x: 1 }");
+        assert!(result.is_err(), "Brace syntax after ident should not be valid");
     }
 
     #[test]

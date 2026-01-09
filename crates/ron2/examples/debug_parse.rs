@@ -1,6 +1,6 @@
 fn main() {
-    // Test simple struct
-    let simple = "Point { x: 1, y: 2 }";
+    // Test simple struct - standard RON syntax uses parentheses
+    let simple = "Point(x: 1, y: 2)";
     println!("Parsing: {:?}", simple);
     match ron2::ast::parse_document(simple) {
         Ok(doc) => println!("OK: {:?}", doc.value.map(|v| format!("{:?}", v))),
@@ -8,7 +8,7 @@ fn main() {
     }
 
     // Test with Config
-    let config = "Config { name: \"test\" }";
+    let config = "Config(name: \"test\")";
     println!("\nParsing: {:?}", config);
     match ron2::ast::parse_document(config) {
         Ok(doc) => println!("OK: {:?}", doc.value.map(|v| format!("{:?}", v))),

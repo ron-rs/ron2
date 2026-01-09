@@ -8,7 +8,7 @@
 //! ```
 //! use ron2::{from_str, to_string, Value};
 //!
-//! let value = from_str("Point { x: 1, y: 2 }").unwrap();
+//! let value = from_str("Point(x: 1, y: 2)").unwrap();
 //! let output = to_string(&value).unwrap();
 //! ```
 

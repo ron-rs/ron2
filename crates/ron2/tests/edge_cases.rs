@@ -147,8 +147,8 @@ fn edge_trailing_comma_map() {
 
 #[test]
 fn edge_trailing_comma_named_struct() {
-    // Named structs use braces, not parens
-    let value = from_str("Point { x: 1, }").unwrap();
+    // Named structs use parentheses: Point(x: 1)
+    let value = from_str("Point(x: 1,)").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -374,11 +374,11 @@ fn edge_multiline_seq() {
 
 #[test]
 fn edge_multiline_named_struct() {
-    // Named structs use braces for fields
-    let input = r#"Config {
+    // Named structs use parentheses for fields
+    let input = r#"Config(
         host: "localhost",
         port: 8080
-    }"#;
+    )"#;
     let value = from_str(input).unwrap();
     assert_eq!(
         value,

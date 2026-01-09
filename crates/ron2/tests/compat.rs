@@ -699,3 +699,52 @@ mod edge_cases {
         assert_eq!(nested, ron_parsed);
     }
 }
+
+// ============================================================================
+// Struct Syntax Verification
+// ============================================================================
+
+mod struct_syntax {
+    use super::*;
+
+    /// Verify both crates use the standard parenthesis syntax for structs.
+    ///
+    /// Standard RON: `Point(x: 1, y: 2)` - parentheses for named fields
+    /// NOT: `Point { x: 1, y: 2 }` - braces are for maps
+    #[test]
+    fn both_crates_use_parenthesis_syntax() {
+        let point = Point { x: 1, y: 2 };
+
+        // Check ron crate output uses parentheses
+        let ron_out = ron::to_string(&point).unwrap();
+        assert!(
+            ron_out.contains('(') && ron_out.contains(')'),
+            "ron crate should use parentheses: {ron_out}"
+        );
+        assert!(
+            !ron_out.starts_with("Point{") && !ron_out.contains("Point {"),
+            "ron crate should not use braces for struct fields: {ron_out}"
+        );
+
+        // Check ron2 crate output uses parentheses
+        let ron2_out = point.to_ron().unwrap();
+        assert!(
+            ron2_out.contains('(') && ron2_out.contains(')'),
+            "ron2 crate should use parentheses: {ron2_out}"
+        );
+        assert!(
+            !ron2_out.starts_with("Point{") && !ron2_out.contains("Point {"),
+            "ron2 crate should not use braces for struct fields: {ron2_out}"
+        );
+    }
+
+    /// Verify the exact output format matches expected RON syntax.
+    #[test]
+    fn ron2_produces_standard_syntax() {
+        let point = Point { x: 1, y: 2 };
+        let ron2_out = point.to_ron().unwrap();
+
+        // ron2 produces compact output: Point(x:1,y:2)
+        assert_eq!(ron2_out, "Point(x:1,y:2)");
+    }
+}

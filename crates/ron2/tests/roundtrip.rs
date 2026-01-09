@@ -775,11 +775,11 @@ fn roundtrip_named_tuple_nested() {
 // Named Types - Struct
 // =============================================================================
 
-// Named structs use brace syntax
+// Standard RON uses parentheses for struct fields: Point(x: 1, y: 2)
 
 #[test]
 fn roundtrip_named_struct_single_field() {
-    let value = roundtrip("Wrapper { value: 42 }");
+    let value = roundtrip("Wrapper(value: 42)");
     assert_eq!(
         value,
         Value::Named {
@@ -794,7 +794,7 @@ fn roundtrip_named_struct_single_field() {
 
 #[test]
 fn roundtrip_named_struct_two_fields() {
-    let value = roundtrip("Point { x: 1, y: 2 }");
+    let value = roundtrip("Point(x: 1, y: 2)");
     assert_eq!(
         value,
         Value::Named {
@@ -809,7 +809,7 @@ fn roundtrip_named_struct_two_fields() {
 
 #[test]
 fn roundtrip_named_struct_three_fields() {
-    let value = roundtrip("Point3D { x: 1, y: 2, z: 3 }");
+    let value = roundtrip("Point3D(x: 1, y: 2, z: 3)");
     assert_eq!(
         value,
         Value::Named {
@@ -825,7 +825,7 @@ fn roundtrip_named_struct_three_fields() {
 
 #[test]
 fn roundtrip_named_struct_mixed_types() {
-    let value = roundtrip(r#"Person { name: "Alice", age: 30, active: true }"#);
+    let value = roundtrip(r#"Person(name: "Alice", age: 30, active: true)"#);
     assert_eq!(
         value,
         Value::Named {
@@ -841,7 +841,7 @@ fn roundtrip_named_struct_mixed_types() {
 
 #[test]
 fn roundtrip_named_struct_nested() {
-    let value = roundtrip("Outer { inner: Inner { x: 1 } }");
+    let value = roundtrip("Outer(inner: Inner(x: 1))");
     assert_eq!(
         value,
         Value::Named {
@@ -862,7 +862,7 @@ fn roundtrip_named_struct_nested() {
 
 #[test]
 fn roundtrip_named_struct_with_seq() {
-    let value = roundtrip("Container { items: [1, 2, 3] }");
+    let value = roundtrip("Container(items: [1, 2, 3])");
     assert_eq!(
         value,
         Value::Named {
@@ -881,7 +881,7 @@ fn roundtrip_named_struct_with_seq() {
 
 #[test]
 fn roundtrip_named_struct_with_option() {
-    let value = roundtrip("Config { value: Some(42) }");
+    let value = roundtrip("Config(value: Some(42))");
     assert_eq!(
         value,
         Value::Named {
@@ -896,7 +896,7 @@ fn roundtrip_named_struct_with_option() {
 
 #[test]
 fn roundtrip_named_struct_trailing_comma() {
-    let value = roundtrip("Point { x: 1, y: 2, }");
+    let value = roundtrip("Point(x: 1, y: 2,)");
     assert_eq!(
         value,
         Value::Named {
@@ -930,20 +930,20 @@ fn roundtrip_pretty_map() {
 
 #[test]
 fn roundtrip_pretty_named_struct() {
-    roundtrip_pretty("Config { host: \"localhost\", port: 8080 }");
+    roundtrip_pretty("Config(host: \"localhost\", port: 8080)");
 }
 
 #[test]
 fn roundtrip_pretty_complex() {
     roundtrip_pretty(
-        r#"Server {
+        r#"Server(
     name: "main",
     endpoints: [
         Endpoint("/api", "GET"),
         Endpoint("/health", "GET")
     ],
     config: Config(30, 3)
-}"#,
+)"#,
     );
 }
 
@@ -1216,4 +1216,57 @@ fn roundtrip_anon_struct_pretty() {
 #[test]
 fn roundtrip_anon_struct_multiline() {
     roundtrip_pretty("(\n    x: 1,\n    y: 2\n)");
+}
+
+// =============================================================================
+// RON Struct Syntax Verification
+// =============================================================================
+//
+// Standard RON uses PARENTHESES for struct fields: `Point(x: 1, y: 2)`
+// Curly braces are for MAPS only: `{ "key": value }`
+
+/// Verify that the serializer produces the correct parenthesis syntax for structs.
+#[test]
+fn struct_serializes_with_parentheses() {
+    // Parse using correct parenthesis syntax
+    let value = from_str("Point(x: 1, y: 2)").unwrap();
+
+    // Serialize and verify output uses parentheses
+    let serialized = to_string(&value).unwrap();
+    assert_eq!(serialized, "Point(x:1,y:2)");
+    assert!(!serialized.contains('{'), "Struct should not use braces");
+    assert!(!serialized.contains('}'), "Struct should not use braces");
+}
+
+/// Verify that the standard parenthesis syntax parses correctly.
+#[test]
+fn struct_parses_with_parentheses() {
+    let value = from_str("Point(x: 1, y: 2)").unwrap();
+    assert_eq!(
+        value,
+        Value::Named {
+            name: String::from("Point"),
+            content: NamedContent::Struct(vec![
+                (String::from("x"), Value::Number(Number::U8(1))),
+                (String::from("y"), Value::Number(Number::U8(2))),
+            ]),
+        }
+    );
+}
+
+/// Verify that brace syntax after an identifier is rejected (not valid RON).
+#[test]
+fn brace_syntax_after_ident_is_rejected() {
+    // Brace syntax for structs is NOT valid: Point { x: 1, y: 2 }
+    // This parses "Point" as a unit struct, then "{" starts a map which expects string keys
+    let result = from_str("Point { x: 1, y: 2 }");
+    assert!(result.is_err(), "Brace syntax after identifier should be rejected");
+}
+
+/// Verify nested structs serialize with parentheses.
+#[test]
+fn nested_struct_serializes_with_parentheses() {
+    let value = from_str("Outer(inner: Inner(x: 1))").unwrap();
+    let serialized = to_string(&value).unwrap();
+    assert_eq!(serialized, "Outer(inner:Inner(x:1))");
 }

@@ -4,7 +4,10 @@
 //! other Value types.
 //!
 //! Note: The current parser does not support `::` paths (e.g., `Module::Type`).
-//! Named structs use brace syntax: `Point { x: 1, y: 2 }` not paren syntax.
+//!
+//! RON Syntax:
+//! - Struct fields use PARENTHESES: `Point(x: 1, y: 2)`
+//! - Curly braces are for MAPS only: `{ "key": value }`
 
 use ron2::{NamedContent, Number, PrettyConfig, Value, from_str, to_string, to_string_pretty};
 
@@ -234,13 +237,13 @@ fn named_tuple_trailing_comma() {
 }
 
 // =============================================================================
-// Struct Named Types (using brace syntax)
+// Struct Named Types
 // =============================================================================
 
 #[test]
 fn named_struct_single_field() {
-    // Named structs use braces for fields
-    let value = from_str("Wrapper { value: 42 }").unwrap();
+    // Named structs use parentheses for fields: Name(field: value)
+    let value = from_str("Wrapper(value: 42)").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -255,7 +258,7 @@ fn named_struct_single_field() {
 
 #[test]
 fn named_struct_two_fields() {
-    let value = from_str("Point { x: 1, y: 2 }").unwrap();
+    let value = from_str("Point(x: 1, y: 2)").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -270,7 +273,7 @@ fn named_struct_two_fields() {
 
 #[test]
 fn named_struct_three_fields() {
-    let value = from_str("Point3D { x: 1, y: 2, z: 3 }").unwrap();
+    let value = from_str("Point3D(x: 1, y: 2, z: 3)").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -286,7 +289,7 @@ fn named_struct_three_fields() {
 
 #[test]
 fn named_struct_mixed_types() {
-    let value = from_str(r#"Person { name: "Alice", age: 30 }"#).unwrap();
+    let value = from_str(r#"Person(name: "Alice", age: 30)"#).unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -301,7 +304,7 @@ fn named_struct_mixed_types() {
 
 #[test]
 fn named_struct_nested_struct() {
-    let value = from_str("Outer { inner: Inner { value: 1 } }").unwrap();
+    let value = from_str("Outer(inner: Inner(value: 1))").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -322,7 +325,7 @@ fn named_struct_nested_struct() {
 
 #[test]
 fn named_struct_with_seq_field() {
-    let value = from_str("Container { items: [1, 2, 3] }").unwrap();
+    let value = from_str("Container(items: [1, 2, 3])").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -341,7 +344,7 @@ fn named_struct_with_seq_field() {
 
 #[test]
 fn named_struct_with_option_field() {
-    let value = from_str("Config { value: Some(42) }").unwrap();
+    let value = from_str("Config(value: Some(42))").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -356,7 +359,7 @@ fn named_struct_with_option_field() {
 
 #[test]
 fn named_struct_with_none_field() {
-    let value = from_str("Config { value: None }").unwrap();
+    let value = from_str("Config(value: None)").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -368,7 +371,7 @@ fn named_struct_with_none_field() {
 
 #[test]
 fn named_struct_trailing_comma() {
-    let value = from_str("Point { x: 1, y: 2, }").unwrap();
+    let value = from_str("Point(x: 1, y: 2,)").unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -383,11 +386,11 @@ fn named_struct_trailing_comma() {
 
 #[test]
 fn named_struct_multiline() {
-    let input = r#"Config {
+    let input = r#"Config(
         host: "localhost",
         port: 8080,
         debug: true
-    }"#;
+    )"#;
     let value = from_str(input).unwrap();
     assert_eq!(
         value,
@@ -481,17 +484,17 @@ fn roundtrip_named_tuple() {
 
 #[test]
 fn roundtrip_named_struct() {
-    roundtrip("Point { x: 1, y: 2 }");
+    roundtrip("Point(x: 1, y: 2)");
 }
 
 #[test]
 fn roundtrip_named_complex() {
     roundtrip(
-        r#"Config {
-        server: Server { host: "localhost", port: 8080 },
+        r#"Config(
+        server: Server(host: "localhost", port: 8080),
         items: [1, 2, 3],
         enabled: true
-    }"#,
+    )"#,
     );
 }
 
@@ -518,7 +521,7 @@ fn option_some_is_special() {
 
 #[test]
 fn option_none_in_struct() {
-    let value = from_str("Config { value: None }").unwrap();
+    let value = from_str("Config(value: None)").unwrap();
     match value {
         Value::Named {
             content: NamedContent::Struct(fields),
@@ -532,7 +535,7 @@ fn option_none_in_struct() {
 
 #[test]
 fn option_some_in_struct() {
-    let value = from_str("Config { value: Some(42) }").unwrap();
+    let value = from_str("Config(value: Some(42))").unwrap();
     match value {
         Value::Named {
             content: NamedContent::Struct(fields),
@@ -554,7 +557,7 @@ fn option_some_in_struct() {
 #[test]
 fn realistic_game_entity() {
     let value = from_str(
-        r#"Entity {
+        r#"Entity(
         id: 12345,
         name: "Player",
         position: Vec3(10.5, 0.0, -3.2),
@@ -564,7 +567,7 @@ fn realistic_game_entity() {
             Transform(1.0, Quaternion(0.0, 0.0, 0.0, 1.0))
         ],
         active: true
-    }"#,
+    )"#,
     )
     .unwrap();
 
@@ -590,19 +593,19 @@ fn realistic_game_entity() {
 #[test]
 fn realistic_api_response() {
     let value = from_str(
-        r#"Response {
+        r#"Response(
         status: Ok,
-        data: Some(User {
+        data: Some(User(
             id: 1,
             username: "alice",
             email: "alice@example.com",
             roles: [Admin, User]
-        }),
+        )),
         metadata: {
             "request_id": "abc123",
             "timestamp": 1234567890
         }
-    }"#,
+    )"#,
     )
     .unwrap();
 
@@ -612,23 +615,23 @@ fn realistic_api_response() {
 
 #[test]
 fn realistic_config_file() {
-    let input = r#"AppConfig {
+    let input = r#"AppConfig(
         // Server settings
-        server: ServerConfig {
+        server: ServerConfig(
             host: "0.0.0.0",
             port: 8080,
-            tls: Some(TlsConfig {
+            tls: Some(TlsConfig(
                 cert_path: "/etc/ssl/cert.pem",
                 key_path: "/etc/ssl/key.pem"
-            })
-        },
+            ))
+        ),
         // Database settings
-        database: DatabaseConfig {
+        database: DatabaseConfig(
             driver: Postgres,
             url: "postgres://localhost/mydb",
             pool_size: 10,
             timeout_secs: 30
-        },
+        ),
         // Feature flags
         features: {
             "new_ui": true,
@@ -637,7 +640,7 @@ fn realistic_config_file() {
         },
         // Logging
         log_level: Info
-    }"#;
+    )"#;
 
     let value = from_str(input).unwrap();
     let serialized = to_string(&value).unwrap();

@@ -811,8 +811,8 @@ mod tests {
 
     #[test]
     fn convert_named_struct() {
-        // RON uses braces for named fields: Point { x: 1 }
-        let doc = parse_document("Point { x: 1, y: 2 }").unwrap();
+        // Standard RON uses parentheses for struct fields: Point(x: 1, y: 2)
+        let doc = parse_document("Point(x: 1, y: 2)").unwrap();
         let value = to_value(&doc).unwrap().unwrap();
         match value {
             Value::Named {

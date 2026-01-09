@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn round_trip_struct_fields() {
-        assert_round_trip("Point { x: 1, y: 2 }");
+        assert_round_trip("Point(x: 1, y: 2)");
     }
 
     #[test]
@@ -588,13 +588,13 @@ mod tests {
     #[test]
     fn round_trip_complex() {
         let source = r#"// Configuration file
-Config {
+Config(
     name: "test",
     // Port number
     port: 8080,
     enabled: true,
     tags: ["web", "api"],
-}"#;
+)"#;
         assert_round_trip(source);
     }
 

@@ -27,7 +27,7 @@
 //! use ron2::ast::parse_document;
 //! use std::borrow::Cow;
 //!
-//! let source = "Config { name: \"old\" }";
+//! let source = "Config(name: \"old\")";
 //! let mut doc = parse_document(source).unwrap();
 //!
 //! // Convert to owned for mutation (can outlive source)
