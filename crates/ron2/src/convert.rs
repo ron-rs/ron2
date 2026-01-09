@@ -1,7 +1,7 @@
 //! Type conversion traits for RON.
 //!
 //! This module provides [`ToRon`] and [`FromRon`] traits for converting
-//! between Rust types and RON [`Value`]s, without requiring serde.
+//! between Rust types and RON values, without requiring serde.
 //!
 //! # Example
 //!
@@ -13,7 +13,7 @@
 //! let ron_string = numbers.to_ron().unwrap();
 //! assert_eq!(ron_string, "[1,2,3]");
 //!
-//! // Deserialize from RON
+//! // Deserialize from RON (now returns SpannedResult for precise error locations)
 //! let parsed: Vec<i32> = Vec::from_ron("[1, 2, 3]").unwrap();
 //! assert_eq!(parsed, vec![1, 2, 3]);
 //! ```
@@ -22,10 +22,10 @@ use alloc::{
     borrow::Cow,
     boxed::Box,
     collections::{BTreeMap, BTreeSet, LinkedList, VecDeque},
+    format,
     rc::Rc,
     string::String,
     sync::Arc,
-    vec,
     vec::Vec,
 };
 #[cfg(feature = "std")]
@@ -43,7 +43,8 @@ use std::{
 
 use crate::{
     Value,
-    error::{Error, Result},
+    ast::{parse_document, value_to_expr, Expr, NumberKind},
+    error::{Error, Result, SpannedError, SpannedResult},
     ser::PrettyConfig,
     value::{Map, Number},
 };
@@ -76,6 +77,9 @@ pub trait ToRon {
 
 /// Trait for types that can be constructed from RON.
 ///
+/// The core method is [`from_ast`](FromRon::from_ast), which deserializes from
+/// an AST expression with full span information for error reporting.
+///
 /// # Example
 ///
 /// ```
@@ -85,20 +89,39 @@ pub trait ToRon {
 /// assert_eq!(values, vec![1, 2, 3]);
 /// ```
 pub trait FromRon: Sized {
+    /// Core method: deserialize from an AST expression.
+    ///
+    /// This has access to the full span information for precise error reporting.
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self>;
+
     /// Construct this type from a RON [`Value`].
-    fn from_ron_value(value: Value) -> Result<Self>;
+    ///
+    /// This converts the Value to an AST expression with synthetic spans,
+    /// then calls [`from_ast`](FromRon::from_ast). Error spans will be synthetic
+    /// (line 0) since the Value has no source position information.
+    fn from_ron_value(value: Value) -> Result<Self> {
+        let expr = value_to_expr(value);
+        Self::from_ast(&expr).map_err(|e| e.code)
+    }
 
     /// Parse a RON string and construct this type.
-    fn from_ron(s: &str) -> Result<Self> {
-        let value = crate::from_str(s)?;
-        Self::from_ron_value(value)
+    ///
+    /// Returns a [`SpannedResult`] with precise error location information.
+    fn from_ron(s: &str) -> SpannedResult<Self> {
+        let doc = parse_document(s)?;
+        match doc.value {
+            Some(ref expr) => Self::from_ast(expr),
+            None => Err(SpannedError::at_start(Error::Eof)),
+        }
     }
 
     /// Read RON from a reader and construct this type.
     #[cfg(feature = "std")]
-    fn from_ron_reader<R: Read>(mut reader: R) -> Result<Self> {
+    fn from_ron_reader<R: Read>(mut reader: R) -> SpannedResult<Self> {
         let mut buf = String::new();
-        reader.read_to_string(&mut buf)?;
+        reader
+            .read_to_string(&mut buf)
+            .map_err(|e| SpannedError::at_start(Error::Io(e.to_string())))?;
         Self::from_ron(&buf)
     }
 }
@@ -174,6 +197,114 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::Struct(_) => "struct",
         Value::Named { .. } => "named",
         Value::Unit => "unit",
+    }
+}
+
+/// Get a human-readable type name for an AST expression.
+fn expr_type_name(expr: &Expr<'_>) -> &'static str {
+    match expr {
+        Expr::Unit(_) => "unit",
+        Expr::Bool(_) => "bool",
+        Expr::Char(_) => "char",
+        Expr::Byte(_) => "byte",
+        Expr::Number(_) => "number",
+        Expr::String(_) => "string",
+        Expr::Bytes(_) => "bytes",
+        Expr::Option(_) => "option",
+        Expr::Seq(_) => "sequence",
+        Expr::Map(_) => "map",
+        Expr::Tuple(_) => "tuple",
+        Expr::AnonStruct(_) => "struct",
+        Expr::Struct(_) => "named",
+    }
+}
+
+/// Create a spanned type mismatch error.
+fn spanned_type_mismatch(expected: &str, expr: &Expr<'_>) -> SpannedError {
+    SpannedError {
+        code: Error::InvalidValueForType {
+            expected: expected.into(),
+            found: expr_type_name(expr).into(),
+        },
+        span: expr.span().clone(),
+    }
+}
+
+/// Create a spanned error with the given code and expression's span.
+fn spanned_err(code: Error, expr: &Expr<'_>) -> SpannedError {
+    SpannedError {
+        code,
+        span: expr.span().clone(),
+    }
+}
+
+// =============================================================================
+// Number parsing helpers (for FromRon)
+// =============================================================================
+
+/// Parse an integer from a raw string representation.
+fn parse_integer_from_raw<T>(raw: &str, kind: &NumberKind) -> Result<T>
+where
+    T: TryFrom<i128> + TryFrom<u128>,
+{
+    let raw = raw.trim();
+
+    match kind {
+        NumberKind::Integer => {
+            // Positive integer
+            let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
+            let (base, digits) = if cleaned.starts_with("0x") || cleaned.starts_with("0X") {
+                (16, &cleaned[2..])
+            } else if cleaned.starts_with("0b") || cleaned.starts_with("0B") {
+                (2, &cleaned[2..])
+            } else if cleaned.starts_with("0o") || cleaned.starts_with("0O") {
+                (8, &cleaned[2..])
+            } else {
+                (10, cleaned.as_str())
+            };
+            let val = u128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds)?;
+            T::try_from(val).map_err(|_| Error::IntegerOutOfBounds)
+        }
+        NumberKind::NegativeInteger => {
+            // Negative integer
+            let raw = raw.strip_prefix('-').unwrap_or(raw);
+            let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
+            let (base, digits) = if cleaned.starts_with("0x") || cleaned.starts_with("0X") {
+                (16, &cleaned[2..])
+            } else if cleaned.starts_with("0b") || cleaned.starts_with("0B") {
+                (2, &cleaned[2..])
+            } else if cleaned.starts_with("0o") || cleaned.starts_with("0O") {
+                (8, &cleaned[2..])
+            } else {
+                (10, cleaned.as_str())
+            };
+            let val = i128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds)?;
+            let val = -val;
+            T::try_from(val).map_err(|_| Error::IntegerOutOfBounds)
+        }
+        NumberKind::Float | NumberKind::SpecialFloat => Err(Error::ExpectedInteger),
+    }
+}
+
+/// Parse a float from a raw string representation.
+fn parse_float_from_raw(raw: &str, kind: &NumberKind) -> Result<f64> {
+    let raw = raw.trim();
+    match kind {
+        NumberKind::SpecialFloat => match raw {
+            "inf" => Ok(f64::INFINITY),
+            "-inf" => Ok(f64::NEG_INFINITY),
+            "NaN" => Ok(f64::NAN),
+            _ => Err(Error::ExpectedFloat),
+        },
+        NumberKind::Float => {
+            let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
+            cleaned.parse().map_err(|_| Error::ExpectedFloat)
+        }
+        NumberKind::Integer | NumberKind::NegativeInteger => {
+            // Also accept integers as floats
+            let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
+            cleaned.parse().map_err(|_| Error::ExpectedFloat)
+        }
     }
 }
 
@@ -259,127 +390,57 @@ impl ToRon for f64 {
 // =============================================================================
 
 impl FromRon for bool {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Bool(b) => Ok(b),
-            other => Err(Error::type_mismatch("bool", &other)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Bool(b) => Ok(b.value),
+            _ => Err(spanned_type_mismatch("bool", expr)),
         }
     }
 }
 
 impl FromRon for char {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Char(c) => Ok(c),
-            other => Err(Error::type_mismatch("char", &other)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Char(c) => Ok(c.value),
+            _ => Err(spanned_type_mismatch("char", expr)),
         }
     }
 }
 
 impl FromRon for String {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::String(s) => Ok(s),
-            other => Err(Error::type_mismatch("String", &other)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::String(s) => Ok(s.value.clone()),
+            _ => Err(spanned_type_mismatch("String", expr)),
         }
     }
 }
 
 impl FromRon for () {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Unit => Ok(()),
-            other => Err(Error::type_mismatch("()", &other)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Unit(_) => Ok(()),
+            _ => Err(spanned_type_mismatch("()", expr)),
         }
     }
 }
-
-// Helper trait for extracting numbers with range checking
-trait FromNumber: Sized {
-    fn from_number(n: &Number) -> Option<Self>;
-    fn type_name() -> &'static str;
-}
-
-macro_rules! impl_from_number_signed {
-    ($($ty:ty),+ $(,)?) => {
-        $(
-            impl FromNumber for $ty {
-                fn from_number(n: &Number) -> Option<Self> {
-                    let val = match n {
-                        Number::I8(v) => i128::from(*v),
-                        Number::I16(v) => i128::from(*v),
-                        Number::I32(v) => i128::from(*v),
-                        Number::I64(v) => i128::from(*v),
-                        #[cfg(feature = "integer128")]
-                        Number::I128(v) => *v,
-                        Number::U8(v) => i128::from(*v),
-                        Number::U16(v) => i128::from(*v),
-                        Number::U32(v) => i128::from(*v),
-                        Number::U64(v) => i128::from(*v),
-                        #[cfg(feature = "integer128")]
-                        Number::U128(v) => i128::try_from(*v).ok()?,
-                        _ => return None,
-                    };
-                    val.try_into().ok()
-                }
-                fn type_name() -> &'static str { stringify!($ty) }
-            }
-        )+
-    };
-}
-
-macro_rules! impl_from_number_unsigned {
-    ($($ty:ty),+ $(,)?) => {
-        $(
-            impl FromNumber for $ty {
-                fn from_number(n: &Number) -> Option<Self> {
-                    let val = match n {
-                        Number::I8(v) if *v >= 0 => u128::try_from(*v).ok()?,
-                        Number::I16(v) if *v >= 0 => u128::try_from(*v).ok()?,
-                        Number::I32(v) if *v >= 0 => u128::try_from(*v).ok()?,
-                        Number::I64(v) if *v >= 0 => u128::try_from(*v).ok()?,
-                        #[cfg(feature = "integer128")]
-                        Number::I128(v) if *v >= 0 => u128::try_from(*v).ok()?,
-                        Number::U8(v) => u128::from(*v),
-                        Number::U16(v) => u128::from(*v),
-                        Number::U32(v) => u128::from(*v),
-                        Number::U64(v) => u128::from(*v),
-                        #[cfg(feature = "integer128")]
-                        Number::U128(v) => *v,
-                        _ => return None,
-                    };
-                    val.try_into().ok()
-                }
-                fn type_name() -> &'static str { stringify!($ty) }
-            }
-        )+
-    };
-}
-
-impl_from_number_signed!(i8, i16, i32, i64);
-impl_from_number_unsigned!(u8, u16, u32, u64);
-
-#[cfg(feature = "integer128")]
-impl_from_number_signed!(i128);
-
-#[cfg(feature = "integer128")]
-impl_from_number_unsigned!(u128);
 
 macro_rules! impl_from_ron_int {
     ($($ty:ty),+ $(,)?) => {
         $(
             impl FromRon for $ty {
-                fn from_ron_value(value: Value) -> Result<Self> {
-                    match value {
-                        Value::Number(ref n) => {
-                            <$ty as FromNumber>::from_number(n).ok_or_else(|| {
-                                Error::integer_out_of_range(
-                                    <$ty as FromNumber>::type_name(),
-                                    &alloc::format!("{n:?}"),
-                                )
-                            })
+                fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+                    match expr {
+                        Expr::Number(n) => {
+                            parse_integer_from_raw::<$ty>(&n.raw, &n.kind)
+                                .map_err(|e| spanned_err(e, expr))
                         }
-                        other => Err(Error::type_mismatch(<$ty as FromNumber>::type_name(), &other)),
+                        Expr::Byte(b) => {
+                            // Byte literals can be converted to integers
+                            <$ty>::try_from(b.value)
+                                .map_err(|_| spanned_err(Error::IntegerOutOfBounds, expr))
+                        }
+                        _ => Err(spanned_type_mismatch(stringify!($ty), expr)),
                     }
                 }
             }
@@ -393,61 +454,26 @@ impl_from_ron_int!(i8, i16, i32, i64, u8, u16, u32, u64);
 impl_from_ron_int!(i128, u128);
 
 impl FromRon for f32 {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Number(Number::F32(f)) => Ok(f.get()),
-            Value::Number(Number::F64(f)) => Ok(f.get() as f32),
-            Value::Number(n) => {
-                // Also accept integers as floats
-                let val: f64 = match n {
-                    Number::I8(v) => f64::from(v),
-                    Number::I16(v) => f64::from(v),
-                    Number::I32(v) => f64::from(v),
-                    Number::I64(v) => v as f64,
-                    #[cfg(feature = "integer128")]
-                    Number::I128(v) => v as f64,
-                    Number::U8(v) => f64::from(v),
-                    Number::U16(v) => f64::from(v),
-                    Number::U32(v) => f64::from(v),
-                    Number::U64(v) => v as f64,
-                    #[cfg(feature = "integer128")]
-                    Number::U128(v) => v as f64,
-                    _ => return Err(Error::type_mismatch("f32", &Value::Number(n))),
-                };
+    #[allow(clippy::cast_possible_truncation)]
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Number(n) => {
+                let val = parse_float_from_raw(&n.raw, &n.kind)
+                    .map_err(|e| spanned_err(e, expr))?;
                 Ok(val as f32)
             }
-            other => Err(Error::type_mismatch("f32", &other)),
+            _ => Err(spanned_type_mismatch("f32", expr)),
         }
     }
 }
 
 impl FromRon for f64 {
-    #[allow(clippy::cast_precision_loss)]
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Number(Number::F64(f)) => Ok(f.get()),
-            Value::Number(Number::F32(f)) => Ok(f64::from(f.get())),
-            Value::Number(n) => {
-                // Also accept integers as floats
-                let val: f64 = match n {
-                    Number::I8(v) => f64::from(v),
-                    Number::I16(v) => f64::from(v),
-                    Number::I32(v) => f64::from(v),
-                    Number::I64(v) => v as f64,
-                    #[cfg(feature = "integer128")]
-                    Number::I128(v) => v as f64,
-                    Number::U8(v) => f64::from(v),
-                    Number::U16(v) => f64::from(v),
-                    Number::U32(v) => f64::from(v),
-                    Number::U64(v) => v as f64,
-                    #[cfg(feature = "integer128")]
-                    Number::U128(v) => v as f64,
-                    _ => return Err(Error::type_mismatch("f64", &Value::Number(n))),
-                };
-                Ok(val)
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Number(n) => {
+                parse_float_from_raw(&n.raw, &n.kind).map_err(|e| spanned_err(e, expr))
             }
-            other => Err(Error::type_mismatch("f64", &other)),
+            _ => Err(spanned_type_mismatch("f64", expr)),
         }
     }
 }
@@ -532,74 +558,89 @@ impl<K: ToRon + Ord, V: ToRon> ToRon for BTreeMap<K, V> {
 // Collection implementations - FromRon
 // =============================================================================
 
+/// Helper to extract elements from a sequence-like expression.
+fn extract_seq_elements<'a>(expr: &'a Expr<'a>) -> Option<Vec<&'a Expr<'a>>> {
+    match expr {
+        Expr::Seq(seq) => Some(seq.items.iter().map(|item| &item.expr).collect()),
+        Expr::Tuple(tuple) => Some(tuple.elements.iter().map(|elem| &elem.expr).collect()),
+        _ => None,
+    }
+}
+
 impl<T: FromRon> FromRon for Vec<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Seq(seq) | Value::Tuple(seq) => seq.into_iter().map(T::from_ron_value).collect(),
-            other => Err(Error::type_mismatch("sequence", &other)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match extract_seq_elements(expr) {
+            Some(elements) => elements.into_iter().map(T::from_ast).collect(),
+            None => Err(spanned_type_mismatch("sequence", expr)),
         }
     }
 }
 
 impl<T: FromRon> FromRon for VecDeque<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Seq(seq) | Value::Tuple(seq) => seq.into_iter().map(T::from_ron_value).collect(),
-            other => Err(Error::type_mismatch("sequence", &other)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match extract_seq_elements(expr) {
+            Some(elements) => elements.into_iter().map(T::from_ast).collect(),
+            None => Err(spanned_type_mismatch("sequence", expr)),
         }
     }
 }
 
 impl<T: FromRon> FromRon for LinkedList<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Seq(seq) | Value::Tuple(seq) => seq.into_iter().map(T::from_ron_value).collect(),
-            other => Err(Error::type_mismatch("sequence", &other)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match extract_seq_elements(expr) {
+            Some(elements) => elements.into_iter().map(T::from_ast).collect(),
+            None => Err(spanned_type_mismatch("sequence", expr)),
         }
     }
 }
 
 #[cfg(feature = "std")]
 impl<T: FromRon + Eq + Hash, S: BuildHasher + Default> FromRon for HashSet<T, S> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Seq(seq) | Value::Tuple(seq) => seq
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match extract_seq_elements(expr) {
+            Some(elements) => elements
                 .into_iter()
-                .map(T::from_ron_value)
-                .collect::<Result<HashSet<T, S>>>(),
-            other => Err(Error::type_mismatch("sequence", &other)),
+                .map(T::from_ast)
+                .collect::<SpannedResult<HashSet<T, S>>>(),
+            None => Err(spanned_type_mismatch("sequence", expr)),
         }
     }
 }
 
 impl<T: FromRon + Ord> FromRon for BTreeSet<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Seq(seq) | Value::Tuple(seq) => seq.into_iter().map(T::from_ron_value).collect(),
-            other => Err(Error::type_mismatch("sequence", &other)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match extract_seq_elements(expr) {
+            Some(elements) => elements.into_iter().map(T::from_ast).collect(),
+            None => Err(spanned_type_mismatch("sequence", expr)),
         }
     }
 }
 
 impl<T: FromRon, const N: usize> FromRon for [T; N] {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Seq(seq) | Value::Tuple(seq) => {
-                if seq.len() != N {
-                    return Err(Error::invalid_value(alloc::format!(
-                        "expected array of length {N}, got {}",
-                        seq.len()
-                    )));
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match extract_seq_elements(expr) {
+            Some(elements) => {
+                if elements.len() != N {
+                    return Err(spanned_err(
+                        Error::invalid_value(format!(
+                            "expected array of length {N}, got {}",
+                            elements.len()
+                        )),
+                        expr,
+                    ));
                 }
-                let vec: Vec<T> = seq
+                let vec: Vec<T> = elements
                     .into_iter()
-                    .map(T::from_ron_value)
-                    .collect::<Result<_>>()?;
+                    .map(T::from_ast)
+                    .collect::<SpannedResult<_>>()?;
                 vec.try_into().map_err(|_| {
-                    Error::invalid_value(alloc::format!("failed to convert to array of length {N}"))
+                    spanned_err(
+                        Error::invalid_value(format!("failed to convert to array of length {N}")),
+                        expr,
+                    )
                 })
             }
-            other => Err(Error::type_mismatch("array", &other)),
+            None => Err(spanned_type_mismatch("array", expr)),
         }
     }
 }
@@ -607,31 +648,35 @@ impl<T: FromRon, const N: usize> FromRon for [T; N] {
 // Map types
 #[cfg(feature = "std")]
 impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRon for HashMap<K, V, S> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Map(map) => {
-                let mut result = HashMap::with_capacity_and_hasher(map.len(), Default::default());
-                for (k, v) in map {
-                    result.insert(K::from_ron_value(k)?, V::from_ron_value(v)?);
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Map(map) => {
+                let mut result = HashMap::with_capacity_and_hasher(map.entries.len(), Default::default());
+                for entry in &map.entries {
+                    let k = K::from_ast(&entry.key)?;
+                    let v = V::from_ast(&entry.value)?;
+                    result.insert(k, v);
                 }
                 Ok(result)
             }
-            other => Err(Error::type_mismatch("map", &other)),
+            _ => Err(spanned_type_mismatch("map", expr)),
         }
     }
 }
 
 impl<K: FromRon + Ord, V: FromRon> FromRon for BTreeMap<K, V> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Map(map) => {
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Map(map) => {
                 let mut result = BTreeMap::new();
-                for (k, v) in map {
-                    result.insert(K::from_ron_value(k)?, V::from_ron_value(v)?);
+                for entry in &map.entries {
+                    let k = K::from_ast(&entry.key)?;
+                    let v = V::from_ast(&entry.value)?;
+                    result.insert(k, v);
                 }
                 Ok(result)
             }
-            other => Err(Error::type_mismatch("map", &other)),
+            _ => Err(spanned_type_mismatch("map", expr)),
         }
     }
 }
@@ -650,12 +695,14 @@ impl<T: ToRon> ToRon for Option<T> {
 }
 
 impl<T: FromRon> FromRon for Option<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        match value {
-            Value::Option(None) => Ok(None),
-            Value::Option(Some(v)) => Ok(Some(T::from_ron_value(*v)?)),
-            // Also accept raw values as Some
-            other => Ok(Some(T::from_ron_value(other)?)),
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Option(opt) => match &opt.value {
+                None => Ok(None),
+                Some(inner) => Ok(Some(T::from_ast(&inner.expr)?)),
+            },
+            // Also accept raw values as implicit Some
+            other => Ok(Some(T::from_ast(other)?)),
         }
     }
 }
@@ -667,8 +714,8 @@ impl<T: ToRon + ?Sized> ToRon for Box<T> {
 }
 
 impl<T: FromRon> FromRon for Box<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        Ok(Box::new(T::from_ron_value(value)?))
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        Ok(Box::new(T::from_ast(expr)?))
     }
 }
 
@@ -691,8 +738,8 @@ impl<T: ToRon + Clone> ToRon for Cow<'_, T> {
 }
 
 impl<T: FromRon + Clone> FromRon for Cow<'static, T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        Ok(Cow::Owned(T::from_ron_value(value)?))
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        Ok(Cow::Owned(T::from_ast(expr)?))
     }
 }
 
@@ -703,8 +750,8 @@ impl<T: ToRon> ToRon for Rc<T> {
 }
 
 impl<T: FromRon> FromRon for Rc<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        Ok(Rc::new(T::from_ron_value(value)?))
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        Ok(Rc::new(T::from_ast(expr)?))
     }
 }
 
@@ -715,8 +762,8 @@ impl<T: ToRon> ToRon for Arc<T> {
 }
 
 impl<T: FromRon> FromRon for Arc<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        Ok(Arc::new(T::from_ron_value(value)?))
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        Ok(Arc::new(T::from_ast(expr)?))
     }
 }
 
@@ -727,8 +774,8 @@ impl<T: ToRon + Copy> ToRon for Cell<T> {
 }
 
 impl<T: FromRon> FromRon for Cell<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        Ok(Cell::new(T::from_ron_value(value)?))
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        Ok(Cell::new(T::from_ast(expr)?))
     }
 }
 
@@ -739,8 +786,8 @@ impl<T: ToRon> ToRon for RefCell<T> {
 }
 
 impl<T: FromRon> FromRon for RefCell<T> {
-    fn from_ron_value(value: Value) -> Result<Self> {
-        Ok(RefCell::new(T::from_ron_value(value)?))
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        Ok(RefCell::new(T::from_ast(expr)?))
     }
 }
 
@@ -771,24 +818,26 @@ macro_rules! impl_from_ron_tuple {
     () => {};
     ($first:ident $(, $rest:ident)*) => {
         impl<$first: FromRon $(, $rest: FromRon)*> FromRon for ($first, $($rest,)*) {
-            fn from_ron_value(value: Value) -> Result<Self> {
-                let mut seq = match value {
-                    Value::Tuple(t) => t,
-                    Value::Seq(s) => s,
-                    other => return Err(Error::type_mismatch("tuple", &other)),
+            fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+                let elements = match extract_seq_elements(expr) {
+                    Some(e) => e,
+                    None => return Err(spanned_type_mismatch("tuple", expr)),
                 };
-                #[allow(unused_variables, unused_mut)]
+                #[allow(unused_variables)]
                 let expected = impl_from_ron_tuple!(@count $first $(, $rest)*);
-                if seq.len() != expected {
-                    return Err(Error::invalid_value(alloc::format!(
-                        "expected tuple of {expected} elements, got {}",
-                        seq.len()
-                    )));
+                if elements.len() != expected {
+                    return Err(spanned_err(
+                        Error::invalid_value(format!(
+                            "expected tuple of {expected} elements, got {}",
+                            elements.len()
+                        )),
+                        expr,
+                    ));
                 }
-                seq.reverse();
+                let mut iter = elements.into_iter();
                 Ok((
-                    $first::from_ron_value(seq.pop().ok_or_else(|| Error::invalid_value("tuple too short"))?)?,
-                    $($rest::from_ron_value(seq.pop().ok_or_else(|| Error::invalid_value("tuple too short"))?)?,)*
+                    $first::from_ast(iter.next().ok_or_else(|| spanned_err(Error::invalid_value("tuple too short"), expr))?)?,
+                    $($rest::from_ast(iter.next().ok_or_else(|| spanned_err(Error::invalid_value("tuple too short"), expr))?)?,)*
                 ))
             }
         }
@@ -814,11 +863,24 @@ impl_from_ron_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 ///
 /// ```
 /// use ron2::{Value, MapAccess, FromRon};
+/// use ron2::ast::Expr;
+/// use ron2::error::{SpannedResult, SpannedError};
 ///
 /// // Manually implementing FromRon for a struct
 /// struct Point { x: i32, y: i32 }
 ///
 /// impl FromRon for Point {
+///     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+///         let value = ron2::ast::expr_to_value(expr).map_err(|e| SpannedError {
+///             code: e,
+///             span: expr.span().clone(),
+///         })?;
+///         Self::from_ron_value(value).map_err(|e| SpannedError {
+///             code: e,
+///             span: expr.span().clone(),
+///         })
+///     }
+///
 ///     fn from_ron_value(value: Value) -> ron2::error::Result<Self> {
 ///         let mut access = MapAccess::new(value)?;
 ///         let x = access.required("x")?;

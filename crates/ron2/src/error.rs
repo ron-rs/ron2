@@ -351,6 +351,20 @@ pub struct Span {
 }
 
 impl Span {
+    /// Create a synthetic span for values without source positions.
+    ///
+    /// Uses line 0 to distinguish from real spans (which are 1-indexed).
+    /// This is useful when converting `Value` to `Expr` for deserialization.
+    #[must_use]
+    pub fn synthetic() -> Self {
+        Self {
+            start: Position { line: 0, col: 0 },
+            end: Position { line: 0, col: 0 },
+            start_offset: 0,
+            end_offset: 0,
+        }
+    }
+
     /// Slice the given source text using this span's byte offsets.
     ///
     /// # Panics

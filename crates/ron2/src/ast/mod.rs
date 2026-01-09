@@ -38,7 +38,7 @@ mod convert;
 mod parse;
 mod ser;
 
-pub use convert::{expr_to_value, to_value};
+pub use convert::{expr_to_value, to_value, value_to_expr};
 pub use parse::parse_document;
 pub use ser::{serialize_document, serialize_document_to};
 

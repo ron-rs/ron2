@@ -1,4 +1,5 @@
-use ron2::error::{Error, Result};
+use ron2::ast::{expr_to_value, Expr};
+use ron2::error::{Error, Result, SpannedError, SpannedResult};
 use ron2::value::{NamedContent, StructFields};
 use ron2::{FromRon, ToRon, Value};
 use serde::{Deserialize, Serialize};
@@ -429,6 +430,17 @@ impl ToRon for VariantKind {
 // =============================================================================
 
 impl FromRon for Schema {
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        let value = expr_to_value(expr).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })?;
+        Self::from_ron_value(value).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })
+    }
+
     fn from_ron_value(value: Value) -> Result<Self> {
         let (name, content) = match value {
             Value::Named { name, content } => (name, content),
@@ -471,6 +483,17 @@ impl FromRon for Schema {
 }
 
 impl FromRon for TypeKind {
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        let value = expr_to_value(expr).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })?;
+        Self::from_ron_value(value).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })
+    }
+
     fn from_ron_value(value: Value) -> Result<Self> {
         let (name, content) = match value {
             Value::Named { name, content } => (name, content),
@@ -555,6 +578,17 @@ impl FromRon for TypeKind {
 }
 
 impl FromRon for Field {
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        let value = expr_to_value(expr).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })?;
+        Self::from_ron_value(value).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })
+    }
+
     fn from_ron_value(value: Value) -> Result<Self> {
         let fields = match value {
             Value::Named {
@@ -593,6 +627,17 @@ impl FromRon for Field {
 }
 
 impl FromRon for Variant {
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        let value = expr_to_value(expr).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })?;
+        Self::from_ron_value(value).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })
+    }
+
     fn from_ron_value(value: Value) -> Result<Self> {
         let fields = match value {
             Value::Named {
@@ -625,6 +670,17 @@ impl FromRon for Variant {
 }
 
 impl FromRon for VariantKind {
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        let value = expr_to_value(expr).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })?;
+        Self::from_ron_value(value).map_err(|e| SpannedError {
+            code: e,
+            span: expr.span().clone(),
+        })
+    }
+
     fn from_ron_value(value: Value) -> Result<Self> {
         let (name, content) = match value {
             Value::Named { name, content } => (name, content),

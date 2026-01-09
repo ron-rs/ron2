@@ -26,6 +26,17 @@ pub fn derive_from_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         impl #impl_generics ::ron2::FromRon for #name #ty_generics #where_clause {
+            fn from_ast(expr: &::ron2::ast::Expr<'_>) -> ::ron2::error::SpannedResult<Self> {
+                let value = ::ron2::ast::expr_to_value(expr).map_err(|e| ::ron2::error::SpannedError {
+                    code: e,
+                    span: expr.span().clone(),
+                })?;
+                Self::from_ron_value(value).map_err(|e| ::ron2::error::SpannedError {
+                    code: e,
+                    span: expr.span().clone(),
+                })
+            }
+
             fn from_ron_value(value: ::ron2::Value) -> ::ron2::error::Result<Self> {
                 #body
             }

@@ -1,20 +1,25 @@
-//! Conversion from AST to Value.
+//! Conversion between AST and Value.
 //!
-//! This module provides conversion from the AST representation to the
-//! `Value` type. The conversion discards:
-//! - Span information
-//! - Trivia (whitespace and comments)
-//! - Raw text representations (e.g., hex literals become numbers)
+//! This module provides bidirectional conversion:
 //!
-//! Unlike older implementations, struct/enum names are preserved in `Value::Named`.
+//! **AST → Value** (`expr_to_value`):
+//! - Discards span information, trivia, and raw text representations
+//! - Struct/enum names are preserved in `Value::Named`
+//!
+//! **Value → AST** (`value_to_expr`):
+//! - Creates AST with synthetic spans (line 0 to distinguish from real spans)
+//! - Generates raw text representations for numbers, strings, etc.
+//! - Useful for `FromRon::from_ron_value()` default implementation
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, format, string::String, vec::Vec};
 
 use crate::ast::{
-    AnonStructExpr, BytesExpr, Document, Expr, FieldsBody, MapExpr, NumberExpr, NumberKind,
-    OptionExpr, SeqExpr, StringExpr, StructBody, StructExpr, TupleBody, TupleExpr,
+    AnonStructExpr, BoolExpr, BytesExpr, BytesKind, CharExpr, Document, Expr, FieldsBody, Ident,
+    MapEntry, MapExpr, NumberExpr, NumberKind, OptionExpr, OptionValue, SeqExpr, SeqItem,
+    StringExpr, StringKind, StructBody, StructExpr, StructField, Trivia, TupleBody, TupleElement,
+    TupleExpr, UnitExpr,
 };
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, Span};
 use crate::value::{F32, F64, NamedContent, Number, StructFields, Value};
 
 /// Convert an AST document to a Value.
@@ -288,6 +293,365 @@ fn fields_body_to_struct_fields(fields: &FieldsBody<'_>) -> Result<StructFields>
         result.push((key, value));
     }
     Ok(result)
+}
+
+// ============================================================================
+// Value → AST conversion
+// ============================================================================
+
+/// Convert a `Value` to an AST expression with synthetic spans.
+///
+/// This is useful for the default `FromRon::from_ron_value()` implementation,
+/// allowing Value-based deserialization to reuse AST-based logic.
+///
+/// All generated spans use line 0 to distinguish from real source spans.
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::value_to_expr;
+/// use ron2::Value;
+///
+/// let value = Value::Bool(true);
+/// let expr = value_to_expr(value);
+/// // expr is Expr::Bool with a synthetic span
+/// ```
+pub fn value_to_expr(value: Value) -> Expr<'static> {
+    let span = Span::synthetic();
+    match value {
+        Value::Unit => Expr::Unit(UnitExpr { span }),
+        Value::Bool(b) => Expr::Bool(BoolExpr { span, value: b }),
+        Value::Char(c) => Expr::Char(CharExpr {
+            span,
+            raw: Cow::Owned(escape_char(c)),
+            value: c,
+        }),
+        Value::Number(n) => {
+            let (raw, kind) = format_number(&n);
+            Expr::Number(NumberExpr {
+                span,
+                raw: Cow::Owned(raw),
+                kind,
+            })
+        }
+        Value::String(s) => Expr::String(StringExpr {
+            span,
+            raw: Cow::Owned(escape_string(&s)),
+            value: s,
+            kind: StringKind::Regular,
+        }),
+        Value::Bytes(b) => Expr::Bytes(BytesExpr {
+            span,
+            raw: Cow::Owned(format_bytes(&b)),
+            value: b,
+            kind: BytesKind::Regular,
+        }),
+        Value::Option(opt) => Expr::Option(Box::new(match opt {
+            None => OptionExpr { span, value: None },
+            Some(inner) => {
+                let inner_expr = value_to_expr(*inner);
+                OptionExpr {
+                    span,
+                    value: Some(OptionValue {
+                        open_paren: Span::synthetic(),
+                        leading: Trivia::empty(),
+                        expr: inner_expr,
+                        trailing: Trivia::empty(),
+                        close_paren: Span::synthetic(),
+                    }),
+                }
+            }
+        })),
+        Value::Seq(items) => {
+            let seq_items: Vec<SeqItem<'static>> = items
+                .into_iter()
+                .map(|v| SeqItem {
+                    leading: Trivia::empty(),
+                    expr: value_to_expr(v),
+                    trailing: Trivia::empty(),
+                    comma: None,
+                })
+                .collect();
+            Expr::Seq(SeqExpr {
+                span,
+                open_bracket: Span::synthetic(),
+                leading: Trivia::empty(),
+                items: seq_items,
+                trailing: Trivia::empty(),
+                close_bracket: Span::synthetic(),
+            })
+        }
+        Value::Tuple(elements) => {
+            let tuple_elements: Vec<TupleElement<'static>> = elements
+                .into_iter()
+                .map(|v| TupleElement {
+                    leading: Trivia::empty(),
+                    expr: value_to_expr(v),
+                    trailing: Trivia::empty(),
+                    comma: None,
+                })
+                .collect();
+            Expr::Tuple(TupleExpr {
+                span,
+                open_paren: Span::synthetic(),
+                leading: Trivia::empty(),
+                elements: tuple_elements,
+                trailing: Trivia::empty(),
+                close_paren: Span::synthetic(),
+            })
+        }
+        Value::Map(map) => {
+            let entries: Vec<MapEntry<'static>> = map
+                .into_iter()
+                .map(|(k, v)| MapEntry {
+                    leading: Trivia::empty(),
+                    key: value_to_expr(k),
+                    pre_colon: Trivia::empty(),
+                    colon: Span::synthetic(),
+                    post_colon: Trivia::empty(),
+                    value: value_to_expr(v),
+                    trailing: Trivia::empty(),
+                    comma: None,
+                })
+                .collect();
+            Expr::Map(MapExpr {
+                span,
+                open_brace: Span::synthetic(),
+                leading: Trivia::empty(),
+                entries,
+                trailing: Trivia::empty(),
+                close_brace: Span::synthetic(),
+            })
+        }
+        Value::Struct(fields) => {
+            let struct_fields: Vec<StructField<'static>> = fields
+                .into_iter()
+                .map(|(name, v)| StructField {
+                    leading: Trivia::empty(),
+                    name: Ident {
+                        span: Span::synthetic(),
+                        name: Cow::Owned(name),
+                    },
+                    pre_colon: Trivia::empty(),
+                    colon: Span::synthetic(),
+                    post_colon: Trivia::empty(),
+                    value: value_to_expr(v),
+                    trailing: Trivia::empty(),
+                    comma: None,
+                })
+                .collect();
+            Expr::AnonStruct(AnonStructExpr {
+                span,
+                open_paren: Span::synthetic(),
+                leading: Trivia::empty(),
+                fields: struct_fields,
+                trailing: Trivia::empty(),
+                close_paren: Span::synthetic(),
+            })
+        }
+        Value::Named { name, content } => {
+            let body = match content {
+                NamedContent::Unit => None,
+                NamedContent::Tuple(elements) => {
+                    let tuple_elements: Vec<TupleElement<'static>> = elements
+                        .into_iter()
+                        .map(|v| TupleElement {
+                            leading: Trivia::empty(),
+                            expr: value_to_expr(v),
+                            trailing: Trivia::empty(),
+                            comma: None,
+                        })
+                        .collect();
+                    Some(StructBody::Tuple(TupleBody {
+                        open_paren: Span::synthetic(),
+                        leading: Trivia::empty(),
+                        elements: tuple_elements,
+                        trailing: Trivia::empty(),
+                        close_paren: Span::synthetic(),
+                    }))
+                }
+                NamedContent::Struct(fields) => {
+                    let struct_fields: Vec<StructField<'static>> = fields
+                        .into_iter()
+                        .map(|(field_name, v)| StructField {
+                            leading: Trivia::empty(),
+                            name: Ident {
+                                span: Span::synthetic(),
+                                name: Cow::Owned(field_name),
+                            },
+                            pre_colon: Trivia::empty(),
+                            colon: Span::synthetic(),
+                            post_colon: Trivia::empty(),
+                            value: value_to_expr(v),
+                            trailing: Trivia::empty(),
+                            comma: None,
+                        })
+                        .collect();
+                    Some(StructBody::Fields(FieldsBody {
+                        open_brace: Span::synthetic(),
+                        leading: Trivia::empty(),
+                        fields: struct_fields,
+                        trailing: Trivia::empty(),
+                        close_brace: Span::synthetic(),
+                    }))
+                }
+            };
+            Expr::Struct(StructExpr {
+                span,
+                name: Ident {
+                    span: Span::synthetic(),
+                    name: Cow::Owned(name),
+                },
+                pre_body: Trivia::empty(),
+                body,
+            })
+        }
+    }
+}
+
+/// Format a number to its raw string representation.
+fn format_number(n: &Number) -> (String, NumberKind) {
+    match n {
+        Number::I8(v) => {
+            if *v < 0 {
+                (format!("{v}"), NumberKind::NegativeInteger)
+            } else {
+                (format!("{v}"), NumberKind::Integer)
+            }
+        }
+        Number::I16(v) => {
+            if *v < 0 {
+                (format!("{v}"), NumberKind::NegativeInteger)
+            } else {
+                (format!("{v}"), NumberKind::Integer)
+            }
+        }
+        Number::I32(v) => {
+            if *v < 0 {
+                (format!("{v}"), NumberKind::NegativeInteger)
+            } else {
+                (format!("{v}"), NumberKind::Integer)
+            }
+        }
+        Number::I64(v) => {
+            if *v < 0 {
+                (format!("{v}"), NumberKind::NegativeInteger)
+            } else {
+                (format!("{v}"), NumberKind::Integer)
+            }
+        }
+        #[cfg(feature = "integer128")]
+        Number::I128(v) => {
+            if *v < 0 {
+                (format!("{v}"), NumberKind::NegativeInteger)
+            } else {
+                (format!("{v}"), NumberKind::Integer)
+            }
+        }
+        Number::U8(v) => (format!("{v}"), NumberKind::Integer),
+        Number::U16(v) => (format!("{v}"), NumberKind::Integer),
+        Number::U32(v) => (format!("{v}"), NumberKind::Integer),
+        Number::U64(v) => (format!("{v}"), NumberKind::Integer),
+        #[cfg(feature = "integer128")]
+        Number::U128(v) => (format!("{v}"), NumberKind::Integer),
+        Number::F32(f) => {
+            let v = f.get();
+            if v.is_nan() {
+                ("NaN".into(), NumberKind::SpecialFloat)
+            } else if v.is_infinite() {
+                if v.is_sign_positive() {
+                    ("inf".into(), NumberKind::SpecialFloat)
+                } else {
+                    ("-inf".into(), NumberKind::SpecialFloat)
+                }
+            } else {
+                // Ensure we always have a decimal point for floats
+                let s = format!("{v}");
+                if s.contains('.') || s.contains('e') || s.contains('E') {
+                    (s, NumberKind::Float)
+                } else {
+                    (format!("{v}.0"), NumberKind::Float)
+                }
+            }
+        }
+        Number::F64(f) => {
+            let v = f.get();
+            if v.is_nan() {
+                ("NaN".into(), NumberKind::SpecialFloat)
+            } else if v.is_infinite() {
+                if v.is_sign_positive() {
+                    ("inf".into(), NumberKind::SpecialFloat)
+                } else {
+                    ("-inf".into(), NumberKind::SpecialFloat)
+                }
+            } else {
+                let s = format!("{v}");
+                if s.contains('.') || s.contains('e') || s.contains('E') {
+                    (s, NumberKind::Float)
+                } else {
+                    (format!("{v}.0"), NumberKind::Float)
+                }
+            }
+        }
+        // Handle non-exhaustive variant
+        _ => ("0".into(), NumberKind::Integer),
+    }
+}
+
+/// Escape a character for RON representation (including quotes).
+fn escape_char(c: char) -> String {
+    match c {
+        '\'' => "'\\''".into(),
+        '\\' => "'\\\\'".into(),
+        '\n' => "'\\n'".into(),
+        '\r' => "'\\r'".into(),
+        '\t' => "'\\t'".into(),
+        '\0' => "'\\0'".into(),
+        c if c.is_ascii_control() => format!("'\\x{:02x}'", c as u8),
+        c => format!("'{c}'"),
+    }
+}
+
+/// Escape a string for RON representation (including quotes).
+fn escape_string(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 2);
+    result.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\0' => result.push_str("\\0"),
+            c if c.is_ascii_control() => {
+                result.push_str(&format!("\\x{:02x}", c as u8));
+            }
+            c => result.push(c),
+        }
+    }
+    result.push('"');
+    result
+}
+
+/// Format bytes for RON representation (as byte string).
+fn format_bytes(bytes: &[u8]) -> String {
+    let mut result = String::with_capacity(bytes.len() + 3);
+    result.push_str("b\"");
+    for &b in bytes {
+        match b {
+            b'"' => result.push_str("\\\""),
+            b'\\' => result.push_str("\\\\"),
+            b'\n' => result.push_str("\\n"),
+            b'\r' => result.push_str("\\r"),
+            b'\t' => result.push_str("\\t"),
+            b'\0' => result.push_str("\\0"),
+            b if b.is_ascii_graphic() || b == b' ' => result.push(b as char),
+            b => result.push_str(&format!("\\x{b:02x}")),
+        }
+    }
+    result.push('"');
+    result
 }
 
 #[cfg(test)]
