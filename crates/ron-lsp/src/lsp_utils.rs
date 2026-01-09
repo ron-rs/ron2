@@ -27,7 +27,7 @@ pub fn span_to_range(span: &ron2::error::Span) -> Range {
 /// Uses AST-based lookup when available, falling back to text search.
 pub fn find_field_position(doc: &Document, field: &str) -> Option<Range> {
     // Prefer AST-based position (more accurate)
-    if let Some(range) = find_field_position_from_ast(doc, field) {
+    if let Some(range) = find_word_range_from_ast(doc, field) {
         return Some(range);
     }
 
@@ -36,22 +36,13 @@ pub fn find_field_position(doc: &Document, field: &str) -> Option<Range> {
     find_text_position(doc, &pattern).or_else(|| find_text_position(doc, field))
 }
 
-/// Find field position using AST spans.
-pub fn find_field_position_from_ast(doc: &Document, field: &str) -> Option<Range> {
+/// Find the range of a field name from the AST.
+///
+/// Searches the AST field names and returns the span of the matching field.
+pub fn find_word_range_from_ast(doc: &Document, name: &str) -> Option<Range> {
     let fields = doc.get_ast_fields_with_spans();
-    for (name, span) in fields {
-        if name == field {
-            return Some(span_to_range(&span));
-        }
-    }
-    None
-}
-
-/// Find the range of a word (field name) from the AST.
-pub fn find_word_range_from_ast(doc: &Document, word: &str) -> Option<Range> {
-    let fields = doc.get_ast_fields_with_spans();
-    for (name, span) in fields {
-        if name == word {
+    for (field_name, span) in fields {
+        if field_name == name {
             return Some(span_to_range(&span));
         }
     }

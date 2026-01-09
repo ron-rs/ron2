@@ -108,21 +108,6 @@ impl Document {
         Some(line_start + line_content.len())
     }
 
-    /// Convert a byte offset to line and column (0-based).
-    #[allow(dead_code)]
-    pub fn offset_to_position(&self, offset: usize) -> (u32, u32) {
-        let line = self
-            .line_offsets
-            .iter()
-            .rposition(|&o| o <= offset)
-            .unwrap_or(0);
-
-        let line_start = self.line_offsets[line];
-        let col = self.content[line_start..offset].chars().count();
-
-        (line as u32, col as u32)
-    }
-
     /// Parse the RON content using the AST parser.
     fn parse_content(&mut self) {
         self.ast = None;
