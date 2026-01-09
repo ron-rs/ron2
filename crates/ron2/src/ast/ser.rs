@@ -490,6 +490,21 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_bytes() {
+        assert_round_trip(r#"b"hello""#);
+    }
+
+    #[test]
+    fn round_trip_raw_bytes() {
+        assert_round_trip(r#"br"hello""#);
+    }
+
+    #[test]
+    fn round_trip_raw_bytes_with_hash() {
+        assert_round_trip(r##"br#"hello"#"##);
+    }
+
+    #[test]
     fn round_trip_char() {
         assert_round_trip("'a'");
     }

@@ -350,6 +350,24 @@ fn roundtrip_bytes_hex() {
     assert_eq!(value, Value::Bytes(vec![0x00, 0xFF]));
 }
 
+#[test]
+fn roundtrip_bytes_raw() {
+    let value = roundtrip(r#"br"hello""#);
+    assert_eq!(value, Value::Bytes(b"hello".to_vec()));
+}
+
+#[test]
+fn roundtrip_bytes_raw_with_hash() {
+    let value = roundtrip(r##"br#"hello"#"##);
+    assert_eq!(value, Value::Bytes(b"hello".to_vec()));
+}
+
+#[test]
+fn roundtrip_bytes_raw_with_embedded_quote() {
+    let value = roundtrip(r##"br#"hello "world""#"##);
+    assert_eq!(value, Value::Bytes(br#"hello "world""#.to_vec()));
+}
+
 // =============================================================================
 // Option
 // =============================================================================

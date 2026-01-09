@@ -260,10 +260,26 @@ fn edge_bytes_all_values() {
 
 #[test]
 fn edge_raw_bytes() {
-    // Note: raw byte strings with hashes have a known issue in the lexer
-    // For now, test with a simpler raw byte string
     let value = from_str(r#"br"hello""#).unwrap();
     assert_eq!(value, Value::Bytes(b"hello".to_vec()));
+}
+
+#[test]
+fn edge_raw_bytes_with_hash() {
+    let value = from_str(r##"br#"hello"#"##).unwrap();
+    assert_eq!(value, Value::Bytes(b"hello".to_vec()));
+}
+
+#[test]
+fn edge_raw_bytes_with_double_hash() {
+    let value = from_str(r###"br##"hello"##"###).unwrap();
+    assert_eq!(value, Value::Bytes(b"hello".to_vec()));
+}
+
+#[test]
+fn edge_raw_bytes_with_embedded_quote() {
+    let value = from_str(r##"br#"hello "world""#"##).unwrap();
+    assert_eq!(value, Value::Bytes(br#"hello "world""#.to_vec()));
 }
 
 // =============================================================================
