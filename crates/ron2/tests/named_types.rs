@@ -439,7 +439,7 @@ fn serialize_named_struct() {
             (String::from("y"), Value::Number(Number::U8(2))),
         ]),
     };
-    assert_eq!(to_string(&value).unwrap(), "Point(x: 1,y: 2)");
+    assert_eq!(to_string(&value).unwrap(), "Point(x:1,y:2)");
 }
 
 #[test]

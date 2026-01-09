@@ -357,7 +357,7 @@ impl<W: Write> Serializer<W> {
     fn serialize_map(&mut self, map: &Map) -> Result<()> {
         self.serialize_delimited('{', '}', map.iter(), map.len(), |s, (key, value)| {
             s.serialize(key)?;
-            s.writer.write_str(": ")?;
+            s.writer.write_str(if s.pretty.is_some() { ": " } else { ":" })?;
             s.serialize(value)
         })
     }
@@ -369,7 +369,7 @@ impl<W: Write> Serializer<W> {
         }
         self.serialize_delimited('(', ')', fields.iter(), fields.len(), |s, (field_name, value)| {
             s.writer.write_str(field_name)?;
-            s.writer.write_str(": ")?;
+            s.writer.write_str(if s.pretty.is_some() { ": " } else { ":" })?;
             s.serialize(value)
         })
     }
@@ -525,9 +525,9 @@ mod tests {
         map.insert(Value::String(String::from("y")), Value::Number(Number::U8(2)));
 
         let result = to_string(&Value::Map(map)).unwrap();
-        // Maps use brace syntax with Value keys serialized
-        assert!(result.contains("\"x\": 1"));
-        assert!(result.contains("\"y\": 2"));
+        // Maps use brace syntax with Value keys serialized (compact: no space after colon)
+        assert!(result.contains("\"x\":1"));
+        assert!(result.contains("\"y\":2"));
     }
 
     #[test]
