@@ -1,3 +1,5 @@
+use std::fmt;
+
 use ron2::ast::{expr_to_value, Expr};
 use ron2::error::{Error, Result, SpannedError, SpannedResult};
 use ron2::value::{NamedContent, StructFields};
@@ -81,6 +83,45 @@ pub enum TypeKind {
 
     /// Reference to another schema by fully-qualified type path.
     TypeRef(String),
+}
+
+impl fmt::Display for TypeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeKind::Bool => write!(f, "bool"),
+            TypeKind::I8 => write!(f, "i8"),
+            TypeKind::I16 => write!(f, "i16"),
+            TypeKind::I32 => write!(f, "i32"),
+            TypeKind::I64 => write!(f, "i64"),
+            TypeKind::I128 => write!(f, "i128"),
+            TypeKind::U8 => write!(f, "u8"),
+            TypeKind::U16 => write!(f, "u16"),
+            TypeKind::U32 => write!(f, "u32"),
+            TypeKind::U64 => write!(f, "u64"),
+            TypeKind::U128 => write!(f, "u128"),
+            TypeKind::F32 => write!(f, "f32"),
+            TypeKind::F64 => write!(f, "f64"),
+            TypeKind::Char => write!(f, "char"),
+            TypeKind::String => write!(f, "String"),
+            TypeKind::Unit => write!(f, "()"),
+            TypeKind::Option(inner) => write!(f, "Option<{}>", inner),
+            TypeKind::List(inner) => write!(f, "List<{}>", inner),
+            TypeKind::Map { key, value } => write!(f, "Map<{}, {}>", key, value),
+            TypeKind::Tuple(types) => {
+                write!(f, "(")?;
+                for (i, ty) in types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", ty)?;
+                }
+                write!(f, ")")
+            }
+            TypeKind::Struct { .. } => write!(f, "Struct"),
+            TypeKind::Enum { .. } => write!(f, "Enum"),
+            TypeKind::TypeRef(path) => write!(f, "{}", path),
+        }
+    }
 }
 
 /// A field in a struct.

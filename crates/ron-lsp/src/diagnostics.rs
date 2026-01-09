@@ -7,6 +7,7 @@ use ron_schema::{validate_with_resolver, ValidationError};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
+use crate::lsp_utils::{find_field_position, find_text_position};
 use crate::schema_resolver::SchemaResolver;
 
 /// Validate a document and return diagnostics.
@@ -182,43 +183,6 @@ fn format_validation_error(error: &ValidationError, doc: &Document) -> (String, 
     }
 }
 
-/// Find the position of a field name in the document.
-fn find_field_position(doc: &Document, field: &str) -> Option<Range> {
-    // Prefer AST-based position (more accurate)
-    if let Some(range) = find_field_position_from_ast(doc, field) {
-        return Some(range);
-    }
-
-    // Fall back to text search
-    let pattern = format!("{}:", field);
-    find_text_position(doc, &pattern).or_else(|| find_text_position(doc, field))
-}
-
-/// Find field position using AST spans.
-fn find_field_position_from_ast(doc: &Document, field: &str) -> Option<Range> {
-    let fields = doc.get_ast_fields_with_spans();
-    for (name, span) in fields {
-        if name == field {
-            return Some(span_to_range(&span));
-        }
-    }
-    None
-}
-
-/// Convert a ron2 Span to an LSP Range.
-fn span_to_range(span: &ron2::error::Span) -> Range {
-    Range {
-        start: Position {
-            line: span.start.line.saturating_sub(1) as u32,
-            character: span.start.col.saturating_sub(1) as u32,
-        },
-        end: Position {
-            line: span.end.line.saturating_sub(1) as u32,
-            character: span.end.col.saturating_sub(1) as u32,
-        },
-    }
-}
-
 /// Find a position where a missing field could be inserted.
 fn find_field_insert_position(doc: &Document, _field: &str) -> Option<Range> {
     // If we have an AST, use the root expression span
@@ -253,25 +217,6 @@ fn find_field_insert_position(doc: &Document, _field: &str) -> Option<Range> {
                 end: Position {
                     line: line_idx as u32,
                     character: (col + 1) as u32,
-                },
-            });
-        }
-    }
-    None
-}
-
-/// Find the position of text in the document.
-fn find_text_position(doc: &Document, text: &str) -> Option<Range> {
-    for (line_idx, line) in doc.content.lines().enumerate() {
-        if let Some(col) = line.find(text) {
-            return Some(Range {
-                start: Position {
-                    line: line_idx as u32,
-                    character: col as u32,
-                },
-                end: Position {
-                    line: line_idx as u32,
-                    character: (col + text.len()) as u32,
                 },
             });
         }

@@ -7,6 +7,7 @@ use ron_schema::{Field, Schema, TypeKind, Variant, VariantKind};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
+use crate::lsp_utils::find_word_range_from_ast;
 use crate::schema_resolver::SchemaResolver;
 
 /// Provide hover information for a position in the document.
@@ -31,26 +32,6 @@ pub fn provide_hover(
         }),
         range,
     })
-}
-
-/// Find the range of a word (field name) from the AST.
-fn find_word_range_from_ast(doc: &Document, word: &str) -> Option<Range> {
-    let fields = doc.get_ast_fields_with_spans();
-    for (name, span) in fields {
-        if name == word {
-            return Some(Range {
-                start: Position {
-                    line: span.start.line.saturating_sub(1) as u32,
-                    character: span.start.col.saturating_sub(1) as u32,
-                },
-                end: Position {
-                    line: span.end.line.saturating_sub(1) as u32,
-                    character: span.end.col.saturating_sub(1) as u32,
-                },
-            });
-        }
-    }
-    None
 }
 
 /// Find hover information for a word in the schema.
@@ -174,7 +155,7 @@ fn format_field_hover(field: &Field) -> String {
     let mut parts = Vec::new();
 
     // Field name and type
-    let type_str = type_kind_to_string(&field.ty);
+    let type_str = field.ty.to_string();
     let optional = if field.optional { " (optional)" } else { "" };
     parts.push(format!("**{}**: `{}`{}", field.name, type_str, optional));
 
@@ -197,7 +178,7 @@ fn format_variant_hover(variant: &Variant) -> String {
         VariantKind::Tuple(types) => {
             let type_list = types
                 .iter()
-                .map(type_kind_to_string)
+                .map(|t| t.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("**{}**({})", variant.name, type_list)
@@ -205,7 +186,7 @@ fn format_variant_hover(variant: &Variant) -> String {
         VariantKind::Struct(fields) => {
             let field_list = fields
                 .iter()
-                .map(|f| format!("{}: {}", f.name, type_kind_to_string(&f.ty)))
+                .map(|f| format!("{}: {}", f.name, f.ty))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("**{}** {{ {} }}", variant.name, field_list)
@@ -235,48 +216,6 @@ fn format_variant_hover(variant: &Variant) -> String {
     }
 
     parts.join("\n")
-}
-
-/// Convert a TypeKind to a human-readable string.
-fn type_kind_to_string(kind: &TypeKind) -> String {
-    match kind {
-        TypeKind::Bool => "bool".to_string(),
-        TypeKind::I8 => "i8".to_string(),
-        TypeKind::I16 => "i16".to_string(),
-        TypeKind::I32 => "i32".to_string(),
-        TypeKind::I64 => "i64".to_string(),
-        TypeKind::I128 => "i128".to_string(),
-        TypeKind::U8 => "u8".to_string(),
-        TypeKind::U16 => "u16".to_string(),
-        TypeKind::U32 => "u32".to_string(),
-        TypeKind::U64 => "u64".to_string(),
-        TypeKind::U128 => "u128".to_string(),
-        TypeKind::F32 => "f32".to_string(),
-        TypeKind::F64 => "f64".to_string(),
-        TypeKind::Char => "char".to_string(),
-        TypeKind::String => "String".to_string(),
-        TypeKind::Unit => "()".to_string(),
-        TypeKind::Option(inner) => format!("Option<{}>", type_kind_to_string(inner)),
-        TypeKind::List(inner) => format!("List<{}>", type_kind_to_string(inner)),
-        TypeKind::Map { key, value } => {
-            format!(
-                "Map<{}, {}>",
-                type_kind_to_string(key),
-                type_kind_to_string(value)
-            )
-        }
-        TypeKind::Tuple(types) => {
-            let inner = types
-                .iter()
-                .map(type_kind_to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("({})", inner)
-        }
-        TypeKind::Struct { .. } => "Struct".to_string(),
-        TypeKind::Enum { .. } => "Enum".to_string(),
-        TypeKind::TypeRef(path) => path.clone(),
-    }
 }
 
 #[cfg(test)]

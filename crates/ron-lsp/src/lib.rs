@@ -7,6 +7,7 @@ mod completion;
 pub mod diagnostics;
 mod document;
 pub mod hover;
+mod lsp_utils;
 mod schema_resolver;
 
 // Re-export public API
