@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ron2", "crates/ron-schema", "crates/ron-derive", "crates/ron-lsp", "examples/config"]
+members = ["crates/ron2", "crates/ron-schema", "crates/ron-derive", "crates/ron-lsp", "examples/showcase"]
 
 [workspace.package]
 version = "0.1.0"

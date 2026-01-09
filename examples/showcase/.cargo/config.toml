@@ -1,0 +1,2 @@
+[env]
+RON_SCHEMA_DIR = { value = "schemas/", relative = true }

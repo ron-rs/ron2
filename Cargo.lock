@@ -58,15 +58,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "config-example"
-version = "0.1.0"
-dependencies = [
- "ron-derive",
- "ron-schema",
- "ron2",
-]
-
-[[package]]
 name = "dashmap"
 version = "5.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -604,6 +595,7 @@ dependencies = [
 name = "ron-derive"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "proc-macro2",
  "quote",
  "ron-schema",
@@ -618,6 +610,7 @@ dependencies = [
  "ron-schema",
  "ron2",
  "serde",
+ "serde_json",
  "thiserror 2.0.17",
  "tokio",
  "tower-lsp",
@@ -633,6 +626,15 @@ dependencies = [
  "serial_test",
  "tempfile",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "ron-showcase"
+version = "0.1.0"
+dependencies = [
+ "ron-derive",
+ "ron-schema",
+ "ron2",
 ]
 
 [[package]]

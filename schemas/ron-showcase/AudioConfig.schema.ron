@@ -1,0 +1,21 @@
+Schema(
+    doc: "Audio configuration with volume controls.",
+    kind: Struct(
+        fields: [
+            Field(
+                name: "master_volume",
+                ty: F32
+            ),
+            Field(
+                name: "music_volume",
+                ty: F32,
+                optional: true
+            ),
+            Field(
+                name: "effects_volume",
+                ty: F32,
+                optional: true
+            )
+        ]
+    )
+)

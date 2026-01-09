@@ -1,0 +1,23 @@
+Schema(
+    doc: "Graphics quality presets.",
+    kind: Enum(
+        variants: [
+            Variant(
+                name: "Low",
+                kind: Unit
+            ),
+            Variant(
+                name: "Medium",
+                kind: Unit
+            ),
+            Variant(
+                name: "High",
+                kind: Unit
+            ),
+            Variant(
+                name: "Ultra",
+                kind: Unit
+            )
+        ]
+    )
+)

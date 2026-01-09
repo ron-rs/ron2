@@ -10,8 +10,10 @@ mod hover;
 mod schema_resolver;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde::Deserialize;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -19,6 +21,32 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use document::Document;
 use schema_resolver::SchemaResolver;
+
+/// LSP configuration settings.
+///
+/// These can be set via `initializationOptions` or `workspace/didChangeConfiguration`.
+///
+/// Example VS Code settings:
+/// ```json
+/// {
+///   "ron.schemaDirs": ["./schemas", "/path/to/global/schemas"]
+/// }
+/// ```
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Config {
+    /// Directories to search for schema files.
+    /// Paths can be absolute or relative to the workspace root.
+    #[serde(default)]
+    pub schema_dirs: Vec<String>,
+}
+
+/// Wrapper for configuration that may be nested under "ron" key.
+#[derive(Debug, Default, Deserialize)]
+pub struct ConfigWrapper {
+    #[serde(default)]
+    pub ron: Config,
+}
 
 /// The RON Language Server.
 pub struct RonLanguageServer {
@@ -28,6 +56,8 @@ pub struct RonLanguageServer {
     documents: Arc<RwLock<HashMap<Url, Document>>>,
     /// Schema resolver for loading schemas.
     schema_resolver: Arc<SchemaResolver>,
+    /// Workspace root folders.
+    workspace_roots: Arc<RwLock<Vec<PathBuf>>>,
 }
 
 impl RonLanguageServer {
@@ -37,6 +67,7 @@ impl RonLanguageServer {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
             schema_resolver: Arc::new(SchemaResolver::new()),
+            workspace_roots: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -50,11 +81,83 @@ impl RonLanguageServer {
                 .await;
         }
     }
+
+    /// Update configuration from JSON value.
+    async fn update_config(&self, value: serde_json::Value) {
+        // Try to parse as ConfigWrapper (settings nested under "ron" key)
+        let config = if let Ok(wrapper) = serde_json::from_value::<ConfigWrapper>(value.clone()) {
+            wrapper.ron
+        } else if let Ok(config) = serde_json::from_value::<Config>(value) {
+            // Or try to parse directly as Config
+            config
+        } else {
+            return;
+        };
+
+        // Resolve schema directories relative to workspace roots
+        let workspace_roots = self.workspace_roots.read().await;
+        let mut resolved_dirs: Vec<PathBuf> = Vec::new();
+
+        for dir in &config.schema_dirs {
+            let path = PathBuf::from(dir);
+            if path.is_absolute() {
+                resolved_dirs.push(path);
+            } else {
+                // Resolve relative paths against each workspace root
+                for root in workspace_roots.iter() {
+                    let resolved = root.join(&path);
+                    if resolved.exists() {
+                        resolved_dirs.push(resolved);
+                    }
+                }
+            }
+        }
+
+        self.schema_resolver.set_schema_dirs(resolved_dirs);
+
+        // Re-validate all open documents
+        self.revalidate_all_documents().await;
+    }
+
+    /// Re-validate all open documents after config change.
+    async fn revalidate_all_documents(&self) {
+        let documents = self.documents.read().await;
+        let uris: Vec<Url> = documents.keys().cloned().collect();
+        drop(documents);
+
+        for uri in uris {
+            self.validate_document(&uri).await;
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
 impl LanguageServer for RonLanguageServer {
-    async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // Store workspace roots
+        let mut roots = Vec::new();
+        if let Some(folders) = params.workspace_folders {
+            for folder in folders {
+                if let Ok(path) = folder.uri.to_file_path() {
+                    roots.push(path);
+                }
+            }
+        }
+        // Fall back to root_uri if no workspace folders
+        if roots.is_empty() {
+            if let Some(root_uri) = params.root_uri {
+                if let Ok(path) = root_uri.to_file_path() {
+                    roots.push(path);
+                }
+            }
+        }
+        *self.workspace_roots.write().await = roots;
+
+        // Process initialization options
+        if let Some(options) = params.initialization_options {
+            self.update_config(options).await;
+        }
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -84,6 +187,10 @@ impl LanguageServer for RonLanguageServer {
         self.client
             .log_message(MessageType::INFO, "RON Language Server initialized")
             .await;
+    }
+
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        self.update_config(params.settings).await;
     }
 
     async fn shutdown(&self) -> Result<()> {

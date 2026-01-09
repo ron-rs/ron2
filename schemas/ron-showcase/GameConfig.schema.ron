@@ -1,0 +1,53 @@
+Schema(
+    doc: "Main game configuration.",
+    kind: Struct(
+        fields: [
+            Field(
+                name: "title",
+                ty: String,
+                doc: "Game title displayed in the window."
+            ),
+            Field(
+                name: "version",
+                ty: String,
+                doc: "Version string."
+            ),
+            Field(
+                name: "window",
+                ty: TypeRef(
+                    "WindowConfig"
+                ),
+                doc: "Window settings."
+            ),
+            Field(
+                name: "graphics",
+                ty: TypeRef(
+                    "GraphicsQuality"
+                ),
+                doc: "Graphics quality preset."
+            ),
+            Field(
+                name: "audio",
+                ty: TypeRef(
+                    "AudioConfig"
+                ),
+                doc: "Audio settings."
+            ),
+            Field(
+                name: "keybindings",
+                ty: Map(
+                    key: String,
+                    value: String
+                ),
+                doc: "Key bindings (action -> key)."
+            ),
+            Field(
+                name: "player",
+                ty: TypeRef(
+                    "PlayerConfig"
+                ),
+                doc: "Player configuration."
+            )
+        ]
+    )
+)

@@ -1,10 +1,10 @@
 [package]
-name = "config-example"
+name = "ron-showcase"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
+ron2 = { path = "../../crates/ron2" }
 ron-schema = { path = "../../crates/ron-schema" }
 ron-derive = { path = "../../crates/ron-derive" }
-ron2 = { path = "../../crates/ron2" }

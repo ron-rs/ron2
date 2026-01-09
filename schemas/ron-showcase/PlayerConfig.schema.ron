@@ -1,0 +1,17 @@
+Schema(
+    doc: "Player configuration.",
+    kind: Struct(
+        fields: [
+            Field(
+                name: "name",
+                ty: String
+            ),
+            Field(
+                name: "ship",
+                ty: TypeRef(
+                    "ShipType"
+                )
+            )
+        ]
+    )
+)

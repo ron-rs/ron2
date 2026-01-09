@@ -87,8 +87,8 @@ pub use ron2::{FromRon, MapAccess, PrettyConfig, ToRon};
 
 pub use error::RonError;
 pub use storage::{
-    find_schema, find_schema_in, read_schema, resolve_schema_dir, write_schema, StorageError,
-    SCHEMA_DIR_ENV,
+    find_schema, find_schema_in, read_schema, resolve_schema_dir, type_path_to_file_path,
+    write_schema, StorageError, SCHEMA_DIR_ENV,
 };
 pub use traits::{RonList, RonMap, RonOptional, RonSchemaType};
 pub use types::{Field, Schema, TypeKind, Variant, VariantKind};
@@ -115,10 +115,13 @@ pub trait RonSchema: RonSchemaType {
     /// Returns the complete schema for this type, including documentation.
     fn schema() -> Schema;
 
-    /// Writes the schema to the configured output directory.
+    /// Writes the schema to the specified output directory.
+    ///
+    /// If `output_dir` is `None`, the schema is written to the default location
+    /// determined by `RON_SCHEMA_DIR` env var or XDG data directory.
     ///
     /// Returns the path to the written schema file.
-    fn write_schema() -> Result<PathBuf, StorageError>;
+    fn write_schema(output_dir: Option<&std::path::Path>) -> Result<PathBuf, StorageError>;
 
     /// Returns the fully-qualified type path for this type.
     ///
