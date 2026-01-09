@@ -431,10 +431,7 @@ impl ToRon for VariantKind {
 
 impl FromRon for Schema {
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
-        let value = expr_to_value(expr).map_err(|e| SpannedError {
-            code: e,
-            span: expr.span().clone(),
-        })?;
+        let value = expr_to_value(expr)?;
         Self::from_ron_value(value).map_err(|e| SpannedError {
             code: e,
             span: expr.span().clone(),
@@ -484,10 +481,7 @@ impl FromRon for Schema {
 
 impl FromRon for TypeKind {
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
-        let value = expr_to_value(expr).map_err(|e| SpannedError {
-            code: e,
-            span: expr.span().clone(),
-        })?;
+        let value = expr_to_value(expr)?;
         Self::from_ron_value(value).map_err(|e| SpannedError {
             code: e,
             span: expr.span().clone(),
@@ -579,10 +573,7 @@ impl FromRon for TypeKind {
 
 impl FromRon for Field {
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
-        let value = expr_to_value(expr).map_err(|e| SpannedError {
-            code: e,
-            span: expr.span().clone(),
-        })?;
+        let value = expr_to_value(expr)?;
         Self::from_ron_value(value).map_err(|e| SpannedError {
             code: e,
             span: expr.span().clone(),
@@ -628,10 +619,7 @@ impl FromRon for Field {
 
 impl FromRon for Variant {
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
-        let value = expr_to_value(expr).map_err(|e| SpannedError {
-            code: e,
-            span: expr.span().clone(),
-        })?;
+        let value = expr_to_value(expr)?;
         Self::from_ron_value(value).map_err(|e| SpannedError {
             code: e,
             span: expr.span().clone(),
@@ -671,10 +659,7 @@ impl FromRon for Variant {
 
 impl FromRon for VariantKind {
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
-        let value = expr_to_value(expr).map_err(|e| SpannedError {
-            code: e,
-            span: expr.span().clone(),
-        })?;
+        let value = expr_to_value(expr)?;
         Self::from_ron_value(value).map_err(|e| SpannedError {
             code: e,
             span: expr.span().clone(),

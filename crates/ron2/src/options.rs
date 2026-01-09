@@ -105,8 +105,8 @@ impl Options {
         match to_value(&doc) {
             Some(Ok(value)) => Ok(value),
             Some(Err(e)) => {
-                // Conversion error - create a spanned error at document start
-                Err(SpannedError::wrap(e, s))
+                // Conversion error - e already contains span information
+                Err(e)
             }
             None => {
                 // Empty document - return Unit

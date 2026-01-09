@@ -1,0 +1,12 @@
+// Example: various syntax errors
+Config(
+    // Missing colon after field name
+    server_name "localhost"
+    port: 8080,
+
+    // Invalid character
+    timeout: @30,
+
+    // Unclosed string
+    message: "Hello
+)

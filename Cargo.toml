@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/ron2", "crates/ron-schema", "crates/ron-derive", "crates/ron-lsp", "examples/showcase"]
+members = [
+    "crates/ron2",
+    "crates/ron-schema",
+    "crates/ron-derive",
+    "crates/ron-lsp",
+    "examples/showcase",
+    "examples/pretty-errors-miette",
+    "examples/pretty-errors-ariadne",
+]
 
 [workspace.package]
 version = "0.1.0"

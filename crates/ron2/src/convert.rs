@@ -871,10 +871,8 @@ impl_from_ron_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 ///
 /// impl FromRon for Point {
 ///     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
-///         let value = ron2::ast::expr_to_value(expr).map_err(|e| SpannedError {
-///             code: e,
-///             span: expr.span().clone(),
-///         })?;
+///         // expr_to_value returns SpannedResult with span info included
+///         let value = ron2::ast::expr_to_value(expr)?;
 ///         Self::from_ron_value(value).map_err(|e| SpannedError {
 ///             code: e,
 ///             span: expr.span().clone(),

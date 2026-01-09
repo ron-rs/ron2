@@ -1,0 +1,11 @@
+// Example: unclosed struct
+GameConfig(
+    title: "My Game",
+    window: WindowConfig(
+        width: 1920,
+        height: 1080,
+    // Missing closing parenthesis for WindowConfig
+    player: PlayerConfig(
+        name: "Hero",
+    ),
+)

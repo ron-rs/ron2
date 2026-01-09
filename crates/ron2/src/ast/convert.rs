@@ -19,12 +19,28 @@ use crate::ast::{
     StringExpr, StringKind, StructBody, StructExpr, StructField, Trivia, TupleBody, TupleElement,
     TupleExpr, UnitExpr,
 };
-use crate::error::{Error, Result, Span};
+use crate::error::{Error, Result, Span, SpannedError, SpannedResult};
 use crate::value::{F32, F64, NamedContent, Number, StructFields, Value};
+
+/// Extension trait to attach span information to `Result` errors.
+trait SpanExt<T> {
+    /// Convert a `Result<T, Error>` to `SpannedResult<T>` by attaching a span.
+    fn with_span(self, span: &Span) -> SpannedResult<T>;
+}
+
+impl<T> SpanExt<T> for Result<T> {
+    fn with_span(self, span: &Span) -> SpannedResult<T> {
+        self.map_err(|code| SpannedError {
+            code,
+            span: span.clone(),
+        })
+    }
+}
 
 /// Convert an AST document to a Value.
 ///
 /// Returns `None` if the document has no value (empty document or comments only).
+/// Errors include span information for precise error reporting.
 ///
 /// # Example
 ///
@@ -34,18 +50,21 @@ use crate::value::{F32, F64, NamedContent, Number, StructFields, Value};
 /// let doc = parse_document("42").unwrap();
 /// let value = to_value(&doc).unwrap();
 /// ```
-pub fn to_value(doc: &Document<'_>) -> Option<Result<Value>> {
+pub fn to_value(doc: &Document<'_>) -> Option<SpannedResult<Value>> {
     doc.value.as_ref().map(expr_to_value)
 }
 
 /// Convert an AST expression to a Value.
-pub fn expr_to_value(expr: &Expr<'_>) -> Result<Value> {
+///
+/// Errors include the span of the expression that caused the error,
+/// enabling precise error reporting with source location.
+pub fn expr_to_value(expr: &Expr<'_>) -> SpannedResult<Value> {
     match expr {
         Expr::Unit(_) => Ok(Value::Unit),
         Expr::Bool(b) => Ok(Value::Bool(b.value)),
         Expr::Char(c) => Ok(Value::Char(c.value)),
         Expr::Byte(b) => Ok(byte_to_value(b)),
-        Expr::Number(n) => number_to_value(n),
+        Expr::Number(n) => number_to_value(n).with_span(&n.span),
         Expr::String(s) => Ok(string_to_value(s)),
         Expr::Bytes(b) => Ok(bytes_to_value(b)),
         Expr::Option(opt) => option_to_value(opt),
@@ -198,7 +217,7 @@ fn bytes_to_value(b: &BytesExpr<'_>) -> Value {
     Value::Bytes(b.value.clone())
 }
 
-fn option_to_value(opt: &OptionExpr<'_>) -> Result<Value> {
+fn option_to_value(opt: &OptionExpr<'_>) -> SpannedResult<Value> {
     match &opt.value {
         Some(inner) => {
             let val = expr_to_value(&inner.expr)?;
@@ -208,8 +227,8 @@ fn option_to_value(opt: &OptionExpr<'_>) -> Result<Value> {
     }
 }
 
-fn seq_to_value(seq: &SeqExpr<'_>) -> Result<Value> {
-    let items: Result<Vec<Value>> = seq
+fn seq_to_value(seq: &SeqExpr<'_>) -> SpannedResult<Value> {
+    let items: SpannedResult<Vec<Value>> = seq
         .items
         .iter()
         .map(|item| expr_to_value(&item.expr))
@@ -217,8 +236,8 @@ fn seq_to_value(seq: &SeqExpr<'_>) -> Result<Value> {
     Ok(Value::Seq(items?))
 }
 
-fn map_to_value(map: &MapExpr<'_>) -> Result<Value> {
-    let entries: Result<Vec<(Value, Value)>> = map
+fn map_to_value(map: &MapExpr<'_>) -> SpannedResult<Value> {
+    let entries: SpannedResult<Vec<(Value, Value)>> = map
         .entries
         .iter()
         .map(|entry| {
@@ -232,8 +251,8 @@ fn map_to_value(map: &MapExpr<'_>) -> Result<Value> {
 }
 
 /// Convert anonymous tuple `(a, b, c)` to `Value::Tuple`.
-fn tuple_to_value(tuple: &TupleExpr<'_>) -> Result<Value> {
-    let elements: Result<Vec<Value>> = tuple
+fn tuple_to_value(tuple: &TupleExpr<'_>) -> SpannedResult<Value> {
+    let elements: SpannedResult<Vec<Value>> = tuple
         .elements
         .iter()
         .map(|elem| expr_to_value(&elem.expr))
@@ -242,7 +261,7 @@ fn tuple_to_value(tuple: &TupleExpr<'_>) -> Result<Value> {
 }
 
 /// Convert anonymous struct `(field: value, ...)` to `Value::Struct`.
-fn anon_struct_to_value(s: &AnonStructExpr<'_>) -> Result<Value> {
+fn anon_struct_to_value(s: &AnonStructExpr<'_>) -> SpannedResult<Value> {
     let struct_fields: StructFields = s
         .fields
         .iter()
@@ -251,13 +270,13 @@ fn anon_struct_to_value(s: &AnonStructExpr<'_>) -> Result<Value> {
             let value = expr_to_value(&f.value)?;
             Ok((name, value))
         })
-        .collect::<Result<_>>()?;
+        .collect::<SpannedResult<_>>()?;
 
     Ok(Value::Struct(struct_fields))
 }
 
 /// Convert named struct/enum to `Value::Named`.
-fn struct_to_value(s: &StructExpr<'_>) -> Result<Value> {
+fn struct_to_value(s: &StructExpr<'_>) -> SpannedResult<Value> {
     let name = s.name.name.to_string();
 
     let content = match &s.body {
@@ -276,7 +295,7 @@ fn struct_to_value(s: &StructExpr<'_>) -> Result<Value> {
 }
 
 /// Convert tuple body to Vec<Value>.
-fn tuple_body_to_vec(tuple: &TupleBody<'_>) -> Result<Vec<Value>> {
+fn tuple_body_to_vec(tuple: &TupleBody<'_>) -> SpannedResult<Vec<Value>> {
     tuple
         .elements
         .iter()
@@ -285,7 +304,7 @@ fn tuple_body_to_vec(tuple: &TupleBody<'_>) -> Result<Vec<Value>> {
 }
 
 /// Convert fields body to `StructFields` (`Vec<(String, Value)>`).
-fn fields_body_to_struct_fields(fields: &FieldsBody<'_>) -> Result<StructFields> {
+fn fields_body_to_struct_fields(fields: &FieldsBody<'_>) -> SpannedResult<StructFields> {
     let mut result = StructFields::new();
     for field in &fields.fields {
         let key = field.name.name.to_string();
