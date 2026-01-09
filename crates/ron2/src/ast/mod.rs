@@ -49,6 +49,55 @@ use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 use crate::error::Span;
 
 // ============================================================================
+// into_owned() macro
+// ============================================================================
+
+/// Macro to generate `into_owned()` implementations for AST types.
+///
+/// Field kinds:
+/// - `copy` - Field is Copy, passed through unchanged
+/// - `cow` - Field is `Cow<'a, str>`, converted via `Cow::Owned(f.into_owned())`
+/// - `owned(T)` - Field has `into_owned()` method, call it
+/// - `vec(T)` - Field is `Vec<T>` where T has `into_owned()`
+/// - `option(T)` - Field is `Option<T>` where T has `into_owned()`
+/// - `boxed(T)` - Field is `Box<T>` where T has `into_owned()`
+/// - `vec_cow` - Field is `Vec<Cow<'a, str>>`
+macro_rules! impl_into_owned {
+    (
+        $name:ident { $($field:ident : $kind:tt $( ( $($inner:tt)* ) )?),* $(,)? }
+    ) => {
+        impl $name<'_> {
+            /// Converts to an owned version with `'static` lifetime.
+            #[must_use]
+            pub fn into_owned(self) -> $name<'static> {
+                $name {
+                    $(
+                        $field: impl_into_owned!(@convert $kind $( ( $($inner)* ) )? ; self.$field),
+                    )*
+                }
+            }
+        }
+    };
+
+    // Field conversion rules
+    (@convert copy ; $field:expr) => { $field };
+    (@convert cow ; $field:expr) => { Cow::Owned($field.into_owned()) };
+    (@convert owned ($ty:ty) ; $field:expr) => { $field.into_owned() };
+    (@convert vec ($ty:ty) ; $field:expr) => {
+        $field.into_iter().map(<$ty>::into_owned).collect()
+    };
+    (@convert option ($ty:ty) ; $field:expr) => {
+        $field.map(<$ty>::into_owned)
+    };
+    (@convert boxed ($ty:ty) ; $field:expr) => {
+        Box::new($field.into_owned())
+    };
+    (@convert vec_cow ; $field:expr) => {
+        $field.into_iter().map(|a| Cow::Owned(a.into_owned())).collect()
+    };
+}
+
+// ============================================================================
 // Trivia (whitespace and comments)
 // ============================================================================
 
@@ -85,17 +134,13 @@ impl Trivia<'_> {
     pub fn is_empty(&self) -> bool {
         self.span.is_none() && self.whitespace.is_empty() && self.comments.is_empty()
     }
-
-    /// Converts this trivia to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> Trivia<'static> {
-        Trivia {
-            span: self.span,
-            whitespace: Cow::Owned(self.whitespace.into_owned()),
-            comments: self.comments.into_iter().map(Comment::into_owned).collect(),
-        }
-    }
 }
+
+impl_into_owned!(Trivia {
+    span: copy,
+    whitespace: cow,
+    comments: vec(Comment),
+});
 
 /// A comment in the source code.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,17 +170,13 @@ impl Comment<'_> {
                 .unwrap_or(&self.text),
         }
     }
-
-    /// Converts this comment to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> Comment<'static> {
-        Comment {
-            span: self.span,
-            text: Cow::Owned(self.text.into_owned()),
-            kind: self.kind,
-        }
-    }
 }
+
+impl_into_owned!(Comment {
+    span: copy,
+    text: cow,
+    kind: copy,
+});
 
 /// The kind of comment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,24 +215,14 @@ pub struct Document<'a> {
     pub trailing: Trivia<'a>,
 }
 
-impl Document<'_> {
-    /// Converts this document to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> Document<'static> {
-        Document {
-            source: Cow::Owned(self.source.into_owned()),
-            leading: self.leading.into_owned(),
-            attributes: self
-                .attributes
-                .into_iter()
-                .map(Attribute::into_owned)
-                .collect(),
-            pre_value: self.pre_value.into_owned(),
-            value: self.value.map(Expr::into_owned),
-            trailing: self.trailing.into_owned(),
-        }
-    }
-}
+impl_into_owned!(Document {
+    source: cow,
+    leading: owned(Trivia),
+    attributes: vec(Attribute),
+    pre_value: owned(Trivia),
+    value: option(Expr),
+    trailing: owned(Trivia),
+});
 
 // ============================================================================
 // Attributes
@@ -213,18 +244,12 @@ pub struct Attribute<'a> {
     pub content: AttributeContent<'a>,
 }
 
-impl Attribute<'_> {
-    /// Converts this attribute to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> Attribute<'static> {
-        Attribute {
-            span: self.span,
-            leading: self.leading.into_owned(),
-            name: Cow::Owned(self.name.into_owned()),
-            content: self.content.into_owned(),
-        }
-    }
-}
+impl_into_owned!(Attribute {
+    span: copy,
+    leading: owned(Trivia),
+    name: cow,
+    content: owned(AttributeContent),
+});
 
 /// The content of an attribute after the name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -361,17 +386,11 @@ pub struct CharExpr<'a> {
     pub value: char,
 }
 
-impl CharExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> CharExpr<'static> {
-        CharExpr {
-            span: self.span,
-            raw: Cow::Owned(self.raw.into_owned()),
-            value: self.value,
-        }
-    }
-}
+impl_into_owned!(CharExpr {
+    span: copy,
+    raw: cow,
+    value: copy,
+});
 
 /// Byte literal expression: `b'x'`, `b'\n'`, `b'\x00'`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -384,17 +403,11 @@ pub struct ByteExpr<'a> {
     pub value: u8,
 }
 
-impl ByteExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> ByteExpr<'static> {
-        ByteExpr {
-            span: self.span,
-            raw: Cow::Owned(self.raw.into_owned()),
-            value: self.value,
-        }
-    }
-}
+impl_into_owned!(ByteExpr {
+    span: copy,
+    raw: cow,
+    value: copy,
+});
 
 /// Numeric expression: `42`, `3.14`, `0xFF`, `0b1010`, `0o777`, `1_000`.
 ///
@@ -410,17 +423,11 @@ pub struct NumberExpr<'a> {
     pub kind: NumberKind,
 }
 
-impl NumberExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> NumberExpr<'static> {
-        NumberExpr {
-            span: self.span,
-            raw: Cow::Owned(self.raw.into_owned()),
-            kind: self.kind,
-        }
-    }
-}
+impl_into_owned!(NumberExpr {
+    span: copy,
+    raw: cow,
+    kind: copy,
+});
 
 /// The kind of number parsed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -448,18 +455,12 @@ pub struct StringExpr<'a> {
     pub kind: StringKind,
 }
 
-impl StringExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> StringExpr<'static> {
-        StringExpr {
-            span: self.span,
-            raw: Cow::Owned(self.raw.into_owned()),
-            value: self.value,
-            kind: self.kind,
-        }
-    }
-}
+impl_into_owned!(StringExpr {
+    span: copy,
+    raw: cow,
+    value: copy,
+    kind: copy,
+});
 
 /// The kind of string literal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -486,18 +487,12 @@ pub struct BytesExpr<'a> {
     pub kind: BytesKind,
 }
 
-impl BytesExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> BytesExpr<'static> {
-        BytesExpr {
-            span: self.span,
-            raw: Cow::Owned(self.raw.into_owned()),
-            value: self.value,
-            kind: self.kind,
-        }
-    }
-}
+impl_into_owned!(BytesExpr {
+    span: copy,
+    raw: cow,
+    value: copy,
+    kind: copy,
+});
 
 /// The kind of byte string literal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -524,16 +519,10 @@ pub struct OptionExpr<'a> {
     pub value: Option<OptionValue<'a>>,
 }
 
-impl OptionExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> OptionExpr<'static> {
-        OptionExpr {
-            span: self.span,
-            value: self.value.map(OptionValue::into_owned),
-        }
-    }
-}
+impl_into_owned!(OptionExpr {
+    span: copy,
+    value: option(OptionValue),
+});
 
 /// The inner value of a `Some(...)` expression.
 #[derive(Clone, Debug, PartialEq)]
@@ -550,19 +539,13 @@ pub struct OptionValue<'a> {
     pub close_paren: Span,
 }
 
-impl OptionValue<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> OptionValue<'static> {
-        OptionValue {
-            open_paren: self.open_paren,
-            leading: self.leading.into_owned(),
-            expr: self.expr.into_owned(),
-            trailing: self.trailing.into_owned(),
-            close_paren: self.close_paren,
-        }
-    }
-}
+impl_into_owned!(OptionValue {
+    open_paren: copy,
+    leading: owned(Trivia),
+    expr: owned(Expr),
+    trailing: owned(Trivia),
+    close_paren: copy,
+});
 
 // ============================================================================
 // Collection expressions
@@ -585,20 +568,14 @@ pub struct SeqExpr<'a> {
     pub close_bracket: Span,
 }
 
-impl SeqExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> SeqExpr<'static> {
-        SeqExpr {
-            span: self.span,
-            open_bracket: self.open_bracket,
-            leading: self.leading.into_owned(),
-            items: self.items.into_iter().map(SeqItem::into_owned).collect(),
-            trailing: self.trailing.into_owned(),
-            close_bracket: self.close_bracket,
-        }
-    }
-}
+impl_into_owned!(SeqExpr {
+    span: copy,
+    open_bracket: copy,
+    leading: owned(Trivia),
+    items: vec(SeqItem),
+    trailing: owned(Trivia),
+    close_bracket: copy,
+});
 
 /// An item in a sequence.
 #[derive(Clone, Debug, PartialEq)]
@@ -613,18 +590,12 @@ pub struct SeqItem<'a> {
     pub comma: Option<Span>,
 }
 
-impl SeqItem<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> SeqItem<'static> {
-        SeqItem {
-            leading: self.leading.into_owned(),
-            expr: self.expr.into_owned(),
-            trailing: self.trailing.into_owned(),
-            comma: self.comma,
-        }
-    }
-}
+impl_into_owned!(SeqItem {
+    leading: owned(Trivia),
+    expr: owned(Expr),
+    trailing: owned(Trivia),
+    comma: copy,
+});
 
 /// Map expression: `{key: value, ...}`.
 #[derive(Clone, Debug, PartialEq)]
@@ -643,20 +614,14 @@ pub struct MapExpr<'a> {
     pub close_brace: Span,
 }
 
-impl MapExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> MapExpr<'static> {
-        MapExpr {
-            span: self.span,
-            open_brace: self.open_brace,
-            leading: self.leading.into_owned(),
-            entries: self.entries.into_iter().map(MapEntry::into_owned).collect(),
-            trailing: self.trailing.into_owned(),
-            close_brace: self.close_brace,
-        }
-    }
-}
+impl_into_owned!(MapExpr {
+    span: copy,
+    open_brace: copy,
+    leading: owned(Trivia),
+    entries: vec(MapEntry),
+    trailing: owned(Trivia),
+    close_brace: copy,
+});
 
 /// An entry in a map: `key: value`.
 #[derive(Clone, Debug, PartialEq)]
@@ -679,22 +644,16 @@ pub struct MapEntry<'a> {
     pub comma: Option<Span>,
 }
 
-impl MapEntry<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> MapEntry<'static> {
-        MapEntry {
-            leading: self.leading.into_owned(),
-            key: self.key.into_owned(),
-            pre_colon: self.pre_colon.into_owned(),
-            colon: self.colon,
-            post_colon: self.post_colon.into_owned(),
-            value: self.value.into_owned(),
-            trailing: self.trailing.into_owned(),
-            comma: self.comma,
-        }
-    }
-}
+impl_into_owned!(MapEntry {
+    leading: owned(Trivia),
+    key: owned(Expr),
+    pre_colon: owned(Trivia),
+    colon: copy,
+    post_colon: owned(Trivia),
+    value: owned(Expr),
+    trailing: owned(Trivia),
+    comma: copy,
+});
 
 /// Tuple expression: `(a, b, c)`.
 ///
@@ -716,24 +675,14 @@ pub struct TupleExpr<'a> {
     pub close_paren: Span,
 }
 
-impl TupleExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> TupleExpr<'static> {
-        TupleExpr {
-            span: self.span,
-            open_paren: self.open_paren,
-            leading: self.leading.into_owned(),
-            elements: self
-                .elements
-                .into_iter()
-                .map(TupleElement::into_owned)
-                .collect(),
-            trailing: self.trailing.into_owned(),
-            close_paren: self.close_paren,
-        }
-    }
-}
+impl_into_owned!(TupleExpr {
+    span: copy,
+    open_paren: copy,
+    leading: owned(Trivia),
+    elements: vec(TupleElement),
+    trailing: owned(Trivia),
+    close_paren: copy,
+});
 
 /// Anonymous struct expression: `(field: value, ...)`.
 ///
@@ -754,24 +703,14 @@ pub struct AnonStructExpr<'a> {
     pub close_paren: Span,
 }
 
-impl AnonStructExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> AnonStructExpr<'static> {
-        AnonStructExpr {
-            span: self.span,
-            open_paren: self.open_paren,
-            leading: self.leading.into_owned(),
-            fields: self
-                .fields
-                .into_iter()
-                .map(StructField::into_owned)
-                .collect(),
-            trailing: self.trailing.into_owned(),
-            close_paren: self.close_paren,
-        }
-    }
-}
+impl_into_owned!(AnonStructExpr {
+    span: copy,
+    open_paren: copy,
+    leading: owned(Trivia),
+    fields: vec(StructField),
+    trailing: owned(Trivia),
+    close_paren: copy,
+});
 
 /// An element in a tuple.
 #[derive(Clone, Debug, PartialEq)]
@@ -786,18 +725,12 @@ pub struct TupleElement<'a> {
     pub comma: Option<Span>,
 }
 
-impl TupleElement<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> TupleElement<'static> {
-        TupleElement {
-            leading: self.leading.into_owned(),
-            expr: self.expr.into_owned(),
-            trailing: self.trailing.into_owned(),
-            comma: self.comma,
-        }
-    }
-}
+impl_into_owned!(TupleElement {
+    leading: owned(Trivia),
+    expr: owned(Expr),
+    trailing: owned(Trivia),
+    comma: copy,
+});
 
 // ============================================================================
 // Struct expression
@@ -822,18 +755,12 @@ pub struct StructExpr<'a> {
     pub body: Option<StructBody<'a>>,
 }
 
-impl StructExpr<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> StructExpr<'static> {
-        StructExpr {
-            span: self.span,
-            name: self.name.into_owned(),
-            pre_body: self.pre_body.into_owned(),
-            body: self.body.map(StructBody::into_owned),
-        }
-    }
-}
+impl_into_owned!(StructExpr {
+    span: copy,
+    name: owned(Ident),
+    pre_body: owned(Trivia),
+    body: option(StructBody),
+});
 
 /// An identifier (struct name, enum variant, field name).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -844,16 +771,10 @@ pub struct Ident<'a> {
     pub name: Cow<'a, str>,
 }
 
-impl Ident<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> Ident<'static> {
-        Ident {
-            span: self.span,
-            name: Cow::Owned(self.name.into_owned()),
-        }
-    }
-}
+impl_into_owned!(Ident {
+    span: copy,
+    name: cow,
+});
 
 /// The body of a struct expression.
 #[derive(Clone, Debug, PartialEq)]
@@ -890,23 +811,13 @@ pub struct TupleBody<'a> {
     pub close_paren: Span,
 }
 
-impl TupleBody<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> TupleBody<'static> {
-        TupleBody {
-            open_paren: self.open_paren,
-            leading: self.leading.into_owned(),
-            elements: self
-                .elements
-                .into_iter()
-                .map(TupleElement::into_owned)
-                .collect(),
-            trailing: self.trailing.into_owned(),
-            close_paren: self.close_paren,
-        }
-    }
-}
+impl_into_owned!(TupleBody {
+    open_paren: copy,
+    leading: owned(Trivia),
+    elements: vec(TupleElement),
+    trailing: owned(Trivia),
+    close_paren: copy,
+});
 
 /// Named fields struct body: `{ x: 1, y: 2 }`.
 #[derive(Clone, Debug, PartialEq)]
@@ -923,23 +834,13 @@ pub struct FieldsBody<'a> {
     pub close_brace: Span,
 }
 
-impl FieldsBody<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> FieldsBody<'static> {
-        FieldsBody {
-            open_brace: self.open_brace,
-            leading: self.leading.into_owned(),
-            fields: self
-                .fields
-                .into_iter()
-                .map(StructField::into_owned)
-                .collect(),
-            trailing: self.trailing.into_owned(),
-            close_brace: self.close_brace,
-        }
-    }
-}
+impl_into_owned!(FieldsBody {
+    open_brace: copy,
+    leading: owned(Trivia),
+    fields: vec(StructField),
+    trailing: owned(Trivia),
+    close_brace: copy,
+});
 
 /// A field in a struct: `name: value`.
 #[derive(Clone, Debug, PartialEq)]
@@ -962,19 +863,13 @@ pub struct StructField<'a> {
     pub comma: Option<Span>,
 }
 
-impl StructField<'_> {
-    /// Converts to an owned version with `'static` lifetime.
-    #[must_use]
-    pub fn into_owned(self) -> StructField<'static> {
-        StructField {
-            leading: self.leading.into_owned(),
-            name: self.name.into_owned(),
-            pre_colon: self.pre_colon.into_owned(),
-            colon: self.colon,
-            post_colon: self.post_colon.into_owned(),
-            value: self.value.into_owned(),
-            trailing: self.trailing.into_owned(),
-            comma: self.comma,
-        }
-    }
-}
+impl_into_owned!(StructField {
+    leading: owned(Trivia),
+    name: owned(Ident),
+    pre_colon: owned(Trivia),
+    colon: copy,
+    post_colon: owned(Trivia),
+    value: owned(Expr),
+    trailing: owned(Trivia),
+    comma: copy,
+});

@@ -114,6 +114,48 @@ impl PrimitiveKind {
             _ => None,
         }
     }
+
+    /// Returns the TypeKind variant name (e.g., "Bool", "I32", "String").
+    const fn variant_name(self) -> &'static str {
+        match self {
+            Self::Bool => "Bool",
+            Self::I8 => "I8",
+            Self::I16 => "I16",
+            Self::I32 => "I32",
+            Self::I64 => "I64",
+            Self::I128 => "I128",
+            Self::U8 => "U8",
+            Self::U16 => "U16",
+            Self::U32 => "U32",
+            Self::U64 => "U64",
+            Self::U128 => "U128",
+            Self::F32 => "F32",
+            Self::F64 => "F64",
+            Self::Char => "Char",
+            Self::String => "String",
+        }
+    }
+
+    /// Convert to the corresponding `ron_schema::TypeKind` value.
+    fn to_type_kind(self) -> ron_schema::TypeKind {
+        match self {
+            Self::Bool => ron_schema::TypeKind::Bool,
+            Self::I8 => ron_schema::TypeKind::I8,
+            Self::I16 => ron_schema::TypeKind::I16,
+            Self::I32 => ron_schema::TypeKind::I32,
+            Self::I64 => ron_schema::TypeKind::I64,
+            Self::I128 => ron_schema::TypeKind::I128,
+            Self::U8 => ron_schema::TypeKind::U8,
+            Self::U16 => ron_schema::TypeKind::U16,
+            Self::U32 => ron_schema::TypeKind::U32,
+            Self::U64 => ron_schema::TypeKind::U64,
+            Self::U128 => ron_schema::TypeKind::U128,
+            Self::F32 => ron_schema::TypeKind::F32,
+            Self::F64 => ron_schema::TypeKind::F64,
+            Self::Char => ron_schema::TypeKind::Char,
+            Self::String => ron_schema::TypeKind::String,
+        }
+    }
 }
 
 /// Trait for mapping Rust types to TypeKind representations.
@@ -144,23 +186,8 @@ impl TypeKindMapper for TokenMapper {
     }
 
     fn primitive(&self, kind: PrimitiveKind) -> Self::Output {
-        match kind {
-            PrimitiveKind::Bool => quote! { ::ron_schema::TypeKind::Bool },
-            PrimitiveKind::I8 => quote! { ::ron_schema::TypeKind::I8 },
-            PrimitiveKind::I16 => quote! { ::ron_schema::TypeKind::I16 },
-            PrimitiveKind::I32 => quote! { ::ron_schema::TypeKind::I32 },
-            PrimitiveKind::I64 => quote! { ::ron_schema::TypeKind::I64 },
-            PrimitiveKind::I128 => quote! { ::ron_schema::TypeKind::I128 },
-            PrimitiveKind::U8 => quote! { ::ron_schema::TypeKind::U8 },
-            PrimitiveKind::U16 => quote! { ::ron_schema::TypeKind::U16 },
-            PrimitiveKind::U32 => quote! { ::ron_schema::TypeKind::U32 },
-            PrimitiveKind::U64 => quote! { ::ron_schema::TypeKind::U64 },
-            PrimitiveKind::U128 => quote! { ::ron_schema::TypeKind::U128 },
-            PrimitiveKind::F32 => quote! { ::ron_schema::TypeKind::F32 },
-            PrimitiveKind::F64 => quote! { ::ron_schema::TypeKind::F64 },
-            PrimitiveKind::Char => quote! { ::ron_schema::TypeKind::Char },
-            PrimitiveKind::String => quote! { ::ron_schema::TypeKind::String },
-        }
+        let variant = syn::Ident::new(kind.variant_name(), proc_macro2::Span::call_site());
+        quote! { ::ron_schema::TypeKind::#variant }
     }
 
     fn option(&self, inner: Self::Output) -> Self::Output {
@@ -200,23 +227,7 @@ impl TypeKindMapper for ValueMapper {
     }
 
     fn primitive(&self, kind: PrimitiveKind) -> Self::Output {
-        match kind {
-            PrimitiveKind::Bool => ron_schema::TypeKind::Bool,
-            PrimitiveKind::I8 => ron_schema::TypeKind::I8,
-            PrimitiveKind::I16 => ron_schema::TypeKind::I16,
-            PrimitiveKind::I32 => ron_schema::TypeKind::I32,
-            PrimitiveKind::I64 => ron_schema::TypeKind::I64,
-            PrimitiveKind::I128 => ron_schema::TypeKind::I128,
-            PrimitiveKind::U8 => ron_schema::TypeKind::U8,
-            PrimitiveKind::U16 => ron_schema::TypeKind::U16,
-            PrimitiveKind::U32 => ron_schema::TypeKind::U32,
-            PrimitiveKind::U64 => ron_schema::TypeKind::U64,
-            PrimitiveKind::U128 => ron_schema::TypeKind::U128,
-            PrimitiveKind::F32 => ron_schema::TypeKind::F32,
-            PrimitiveKind::F64 => ron_schema::TypeKind::F64,
-            PrimitiveKind::Char => ron_schema::TypeKind::Char,
-            PrimitiveKind::String => ron_schema::TypeKind::String,
-        }
+        kind.to_type_kind()
     }
 
     fn option(&self, inner: Self::Output) -> Self::Output {
