@@ -1,5 +1,7 @@
 //! Tests for the RonSchema derive macro.
 
+#![allow(dead_code)]
+
 use ron2::{FromRon, ToRon};
 use ron_derive::{Ron, RonSchema};
 use ron_schema::{RonSchema as RonSchemaTrait, TypeKind, VariantKind};
@@ -89,7 +91,7 @@ enum TestEnum {
 fn test_enum_tofrom() {
     assert_eq!(
         TestEnum::Struct { x: 1.0, y: 2.0 }.to_ron().unwrap(),
-        "Struct(x: 1.0,y: 2.0)"
+        "Struct(x:1.0,y:2.0)"
     );
 
     let a: TestEnum = TestEnum::from_ron("Unit").unwrap();

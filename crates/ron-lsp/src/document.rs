@@ -108,6 +108,7 @@ impl Document {
     }
 
     /// Convert a byte offset to line and column (0-based).
+    #[allow(dead_code)]
     pub fn offset_to_position(&self, offset: usize) -> (u32, u32) {
         let line = self
             .line_offsets
