@@ -5,6 +5,9 @@
 //!
 //! Run with: `cargo run -p pretty-errors-miette`
 
+// Suppress spurious warnings from miette's derive macro
+#![allow(unused_assignments)]
+
 use miette::{Diagnostic, NamedSource, Report, SourceSpan};
 use ron2::ast::{parse_document, Document};
 use ron2::error::{Error, SpannedError};

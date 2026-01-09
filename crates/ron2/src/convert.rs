@@ -841,9 +841,8 @@ macro_rules! impl_from_ron_tuple {
     ($first:ident $(, $rest:ident)*) => {
         impl<$first: FromRon $(, $rest: FromRon)*> FromRon for ($first, $($rest,)*) {
             fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
-                let elements = match extract_seq_elements(expr) {
-                    Some(e) => e,
-                    None => return Err(spanned_type_mismatch("tuple", expr)),
+                let Some(elements) = extract_seq_elements(expr) else {
+                    return Err(spanned_type_mismatch("tuple", expr));
                 };
                 #[allow(unused_variables)]
                 let expected = impl_from_ron_tuple!(@count $first $(, $rest)*);

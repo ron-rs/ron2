@@ -12,6 +12,7 @@
 //! - Useful for `FromRon::from_ron_value()` default implementation
 
 use alloc::{borrow::Cow, boxed::Box, format, string::String, vec::Vec};
+use core::fmt::Write;
 
 use crate::ast::{
     AnonStructExpr, BoolExpr, BytesExpr, BytesKind, CharExpr, Document, Expr, FieldsBody, Ident,
@@ -323,6 +324,8 @@ fn fields_body_to_struct_fields(fields: &FieldsBody<'_>) -> SpannedResult<Struct
 /// let expr = value_to_expr(value);
 /// // expr is Expr::Bool with a synthetic span
 /// ```
+#[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn value_to_expr(value: Value) -> Expr<'static> {
     let span = Span::synthetic();
     match value {
@@ -632,7 +635,7 @@ fn escape_string(s: &str) -> String {
             '\t' => result.push_str("\\t"),
             '\0' => result.push_str("\\0"),
             c if c.is_ascii_control() => {
-                result.push_str(&format!("\\x{:02x}", c as u8));
+                let _ = write!(result, "\\x{:02x}", c as u8);
             }
             c => result.push(c),
         }
@@ -654,7 +657,9 @@ fn format_bytes(bytes: &[u8]) -> String {
             b'\t' => result.push_str("\\t"),
             b'\0' => result.push_str("\\0"),
             b if b.is_ascii_graphic() || b == b' ' => result.push(b as char),
-            b => result.push_str(&format!("\\x{b:02x}")),
+            b => {
+                let _ = write!(result, "\\x{b:02x}");
+            }
         }
     }
     result.push('"');
