@@ -65,6 +65,284 @@ use syn::{
 
 use attr::{extract_doc_comment, ContainerAttrs, FieldAttrs};
 
+// =============================================================================
+// Type mapping abstraction
+// =============================================================================
+//
+// These types allow sharing the logic for converting Rust types to TypeKind
+// between code generation (TokenStream2) and compile-time building (TypeKind).
+
+/// Primitive types that map directly to TypeKind variants.
+#[derive(Debug, Clone, Copy)]
+enum PrimitiveKind {
+    Bool,
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    F32,
+    F64,
+    Char,
+    String,
+}
+
+impl PrimitiveKind {
+    /// Try to parse a primitive kind from a type identifier.
+    fn from_ident(ident: &str) -> Option<Self> {
+        match ident {
+            "bool" => Some(Self::Bool),
+            "i8" => Some(Self::I8),
+            "i16" => Some(Self::I16),
+            "i32" => Some(Self::I32),
+            "i64" => Some(Self::I64),
+            "i128" => Some(Self::I128),
+            "u8" => Some(Self::U8),
+            "u16" => Some(Self::U16),
+            "u32" => Some(Self::U32),
+            "u64" => Some(Self::U64),
+            "u128" => Some(Self::U128),
+            "f32" => Some(Self::F32),
+            "f64" => Some(Self::F64),
+            "char" => Some(Self::Char),
+            "String" | "str" => Some(Self::String),
+            _ => None,
+        }
+    }
+}
+
+/// Trait for mapping Rust types to TypeKind representations.
+///
+/// This abstraction allows sharing the type analysis logic between:
+/// - Code generation (returns TokenStream2 that constructs TypeKind at runtime)
+/// - Compile-time building (returns TypeKind values directly)
+trait TypeKindMapper {
+    type Output;
+
+    fn unit(&self) -> Self::Output;
+    fn primitive(&self, kind: PrimitiveKind) -> Self::Output;
+    fn option(&self, inner: Self::Output) -> Self::Output;
+    fn list(&self, inner: Self::Output) -> Self::Output;
+    fn map(&self, key: Self::Output, value: Self::Output) -> Self::Output;
+    fn tuple(&self, elements: Vec<Self::Output>) -> Self::Output;
+    fn type_ref(&self, path: String) -> Self::Output;
+}
+
+/// Mapper that generates TokenStream2 for runtime TypeKind construction.
+struct TokenMapper;
+
+impl TypeKindMapper for TokenMapper {
+    type Output = TokenStream2;
+
+    fn unit(&self) -> Self::Output {
+        quote! { ::ron_schema::TypeKind::Unit }
+    }
+
+    fn primitive(&self, kind: PrimitiveKind) -> Self::Output {
+        match kind {
+            PrimitiveKind::Bool => quote! { ::ron_schema::TypeKind::Bool },
+            PrimitiveKind::I8 => quote! { ::ron_schema::TypeKind::I8 },
+            PrimitiveKind::I16 => quote! { ::ron_schema::TypeKind::I16 },
+            PrimitiveKind::I32 => quote! { ::ron_schema::TypeKind::I32 },
+            PrimitiveKind::I64 => quote! { ::ron_schema::TypeKind::I64 },
+            PrimitiveKind::I128 => quote! { ::ron_schema::TypeKind::I128 },
+            PrimitiveKind::U8 => quote! { ::ron_schema::TypeKind::U8 },
+            PrimitiveKind::U16 => quote! { ::ron_schema::TypeKind::U16 },
+            PrimitiveKind::U32 => quote! { ::ron_schema::TypeKind::U32 },
+            PrimitiveKind::U64 => quote! { ::ron_schema::TypeKind::U64 },
+            PrimitiveKind::U128 => quote! { ::ron_schema::TypeKind::U128 },
+            PrimitiveKind::F32 => quote! { ::ron_schema::TypeKind::F32 },
+            PrimitiveKind::F64 => quote! { ::ron_schema::TypeKind::F64 },
+            PrimitiveKind::Char => quote! { ::ron_schema::TypeKind::Char },
+            PrimitiveKind::String => quote! { ::ron_schema::TypeKind::String },
+        }
+    }
+
+    fn option(&self, inner: Self::Output) -> Self::Output {
+        quote! { ::ron_schema::TypeKind::Option(Box::new(#inner)) }
+    }
+
+    fn list(&self, inner: Self::Output) -> Self::Output {
+        quote! { ::ron_schema::TypeKind::List(Box::new(#inner)) }
+    }
+
+    fn map(&self, key: Self::Output, value: Self::Output) -> Self::Output {
+        quote! {
+            ::ron_schema::TypeKind::Map {
+                key: Box::new(#key),
+                value: Box::new(#value),
+            }
+        }
+    }
+
+    fn tuple(&self, elements: Vec<Self::Output>) -> Self::Output {
+        quote! { ::ron_schema::TypeKind::Tuple(vec![#(#elements),*]) }
+    }
+
+    fn type_ref(&self, path: String) -> Self::Output {
+        quote! { ::ron_schema::TypeKind::TypeRef(#path.to_string()) }
+    }
+}
+
+/// Mapper that builds TypeKind values directly at compile time.
+struct ValueMapper;
+
+impl TypeKindMapper for ValueMapper {
+    type Output = ron_schema::TypeKind;
+
+    fn unit(&self) -> Self::Output {
+        ron_schema::TypeKind::Unit
+    }
+
+    fn primitive(&self, kind: PrimitiveKind) -> Self::Output {
+        match kind {
+            PrimitiveKind::Bool => ron_schema::TypeKind::Bool,
+            PrimitiveKind::I8 => ron_schema::TypeKind::I8,
+            PrimitiveKind::I16 => ron_schema::TypeKind::I16,
+            PrimitiveKind::I32 => ron_schema::TypeKind::I32,
+            PrimitiveKind::I64 => ron_schema::TypeKind::I64,
+            PrimitiveKind::I128 => ron_schema::TypeKind::I128,
+            PrimitiveKind::U8 => ron_schema::TypeKind::U8,
+            PrimitiveKind::U16 => ron_schema::TypeKind::U16,
+            PrimitiveKind::U32 => ron_schema::TypeKind::U32,
+            PrimitiveKind::U64 => ron_schema::TypeKind::U64,
+            PrimitiveKind::U128 => ron_schema::TypeKind::U128,
+            PrimitiveKind::F32 => ron_schema::TypeKind::F32,
+            PrimitiveKind::F64 => ron_schema::TypeKind::F64,
+            PrimitiveKind::Char => ron_schema::TypeKind::Char,
+            PrimitiveKind::String => ron_schema::TypeKind::String,
+        }
+    }
+
+    fn option(&self, inner: Self::Output) -> Self::Output {
+        ron_schema::TypeKind::Option(Box::new(inner))
+    }
+
+    fn list(&self, inner: Self::Output) -> Self::Output {
+        ron_schema::TypeKind::List(Box::new(inner))
+    }
+
+    fn map(&self, key: Self::Output, value: Self::Output) -> Self::Output {
+        ron_schema::TypeKind::Map {
+            key: Box::new(key),
+            value: Box::new(value),
+        }
+    }
+
+    fn tuple(&self, elements: Vec<Self::Output>) -> Self::Output {
+        ron_schema::TypeKind::Tuple(elements)
+    }
+
+    fn type_ref(&self, path: String) -> Self::Output {
+        ron_schema::TypeKind::TypeRef(path)
+    }
+}
+
+/// Map a Rust type to its TypeKind representation using the given mapper.
+fn map_type<M: TypeKindMapper>(ty: &Type, mapper: &M) -> M::Output {
+    match ty {
+        Type::Path(type_path) => {
+            let path = &type_path.path;
+
+            if let Some(segment) = path.segments.last() {
+                let ident_str = segment.ident.to_string();
+
+                // Check for primitives
+                if let Some(prim) = PrimitiveKind::from_ident(&ident_str) {
+                    return mapper.primitive(prim);
+                }
+
+                // Check for generic types (Option, Vec, HashMap, etc.)
+                if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                    let generic_args: Vec<_> = args
+                        .args
+                        .iter()
+                        .filter_map(|arg| {
+                            if let GenericArgument::Type(t) = arg {
+                                Some(t)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    match ident_str.as_str() {
+                        "Option" if generic_args.len() == 1 => {
+                            let inner = map_type(generic_args[0], mapper);
+                            return mapper.option(inner);
+                        }
+                        "Vec" | "VecDeque" | "HashSet" | "BTreeSet" | "LinkedList"
+                            if generic_args.len() == 1 =>
+                        {
+                            let inner = map_type(generic_args[0], mapper);
+                            return mapper.list(inner);
+                        }
+                        "HashMap" | "BTreeMap" if generic_args.len() == 2 => {
+                            let key = map_type(generic_args[0], mapper);
+                            let value = map_type(generic_args[1], mapper);
+                            return mapper.map(key, value);
+                        }
+                        "Box" if generic_args.len() == 1 => {
+                            // Box<T> is treated as just T for schema purposes
+                            return map_type(generic_args[0], mapper);
+                        }
+                        _ => {}
+                    }
+                }
+
+                // For any other type, generate a TypeRef with the full path
+                let type_path_str = path_to_string(path);
+                return mapper.type_ref(type_path_str);
+            }
+
+            // Fallback for invalid paths (shouldn't happen in practice)
+            mapper.type_ref(quote!(#ty).to_string())
+        }
+        Type::Tuple(tuple) => {
+            if tuple.elems.is_empty() {
+                return mapper.unit();
+            }
+
+            let elements: Vec<_> = tuple.elems.iter().map(|t| map_type(t, mapper)).collect();
+            mapper.tuple(elements)
+        }
+        Type::Reference(reference) => {
+            // For references, use the underlying type
+            map_type(&reference.elem, mapper)
+        }
+        Type::Array(array) => {
+            // Treat arrays as List for schema purposes
+            let inner = map_type(&array.elem, mapper);
+            mapper.list(inner)
+        }
+        Type::Slice(slice) => {
+            // Treat slices as List for schema purposes
+            let inner = map_type(&slice.elem, mapper);
+            mapper.list(inner)
+        }
+        _ => {
+            // For other types, generate a TypeRef with the type as-is
+            let type_str = quote!(#ty).to_string();
+            mapper.type_ref(type_str)
+        }
+    }
+}
+
+/// Convert a Rust type to TypeKind tokens (for code generation).
+fn type_to_type_kind(ty: &Type) -> TokenStream2 {
+    map_type(ty, &TokenMapper)
+}
+
+/// Convert a Rust type to a TypeKind value (for compile-time building).
+fn rust_type_to_type_kind(ty: &Type) -> ron_schema::TypeKind {
+    map_type(ty, &ValueMapper)
+}
+
 /// Derive macro for generating RON schemas at compile time.
 ///
 /// # Attributes
@@ -299,7 +577,7 @@ fn generate_struct_kind(
                 .unnamed
                 .iter()
                 .map(|f| type_to_type_kind(&f.ty))
-                .collect::<syn::Result<Vec<_>>>()?;
+                .collect();
 
             Ok(quote! {
                 ::ron_schema::TypeKind::Tuple(vec![#(#type_tokens),*])
@@ -345,7 +623,7 @@ fn generate_field(
         .to_string();
 
     let name = attrs.effective_name(&original_name, container_attrs);
-    let type_kind = type_to_type_kind(&field.ty)?;
+    let type_kind = type_to_type_kind(&field.ty);
     let doc = extract_doc_comment(&field.attrs);
     let optional = attrs.has_default();
     let flattened = attrs.flatten;
@@ -388,7 +666,7 @@ fn generate_variant(
                 .unnamed
                 .iter()
                 .map(|f| type_to_type_kind(&f.ty))
-                .collect::<syn::Result<Vec<_>>>()?;
+                .collect();
 
             quote! {
                 ::ron_schema::VariantKind::Tuple(vec![#(#type_tokens),*])
@@ -421,138 +699,6 @@ fn generate_variant(
             kind: #kind_tokens,
         }
     })
-}
-
-/// Convert a Rust type to TypeKind tokens.
-fn type_to_type_kind(ty: &Type) -> syn::Result<TokenStream2> {
-    match ty {
-        Type::Path(type_path) => {
-            let path = &type_path.path;
-
-            // Get the last segment (the actual type name)
-            if let Some(segment) = path.segments.last() {
-                let ident = &segment.ident;
-                let ident_str = ident.to_string();
-
-                // Check for primitives
-                match ident_str.as_str() {
-                    "bool" => return Ok(quote! { ::ron_schema::TypeKind::Bool }),
-                    "i8" => return Ok(quote! { ::ron_schema::TypeKind::I8 }),
-                    "i16" => return Ok(quote! { ::ron_schema::TypeKind::I16 }),
-                    "i32" => return Ok(quote! { ::ron_schema::TypeKind::I32 }),
-                    "i64" => return Ok(quote! { ::ron_schema::TypeKind::I64 }),
-                    "i128" => return Ok(quote! { ::ron_schema::TypeKind::I128 }),
-                    "u8" => return Ok(quote! { ::ron_schema::TypeKind::U8 }),
-                    "u16" => return Ok(quote! { ::ron_schema::TypeKind::U16 }),
-                    "u32" => return Ok(quote! { ::ron_schema::TypeKind::U32 }),
-                    "u64" => return Ok(quote! { ::ron_schema::TypeKind::U64 }),
-                    "u128" => return Ok(quote! { ::ron_schema::TypeKind::U128 }),
-                    "f32" => return Ok(quote! { ::ron_schema::TypeKind::F32 }),
-                    "f64" => return Ok(quote! { ::ron_schema::TypeKind::F64 }),
-                    "char" => return Ok(quote! { ::ron_schema::TypeKind::Char }),
-                    "String" | "str" => return Ok(quote! { ::ron_schema::TypeKind::String }),
-                    _ => {}
-                }
-
-                // Check for generic types (Option, Vec, HashMap, etc.)
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    let generic_args: Vec<_> = args
-                        .args
-                        .iter()
-                        .filter_map(|arg| {
-                            if let GenericArgument::Type(t) = arg {
-                                Some(t)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-
-                    match ident_str.as_str() {
-                        "Option" if generic_args.len() == 1 => {
-                            let inner = type_to_type_kind(generic_args[0])?;
-                            return Ok(quote! {
-                                ::ron_schema::TypeKind::Option(Box::new(#inner))
-                            });
-                        }
-                        // List-like types: Vec, VecDeque, HashSet, BTreeSet, LinkedList
-                        "Vec" | "VecDeque" | "HashSet" | "BTreeSet" | "LinkedList"
-                            if generic_args.len() == 1 =>
-                        {
-                            let inner = type_to_type_kind(generic_args[0])?;
-                            return Ok(quote! {
-                                ::ron_schema::TypeKind::List(Box::new(#inner))
-                            });
-                        }
-                        "HashMap" | "BTreeMap" if generic_args.len() == 2 => {
-                            let key = type_to_type_kind(generic_args[0])?;
-                            let value = type_to_type_kind(generic_args[1])?;
-                            return Ok(quote! {
-                                ::ron_schema::TypeKind::Map {
-                                    key: Box::new(#key),
-                                    value: Box::new(#value),
-                                }
-                            });
-                        }
-                        "Box" if generic_args.len() == 1 => {
-                            // Box<T> is treated as just T for schema purposes
-                            return type_to_type_kind(generic_args[0]);
-                        }
-                        _ => {}
-                    }
-                }
-
-                // For any other type, generate a TypeRef with the full path
-                let type_path_str = path_to_string(path);
-                return Ok(quote! {
-                    ::ron_schema::TypeKind::TypeRef(#type_path_str.to_string())
-                });
-            }
-
-            Err(syn::Error::new_spanned(ty, "Unsupported type"))
-        }
-        Type::Tuple(tuple) => {
-            if tuple.elems.is_empty() {
-                // Unit type ()
-                return Ok(quote! { ::ron_schema::TypeKind::Unit });
-            }
-
-            let elem_tokens: Vec<TokenStream2> = tuple
-                .elems
-                .iter()
-                .map(type_to_type_kind)
-                .collect::<syn::Result<Vec<_>>>()?;
-
-            Ok(quote! {
-                ::ron_schema::TypeKind::Tuple(vec![#(#elem_tokens),*])
-            })
-        }
-        Type::Reference(reference) => {
-            // For references, use the underlying type
-            type_to_type_kind(&reference.elem)
-        }
-        Type::Array(array) => {
-            // Treat arrays as List for schema purposes
-            let inner = type_to_type_kind(&array.elem)?;
-            Ok(quote! {
-                ::ron_schema::TypeKind::List(Box::new(#inner))
-            })
-        }
-        Type::Slice(slice) => {
-            // Treat slices as List for schema purposes
-            let inner = type_to_type_kind(&slice.elem)?;
-            Ok(quote! {
-                ::ron_schema::TypeKind::List(Box::new(#inner))
-            })
-        }
-        _ => {
-            // For other types, generate a TypeRef with the type as-is
-            let type_str = quote!(#ty).to_string();
-            Ok(quote! {
-                ::ron_schema::TypeKind::TypeRef(#type_str.to_string())
-            })
-        }
-    }
 }
 
 /// Convert a syn::Path to a string representation.
@@ -739,108 +885,6 @@ fn build_variant(variant: &syn::Variant, container_attrs: &ContainerAttrs) -> sy
     };
 
     Ok(Variant { name, doc, kind })
-}
-
-/// Convert a Rust type to a TypeKind value (not tokens).
-fn rust_type_to_type_kind(ty: &Type) -> TypeKind {
-    match ty {
-        Type::Path(type_path) => {
-            let path = &type_path.path;
-
-            if let Some(segment) = path.segments.last() {
-                let ident_str = segment.ident.to_string();
-
-                // Check for primitives
-                match ident_str.as_str() {
-                    "bool" => return TypeKind::Bool,
-                    "i8" => return TypeKind::I8,
-                    "i16" => return TypeKind::I16,
-                    "i32" => return TypeKind::I32,
-                    "i64" => return TypeKind::I64,
-                    "i128" => return TypeKind::I128,
-                    "u8" => return TypeKind::U8,
-                    "u16" => return TypeKind::U16,
-                    "u32" => return TypeKind::U32,
-                    "u64" => return TypeKind::U64,
-                    "u128" => return TypeKind::U128,
-                    "f32" => return TypeKind::F32,
-                    "f64" => return TypeKind::F64,
-                    "char" => return TypeKind::Char,
-                    "String" | "str" => return TypeKind::String,
-                    _ => {}
-                }
-
-                // Check for generic types
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    let generic_args: Vec<_> = args
-                        .args
-                        .iter()
-                        .filter_map(|arg| {
-                            if let GenericArgument::Type(t) = arg {
-                                Some(t)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-
-                    match ident_str.as_str() {
-                        "Option" if generic_args.len() == 1 => {
-                            let inner = rust_type_to_type_kind(generic_args[0]);
-                            return TypeKind::Option(Box::new(inner));
-                        }
-                        "Vec" | "VecDeque" | "HashSet" | "BTreeSet" | "LinkedList"
-                            if generic_args.len() == 1 =>
-                        {
-                            let inner = rust_type_to_type_kind(generic_args[0]);
-                            return TypeKind::List(Box::new(inner));
-                        }
-                        "HashMap" | "BTreeMap" if generic_args.len() == 2 => {
-                            let key = rust_type_to_type_kind(generic_args[0]);
-                            let value = rust_type_to_type_kind(generic_args[1]);
-                            return TypeKind::Map {
-                                key: Box::new(key),
-                                value: Box::new(value),
-                            };
-                        }
-                        "Box" if generic_args.len() == 1 => {
-                            return rust_type_to_type_kind(generic_args[0]);
-                        }
-                        _ => {}
-                    }
-                }
-
-                // For any other type, use TypeRef
-                let type_path_str = path_to_string(path);
-                return TypeKind::TypeRef(type_path_str);
-            }
-
-            TypeKind::TypeRef(quote!(#ty).to_string())
-        }
-        Type::Tuple(tuple) => {
-            if tuple.elems.is_empty() {
-                return TypeKind::Unit;
-            }
-
-            let elem_kinds: Vec<TypeKind> =
-                tuple.elems.iter().map(rust_type_to_type_kind).collect();
-
-            TypeKind::Tuple(elem_kinds)
-        }
-        Type::Reference(reference) => rust_type_to_type_kind(&reference.elem),
-        Type::Array(array) => {
-            let inner = rust_type_to_type_kind(&array.elem);
-            TypeKind::List(Box::new(inner))
-        }
-        Type::Slice(slice) => {
-            let inner = rust_type_to_type_kind(&slice.elem);
-            TypeKind::List(Box::new(inner))
-        }
-        _ => {
-            let type_str = quote!(#ty).to_string();
-            TypeKind::TypeRef(type_str)
-        }
-    }
 }
 
 /// Write a schema file at compile time (during proc macro execution).
