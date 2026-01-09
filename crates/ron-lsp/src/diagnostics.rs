@@ -173,6 +173,13 @@ fn format_validation_error(error: &ValidationError, doc: &Document) -> (String, 
                 range,
             )
         }
+        ValidationError::TypeRefError { type_path, source } => {
+            let (inner_msg, inner_range) = format_validation_error(source, doc);
+            (
+                format!("Error in type '{}': {}", type_path, inner_msg),
+                inner_range,
+            )
+        }
     }
 }
 

@@ -9,8 +9,13 @@
 //! - Map validation with various key/value types
 //! - Tuple validation with length checking
 
+use std::collections::HashMap;
+
 use ron2::Value;
-use ron_schema::{validate, validate_type, Field, Schema, TypeKind, ValidationError, Variant};
+use ron_schema::{
+    validate, validate_type, validate_type_with_resolver, validate_with_resolver, Field, Schema,
+    SchemaResolver, TypeKind, ValidationError, Variant,
+};
 
 /// Helper to parse RON string into Value
 fn parse_ron(s: &str) -> Value {
@@ -885,4 +890,278 @@ fn test_error_variant_error_name() {
     } else {
         panic!("Expected VariantError");
     }
+}
+
+// ============================================================================
+// TypeRef validation with resolver tests
+// ============================================================================
+
+/// Test resolver that uses an in-memory HashMap of schemas.
+struct TestResolver {
+    schemas: HashMap<String, Schema>,
+}
+
+impl TestResolver {
+    fn new() -> Self {
+        Self {
+            schemas: HashMap::new(),
+        }
+    }
+
+    fn add(&mut self, type_path: &str, schema: Schema) {
+        self.schemas.insert(type_path.to_string(), schema);
+    }
+}
+
+impl SchemaResolver for TestResolver {
+    fn resolve(&self, type_path: &str) -> Option<Schema> {
+        self.schemas.get(type_path).cloned()
+    }
+}
+
+#[test]
+fn test_typeref_resolves_and_validates() {
+    // Create the inner schema: a struct with a "value" field of type I32
+    let inner_schema = Schema::new(TypeKind::Struct {
+        fields: vec![Field::new("value", TypeKind::I32)],
+    });
+
+    let mut resolver = TestResolver::new();
+    resolver.add("my::Inner", inner_schema);
+
+    // Outer schema: struct with a field referencing "my::Inner"
+    let outer_schema = Schema::new(TypeKind::Struct {
+        fields: vec![Field::new(
+            "inner",
+            TypeKind::TypeRef("my::Inner".to_string()),
+        )],
+    });
+
+    // Valid value
+    let value: Value = parse_ron(r#"(inner: (value: 42))"#);
+    assert!(validate_with_resolver(&value, &outer_schema, &resolver).is_ok());
+
+    // Invalid value (wrong type in inner)
+    let value: Value = parse_ron(r#"(inner: (value: "not int"))"#);
+    let result = validate_with_resolver(&value, &outer_schema, &resolver);
+    assert!(result.is_err());
+
+    // Check the error includes the type path
+    if let Err(ValidationError::FieldError { field, source }) = result {
+        assert_eq!(field, "inner");
+        assert!(matches!(*source, ValidationError::TypeRefError { .. }));
+    } else {
+        panic!("Expected FieldError containing TypeRefError");
+    }
+}
+
+#[test]
+fn test_typeref_circular_reference() {
+    // Create a self-referential type: Node { value: i32, next: Option<Node> }
+    let node_schema = Schema::new(TypeKind::Struct {
+        fields: vec![
+            Field::new("value", TypeKind::I32),
+            Field::optional(
+                "next",
+                TypeKind::Option(Box::new(TypeKind::TypeRef("my::Node".to_string()))),
+            ),
+        ],
+    });
+
+    let mut resolver = TestResolver::new();
+    resolver.add("my::Node", node_schema.clone());
+
+    // Valid recursive structure
+    let value: Value = parse_ron(
+        r#"(
+        value: 1,
+        next: Some((value: 2, next: None))
+    )"#,
+    );
+    assert!(validate_with_resolver(&value, &node_schema, &resolver).is_ok());
+
+    // Deeper nesting
+    let value: Value = parse_ron(
+        r#"(
+        value: 1,
+        next: Some((
+            value: 2,
+            next: Some((
+                value: 3,
+                next: None
+            ))
+        ))
+    )"#,
+    );
+    assert!(validate_with_resolver(&value, &node_schema, &resolver).is_ok());
+}
+
+#[test]
+fn test_typeref_missing_schema_accepts_any() {
+    let schema = Schema::new(TypeKind::Struct {
+        fields: vec![Field::new(
+            "data",
+            TypeKind::TypeRef("unknown::Type".to_string()),
+        )],
+    });
+
+    let resolver = TestResolver::new(); // Empty resolver
+
+    // Should accept any value since schema is not found
+    let value: Value = parse_ron(r#"(data: "anything")"#);
+    assert!(validate_with_resolver(&value, &schema, &resolver).is_ok());
+
+    let value: Value = parse_ron(r#"(data: 42)"#);
+    assert!(validate_with_resolver(&value, &schema, &resolver).is_ok());
+
+    let value: Value = parse_ron(r#"(data: [1, 2, 3])"#);
+    assert!(validate_with_resolver(&value, &schema, &resolver).is_ok());
+}
+
+#[test]
+fn test_typeref_nested_in_option() {
+    let inner_schema = Schema::new(TypeKind::Struct {
+        fields: vec![Field::new("id", TypeKind::I32)],
+    });
+
+    let mut resolver = TestResolver::new();
+    resolver.add("my::Inner", inner_schema);
+
+    let outer_schema = Schema::new(TypeKind::Struct {
+        fields: vec![Field::optional(
+            "maybe_inner",
+            TypeKind::Option(Box::new(TypeKind::TypeRef("my::Inner".to_string()))),
+        )],
+    });
+
+    // With Some containing valid inner
+    let value: Value = parse_ron(r#"(maybe_inner: Some((id: 1)))"#);
+    assert!(validate_with_resolver(&value, &outer_schema, &resolver).is_ok());
+
+    // With None
+    let value: Value = parse_ron(r#"(maybe_inner: None)"#);
+    assert!(validate_with_resolver(&value, &outer_schema, &resolver).is_ok());
+
+    // With field absent
+    let value: Value = parse_ron(r#"()"#);
+    assert!(validate_with_resolver(&value, &outer_schema, &resolver).is_ok());
+
+    // With Some containing invalid inner
+    let value: Value = parse_ron(r#"(maybe_inner: Some((id: "not int")))"#);
+    assert!(validate_with_resolver(&value, &outer_schema, &resolver).is_err());
+}
+
+#[test]
+fn test_typeref_nested_in_list() {
+    let item_schema = Schema::new(TypeKind::Struct {
+        fields: vec![Field::new("name", TypeKind::String)],
+    });
+
+    let mut resolver = TestResolver::new();
+    resolver.add("my::Item", item_schema);
+
+    let list_schema = Schema::new(TypeKind::List(Box::new(TypeKind::TypeRef(
+        "my::Item".to_string(),
+    ))));
+
+    // Valid list
+    let value: Value = parse_ron(r#"[(name: "a"), (name: "b"), (name: "c")]"#);
+    assert!(validate_type_with_resolver(&value, &list_schema.kind, &resolver).is_ok());
+
+    // Empty list
+    let value: Value = parse_ron(r#"[]"#);
+    assert!(validate_type_with_resolver(&value, &list_schema.kind, &resolver).is_ok());
+
+    // Invalid item in list
+    let value: Value = parse_ron(r#"[(name: "a"), (name: 42)]"#);
+    assert!(validate_type_with_resolver(&value, &list_schema.kind, &resolver).is_err());
+}
+
+#[test]
+fn test_typeref_error_propagation() {
+    let inner_schema = Schema::new(TypeKind::Struct {
+        fields: vec![Field::new("count", TypeKind::I32)],
+    });
+
+    let mut resolver = TestResolver::new();
+    resolver.add("pkg::Inner", inner_schema);
+
+    let outer_schema = Schema::new(TypeKind::Struct {
+        fields: vec![Field::new(
+            "nested",
+            TypeKind::TypeRef("pkg::Inner".to_string()),
+        )],
+    });
+
+    // Invalid value - wrong type for count field
+    let value: Value = parse_ron(r#"(nested: (count: "wrong"))"#);
+    let result = validate_with_resolver(&value, &outer_schema, &resolver);
+
+    // Verify error chain includes type path
+    match result {
+        Err(ValidationError::FieldError { field, source }) => {
+            assert_eq!(field, "nested");
+            match *source {
+                ValidationError::TypeRefError { type_path, .. } => {
+                    assert_eq!(type_path, "pkg::Inner");
+                }
+                _ => panic!("Expected TypeRefError in source"),
+            }
+        }
+        _ => panic!("Expected FieldError"),
+    }
+}
+
+#[test]
+fn test_typeref_backward_compatibility() {
+    // Using validate() without resolver should still accept any TypeRef value
+    let kind = TypeKind::TypeRef("any::Type".to_string());
+
+    assert!(validate_type(&Value::Bool(true), &kind).is_ok());
+    assert!(validate_type(&Value::Number(42.into()), &kind).is_ok());
+    assert!(validate_type(&Value::String("hello".into()), &kind).is_ok());
+    assert!(validate_type(&Value::Seq(vec![]), &kind).is_ok());
+}
+
+#[test]
+fn test_typeref_mutual_recursion() {
+    // Type A references Type B, Type B references Type A
+    let type_a_schema = Schema::new(TypeKind::Struct {
+        fields: vec![
+            Field::new("value", TypeKind::String),
+            Field::optional(
+                "ref_b",
+                TypeKind::Option(Box::new(TypeKind::TypeRef("my::TypeB".to_string()))),
+            ),
+        ],
+    });
+
+    let type_b_schema = Schema::new(TypeKind::Struct {
+        fields: vec![
+            Field::new("count", TypeKind::I32),
+            Field::optional(
+                "ref_a",
+                TypeKind::Option(Box::new(TypeKind::TypeRef("my::TypeA".to_string()))),
+            ),
+        ],
+    });
+
+    let mut resolver = TestResolver::new();
+    resolver.add("my::TypeA", type_a_schema.clone());
+    resolver.add("my::TypeB", type_b_schema);
+
+    // Valid mutually recursive structure
+    let value: Value = parse_ron(
+        r#"(
+        value: "hello",
+        ref_b: Some((
+            count: 42,
+            ref_a: Some((
+                value: "world",
+                ref_b: None
+            ))
+        ))
+    )"#,
+    );
+    assert!(validate_with_resolver(&value, &type_a_schema, &resolver).is_ok());
 }

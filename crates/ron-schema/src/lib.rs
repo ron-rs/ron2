@@ -92,7 +92,10 @@ pub use storage::{
 };
 pub use traits::{RonList, RonMap, RonOptional, RonSchemaType};
 pub use types::{Field, Schema, TypeKind, Variant, VariantKind};
-pub use validation::{validate, validate_type, ValidationError};
+pub use validation::{
+    validate, validate_type, validate_type_with_resolver, validate_with_resolver,
+    AcceptAllResolver, SchemaResolver, StorageResolver, ValidationError,
+};
 
 use std::path::PathBuf;
 

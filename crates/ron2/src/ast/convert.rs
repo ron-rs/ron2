@@ -232,12 +232,6 @@ fn tuple_to_value(tuple: &TupleExpr<'_>) -> Result<Value> {
     Ok(Value::Tuple(elements?))
 }
 
-/// Convert named struct/enum to `Value::Named`.
-///
-/// Handles:
-/// - Unit: `Point` → Named { name: "Point", content: Unit }
-/// - Tuple: `Point(1, 2)` → Named { name: "Point", content: Tuple([1, 2]) }
-/// - Struct: `Point(x: 1)` → Named { name: "Point", content: Struct({x: 1}) }
 /// Convert anonymous struct `(field: value, ...)` to `Value::Struct`.
 fn anon_struct_to_value(s: &AnonStructExpr<'_>) -> Result<Value> {
     let struct_fields: StructFields = s
