@@ -242,7 +242,12 @@ fn test_type_ref() {
     match &schema.kind {
         TypeKind::Struct { fields } => match &fields[0].ty {
             TypeKind::TypeRef(path) => {
-                assert_eq!(path, "CustomType");
+                // TypeRef should be fully qualified with crate name
+                assert!(
+                    path.ends_with("::CustomType"),
+                    "Expected path to end with ::CustomType, got: {}",
+                    path
+                );
             }
             _ => panic!("Expected TypeRef for custom type"),
         },

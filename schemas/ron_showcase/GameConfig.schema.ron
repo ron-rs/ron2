@@ -15,21 +15,21 @@ Schema(
             Field(
                 name: "window",
                 ty: TypeRef(
-                    "WindowConfig"
+                    "ron_showcase::WindowConfig"
                 ),
                 doc: "Window settings."
             ),
             Field(
                 name: "graphics",
                 ty: TypeRef(
-                    "GraphicsQuality"
+                    "ron_showcase::GraphicsQuality"
                 ),
                 doc: "Graphics quality preset."
             ),
             Field(
                 name: "audio",
                 ty: TypeRef(
-                    "AudioConfig"
+                    "ron_showcase::AudioConfig"
                 ),
                 doc: "Audio settings."
             ),
@@ -44,7 +44,7 @@ Schema(
             Field(
                 name: "player",
                 ty: TypeRef(
-                    "PlayerConfig"
+                    "ron_showcase::PlayerConfig"
                 ),
                 doc: "Player configuration."
             )

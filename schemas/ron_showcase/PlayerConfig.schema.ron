@@ -9,7 +9,7 @@ Schema(
             Field(
                 name: "ship",
                 ty: TypeRef(
-                    "ShipType"
+                    "ron_showcase::ShipType"
                 )
             )
         ]

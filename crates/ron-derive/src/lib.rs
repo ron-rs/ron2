@@ -578,8 +578,12 @@ fn type_to_type_kind(ty: &Type) -> syn::Result<TokenStream2> {
 }
 
 /// Convert a syn::Path to a string representation.
+///
+/// Single-segment paths (local types) are prefixed with the crate name to produce
+/// fully qualified paths like `my_crate::MyType`.
 fn path_to_string(path: &syn::Path) -> String {
-    path.segments
+    let raw_path = path
+        .segments
         .iter()
         .map(|seg| {
             let ident = seg.ident.to_string();
@@ -607,7 +611,15 @@ fn path_to_string(path: &syn::Path) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join("::")
+        .join("::");
+
+    // Qualify single-segment paths (local types) with crate name
+    if path.segments.len() == 1 {
+        let crate_name = get_crate_name();
+        format!("{}::{}", crate_name, raw_path)
+    } else {
+        raw_path
+    }
 }
 
 /// Convert a PascalCase string to snake_case.
@@ -624,6 +636,13 @@ fn to_snake_case(s: &str) -> String {
         }
     }
     result
+}
+
+/// Get the crate name, normalized for Rust path syntax (hyphens replaced with underscores).
+fn get_crate_name() -> String {
+    std::env::var("CARGO_CRATE_NAME")
+        .or_else(|_| std::env::var("CARGO_PKG_NAME").map(|s| s.replace('-', "_")))
+        .unwrap_or_else(|_| "unknown_crate".to_string())
 }
 
 // =============================================================================
@@ -896,8 +915,8 @@ fn write_schema_at_compile_time(
             .join("ron-schemas")
     };
 
-    // Build type path: crate_name::TypeName
-    let crate_name = std::env::var("CARGO_PKG_NAME")?;
+    // Build type path: crate_name::TypeName (normalized, hyphens -> underscores)
+    let crate_name = get_crate_name();
     let type_path = format!("{}::{}", crate_name, type_name);
 
     // Convert to file path
