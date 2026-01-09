@@ -1,106 +1,71 @@
-//! Error types for SerRon and DeRon operations.
+//! Unified error type for schema operations.
 
-use std::fmt;
+use std::io;
 
-/// Errors that can occur during RON serialization or deserialization.
-#[derive(Debug)]
-pub enum RonError {
-    /// RON parsing error.
-    Parse(ron2::error::SpannedError),
-    /// Type mismatch during deserialization.
-    TypeMismatch {
-        expected: &'static str,
-        found: String,
-    },
-    /// Missing required field in struct.
+/// Errors that can occur during schema operations (storage, validation, etc.).
+#[derive(Debug, thiserror::Error)]
+pub enum SchemaError {
+    // Storage errors
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+    #[error("RON parse error: {0}")]
+    Parse(#[from] ron2::SpannedError),
+    #[error("RON error: {0}")]
+    Ron(#[from] ron2::Error),
+    #[error("Could not determine schema directory")]
+    NoSchemaDir,
+    #[error("Schema not found for type: {0}")]
+    SchemaNotFound(String),
+
+    // Validation errors
+    #[error("Type mismatch: expected {expected}, got {actual}")]
+    TypeMismatch { expected: String, actual: String },
+    #[error("Missing required field: {0}")]
     MissingField(String),
-    /// Unknown field encountered (when deny_unknown_fields is set).
+    #[error("Unknown field: {0}")]
     UnknownField(String),
-    /// Unknown enum variant.
+    #[error("Unknown enum variant: {0}")]
     UnknownVariant(String),
-    /// Integer value out of range for target type.
-    IntegerOutOfRange { ty: &'static str, value: String },
-    /// Invalid value for the target type.
-    InvalidValue(String),
-    /// IO error.
-    Io(std::io::Error),
-    /// Formatting error during serialization.
-    Fmt(fmt::Error),
-    /// RON serialization error.
-    Serialize(ron2::Error),
-    /// Custom error message.
-    Custom(String),
+    #[error("Invalid tuple length: expected {expected}, got {actual}")]
+    TupleLengthMismatch { expected: usize, actual: usize },
+
+    // Nested context wrappers
+    #[error("in field '{field}': {source}")]
+    FieldError {
+        field: String,
+        #[source]
+        source: Box<SchemaError>,
+    },
+    #[error("in element {index}: {source}")]
+    ElementError {
+        index: usize,
+        #[source]
+        source: Box<SchemaError>,
+    },
+    #[error("in map key: {source}")]
+    MapKeyError {
+        #[source]
+        source: Box<SchemaError>,
+    },
+    #[error("in map value for key '{key}': {source}")]
+    MapValueError {
+        key: String,
+        #[source]
+        source: Box<SchemaError>,
+    },
+    #[error("in variant '{variant}': {source}")]
+    VariantError {
+        variant: String,
+        #[source]
+        source: Box<SchemaError>,
+    },
+    #[error("in TypeRef '{type_path}': {source}")]
+    TypeRefError {
+        type_path: String,
+        #[source]
+        source: Box<SchemaError>,
+    },
 }
 
-impl std::error::Error for RonError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            RonError::Parse(e) => Some(e),
-            RonError::Io(e) => Some(e),
-            RonError::Fmt(e) => Some(e),
-            RonError::Serialize(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for RonError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RonError::Parse(e) => write!(f, "RON parse error: {}", e),
-            RonError::TypeMismatch { expected, found } => {
-                write!(f, "type mismatch: expected {}, found {}", expected, found)
-            }
-            RonError::MissingField(field) => write!(f, "missing required field: {}", field),
-            RonError::UnknownField(field) => write!(f, "unknown field: {}", field),
-            RonError::UnknownVariant(variant) => write!(f, "unknown variant: {}", variant),
-            RonError::IntegerOutOfRange { ty, value } => {
-                write!(f, "integer {} out of range for type {}", value, ty)
-            }
-            RonError::InvalidValue(msg) => write!(f, "invalid value: {}", msg),
-            RonError::Io(e) => write!(f, "IO error: {}", e),
-            RonError::Fmt(e) => write!(f, "format error: {}", e),
-            RonError::Serialize(e) => write!(f, "serialization error: {}", e),
-            RonError::Custom(msg) => write!(f, "{}", msg),
-        }
-    }
-}
-
-impl From<ron2::error::SpannedError> for RonError {
-    fn from(e: ron2::error::SpannedError) -> Self {
-        RonError::Parse(e)
-    }
-}
-
-impl From<std::io::Error> for RonError {
-    fn from(e: std::io::Error) -> Self {
-        RonError::Io(e)
-    }
-}
-
-impl From<fmt::Error> for RonError {
-    fn from(e: fmt::Error) -> Self {
-        RonError::Fmt(e)
-    }
-}
-
-impl From<ron2::Error> for RonError {
-    fn from(e: ron2::Error) -> Self {
-        RonError::Serialize(e)
-    }
-}
-
-impl RonError {
-    /// Create a custom error with the given message.
-    pub fn custom(msg: impl Into<String>) -> Self {
-        RonError::Custom(msg.into())
-    }
-
-    /// Create a type mismatch error.
-    pub fn type_mismatch(expected: &'static str, found: impl fmt::Debug) -> Self {
-        RonError::TypeMismatch {
-            expected,
-            found: format!("{:?}", found),
-        }
-    }
-}
+/// Result type for schema operations.
+pub type Result<T> = std::result::Result<T, SchemaError>;

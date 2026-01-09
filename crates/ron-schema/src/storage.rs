@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::{env, fs, io};
+use std::{env, fs};
 
+use crate::error::{Result, SchemaError};
 use crate::Schema;
 use ron2::{FromRon, ToRon};
 
@@ -12,24 +13,6 @@ const DEFAULT_SCHEMA_DIR: &str = "ron-schemas";
 
 /// Schema file extension.
 const SCHEMA_EXTENSION: &str = "schema.ron";
-
-/// Errors that can occur during schema storage operations.
-#[derive(Debug, thiserror::Error)]
-pub enum StorageError {
-    #[error("IO error: {0}")]
-    Io(#[from] io::Error),
-    #[error("RON parse error: {0}")]
-    Parse(#[from] ron2::SpannedError),
-    #[error("RON error: {0}")]
-    Ron(#[from] ron2::Error),
-    #[error("Could not determine schema directory")]
-    NoSchemaDir,
-    #[error("Schema not found for type: {0}")]
-    NotFound(String),
-}
-
-/// Result type for storage operations.
-pub type Result<T> = std::result::Result<T, StorageError>;
 
 /// Resolve the schema directory based on precedence:
 /// 1. Environment variable `RON_SCHEMA_DIR`
@@ -43,7 +26,7 @@ pub fn resolve_schema_dir() -> Result<PathBuf> {
     // Fall back to XDG data directory
     dirs::data_dir()
         .map(|d| d.join(DEFAULT_SCHEMA_DIR))
-        .ok_or(StorageError::NoSchemaDir)
+        .ok_or(SchemaError::NoSchemaDir)
 }
 
 /// Convert a Rust type path to a schema file path.
@@ -111,7 +94,7 @@ pub fn find_schema(type_path: &str) -> Result<Schema> {
     let file_path = base_dir.join(type_path_to_file_path(type_path));
 
     if !file_path.exists() {
-        return Err(StorageError::NotFound(type_path.to_string()));
+        return Err(SchemaError::SchemaNotFound(type_path.to_string()));
     }
 
     read_schema(&file_path)

@@ -84,14 +84,20 @@ pub mod validation;
 // Re-export conversion traits from ron2
 pub use ron2::{AstMapAccess, FromRon, PrettyConfig, ToRon};
 
-pub use error::RonError;
+pub use error::{Result, SchemaError};
 pub use storage::{
     find_schema, find_schema_in, read_schema, resolve_schema_dir, type_path_to_file_path,
-    write_schema, StorageError, SCHEMA_DIR_ENV,
+    write_schema, SCHEMA_DIR_ENV,
 };
 pub use traits::{RonList, RonMap, RonOptional, RonSchemaType};
 pub use types::{Field, Schema, TypeKind, Variant, VariantKind};
 pub use validation::{
     validate, validate_type, validate_type_with_resolver, validate_with_resolver,
-    AcceptAllResolver, SchemaResolver, StorageResolver, ValidationError,
+    AcceptAllResolver, SchemaResolver, StorageResolver,
 };
+
+// Deprecated type aliases for backward compatibility
+#[deprecated(since = "0.2.0", note = "Use SchemaError instead")]
+pub type ValidationError = SchemaError;
+#[deprecated(since = "0.2.0", note = "Use SchemaError instead")]
+pub type StorageError = SchemaError;

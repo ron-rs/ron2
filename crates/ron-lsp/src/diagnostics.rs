@@ -3,7 +3,7 @@
 //! Validates RON files against their schemas and produces
 //! diagnostic messages for errors.
 
-use ron_schema::{validate_with_resolver, ValidationError};
+use ron_schema::{validate_with_resolver, SchemaError};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
@@ -87,7 +87,7 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
 }
 
 /// Convert a validation error to diagnostics.
-fn validation_error_to_diagnostics(error: &ValidationError, doc: &Document) -> Vec<Diagnostic> {
+fn validation_error_to_diagnostics(error: &SchemaError, doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     // For now, we report all errors at position 0,0 since we don't have
@@ -119,53 +119,53 @@ fn validation_error_to_diagnostics(error: &ValidationError, doc: &Document) -> V
 }
 
 /// Format a validation error and try to find its position.
-fn format_validation_error(error: &ValidationError, doc: &Document) -> (String, Option<Range>) {
+fn format_validation_error(error: &SchemaError, doc: &Document) -> (String, Option<Range>) {
     match error {
-        ValidationError::TypeMismatch { expected, actual } => (
+        SchemaError::TypeMismatch { expected, actual } => (
             format!("Type mismatch: expected {}, got {}", expected, actual),
             None,
         ),
-        ValidationError::MissingField(field) => {
+        SchemaError::MissingField(field) => {
             // Try to find a good position for missing field error
             let range = find_field_insert_position(doc, field);
             (format!("Missing required field: {}", field), range)
         }
-        ValidationError::UnknownField(field) => {
+        SchemaError::UnknownField(field) => {
             let range = find_field_position(doc, field);
             (format!("Unknown field: {}", field), range)
         }
-        ValidationError::UnknownVariant(variant) => {
+        SchemaError::UnknownVariant(variant) => {
             let range = find_text_position(doc, variant);
             (format!("Unknown enum variant: {}", variant), range)
         }
-        ValidationError::TupleLengthMismatch { expected, actual } => (
+        SchemaError::TupleLengthMismatch { expected, actual } => (
             format!(
                 "Tuple length mismatch: expected {} elements, got {}",
                 expected, actual
             ),
             None,
         ),
-        ValidationError::FieldError { field, source } => {
+        SchemaError::FieldError { field, source } => {
             let range = find_field_position(doc, field);
             let (inner_msg, _) = format_validation_error(source, doc);
             (format!("Error in field '{}': {}", field, inner_msg), range)
         }
-        ValidationError::ElementError { index, source } => {
+        SchemaError::ElementError { index, source } => {
             let (inner_msg, _) = format_validation_error(source, doc);
             (format!("Error in element {}: {}", index, inner_msg), None)
         }
-        ValidationError::MapKeyError { source } => {
+        SchemaError::MapKeyError { source } => {
             let (inner_msg, _) = format_validation_error(source, doc);
             (format!("Error in map key: {}", inner_msg), None)
         }
-        ValidationError::MapValueError { key, source } => {
+        SchemaError::MapValueError { key, source } => {
             let (inner_msg, _) = format_validation_error(source, doc);
             (
                 format!("Error in map value for '{}': {}", key, inner_msg),
                 None,
             )
         }
-        ValidationError::VariantError { variant, source } => {
+        SchemaError::VariantError { variant, source } => {
             let range = find_text_position(doc, variant);
             let (inner_msg, _) = format_validation_error(source, doc);
             (
@@ -173,13 +173,15 @@ fn format_validation_error(error: &ValidationError, doc: &Document) -> (String, 
                 range,
             )
         }
-        ValidationError::TypeRefError { type_path, source } => {
+        SchemaError::TypeRefError { type_path, source } => {
             let (inner_msg, inner_range) = format_validation_error(source, doc);
             (
                 format!("Error in type '{}': {}", type_path, inner_msg),
                 inner_range,
             )
         }
+        // Storage errors shouldn't occur during validation, but handle gracefully
+        _ => (error.to_string(), None),
     }
 }
 

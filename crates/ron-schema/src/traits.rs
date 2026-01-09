@@ -24,7 +24,7 @@
 //! }
 //! ```
 
-use crate::{Schema, StorageError, TypeKind};
+use crate::{Schema, SchemaError, TypeKind};
 use std::path::PathBuf;
 
 /// Core trait for types that can be represented in the RON schema system.
@@ -90,9 +90,9 @@ pub trait RonSchemaType {
     ///
     /// Returns the path to the written schema file, or `None` if this type
     /// doesn't support schema storage (e.g., primitive types).
-    fn write_schema(output_dir: Option<&std::path::Path>) -> Result<PathBuf, StorageError> {
+    fn write_schema(output_dir: Option<&std::path::Path>) -> Result<PathBuf, SchemaError> {
         let type_path = Self::type_path().ok_or_else(|| {
-            StorageError::Io(std::io::Error::new(
+            SchemaError::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "type does not support schema storage",
             ))
