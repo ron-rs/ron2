@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use ron2::Value;
 use ron_schema::{
     validate, validate_type, validate_type_with_resolver, validate_with_resolver, Field, Schema,
-    SchemaResolver, TypeKind, ValidationError, Variant,
+    SchemaError, SchemaResolver, TypeKind, Variant,
 };
 
 /// Helper to parse RON string into Value
@@ -39,7 +39,7 @@ fn test_validate_bool_false() {
 #[test]
 fn test_validate_bool_mismatch() {
     let result = validate_type(&Value::String("true".into()), &TypeKind::Bool);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn test_validate_all_unsigned_integers() {
 #[test]
 fn test_validate_integer_mismatch() {
     let result = validate_type(&Value::String("42".into()), &TypeKind::I32);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn test_validate_float_accepts_integer() {
 #[test]
 fn test_validate_float_mismatch() {
     let result = validate_type(&Value::String("3.14".into()), &TypeKind::F64);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn test_validate_char() {
 #[test]
 fn test_validate_char_mismatch() {
     let result = validate_type(&Value::String("a".into()), &TypeKind::Char);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn test_validate_string() {
 #[test]
 fn test_validate_string_mismatch() {
     let result = validate_type(&Value::Number(42.into()), &TypeKind::String);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn test_validate_unit() {
 #[test]
 fn test_validate_unit_mismatch() {
     let result = validate_type(&Value::Bool(true), &TypeKind::Unit);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 // ============================================================================
@@ -159,14 +159,14 @@ fn test_validate_option_some_wrong_inner_type() {
     let kind = TypeKind::Option(Box::new(TypeKind::String));
     let value = Value::Option(Some(Box::new(Value::Number(42.into()))));
     let result = validate_type(&value, &kind);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
 fn test_validate_option_mismatch() {
     let kind = TypeKind::Option(Box::new(TypeKind::String));
     let result = validate_type(&Value::String("hello".into()), &kind);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn test_validate_vec_with_wrong_element_type() {
     let result = validate_type(&value, &kind);
     assert!(matches!(
         result,
-        Err(ValidationError::ElementError { index: 1, .. })
+        Err(SchemaError::ElementError { index: 1, .. })
     ));
 }
 
@@ -230,7 +230,7 @@ fn test_validate_vec_all_wrong_type() {
     let result = validate_type(&value, &kind);
     assert!(matches!(
         result,
-        Err(ValidationError::ElementError { index: 0, .. })
+        Err(SchemaError::ElementError { index: 0, .. })
     ));
 }
 
@@ -238,7 +238,7 @@ fn test_validate_vec_all_wrong_type() {
 fn test_validate_vec_mismatch() {
     let kind = TypeKind::List(Box::new(TypeKind::I32));
     let result = validate_type(&Value::String("not a vec".into()), &kind);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
@@ -287,7 +287,7 @@ fn test_validate_tuple_length_too_short() {
     let result = validate_type(&value, &kind);
     assert!(matches!(
         result,
-        Err(ValidationError::TupleLengthMismatch {
+        Err(SchemaError::TupleLengthMismatch {
             expected: 2,
             actual: 1
         })
@@ -301,7 +301,7 @@ fn test_validate_tuple_length_too_long() {
     let result = validate_type(&value, &kind);
     assert!(matches!(
         result,
-        Err(ValidationError::TupleLengthMismatch {
+        Err(SchemaError::TupleLengthMismatch {
             expected: 1,
             actual: 2
         })
@@ -315,7 +315,7 @@ fn test_validate_tuple_wrong_element_type() {
     let result = validate_type(&value, &kind);
     assert!(matches!(
         result,
-        Err(ValidationError::ElementError { index: 1, .. })
+        Err(SchemaError::ElementError { index: 1, .. })
     ));
 }
 
@@ -323,7 +323,7 @@ fn test_validate_tuple_wrong_element_type() {
 fn test_validate_tuple_mismatch() {
     let kind = TypeKind::Tuple(vec![TypeKind::I32]);
     let result = validate_type(&Value::String("not a tuple".into()), &kind);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 // ============================================================================
@@ -359,7 +359,7 @@ fn test_validate_map_wrong_key_type() {
     // RON maps with integer keys
     let value: Value = parse_ron(r#"{ 1: 100 }"#);
     let result = validate_type(&value, &kind);
-    assert!(matches!(result, Err(ValidationError::MapKeyError { .. })));
+    assert!(matches!(result, Err(SchemaError::MapKeyError { .. })));
 }
 
 #[test]
@@ -370,7 +370,7 @@ fn test_validate_map_wrong_value_type() {
     };
     let value: Value = parse_ron(r#"{ "key": "not an int" }"#);
     let result = validate_type(&value, &kind);
-    assert!(matches!(result, Err(ValidationError::MapValueError { .. })));
+    assert!(matches!(result, Err(SchemaError::MapValueError { .. })));
 }
 
 #[test]
@@ -390,7 +390,7 @@ fn test_validate_map_mismatch() {
         value: Box::new(TypeKind::I32),
     };
     let result = validate_type(&Value::Seq(vec![]), &kind);
-    assert!(matches!(result, Err(ValidationError::TypeMismatch { .. })));
+    assert!(matches!(result, Err(SchemaError::TypeMismatch { .. })));
 }
 
 #[test]
@@ -431,7 +431,7 @@ fn test_validate_struct_missing_required_field() {
     let result = validate(&value, &schema);
     assert!(matches!(
         result,
-        Err(ValidationError::MissingField(ref f)) if f == "age"
+        Err(SchemaError::MissingField(ref f)) if f == "age"
     ));
 }
 
@@ -468,7 +468,7 @@ fn test_validate_struct_unknown_field() {
     let result = validate(&value, &schema);
     assert!(matches!(
         result,
-        Err(ValidationError::UnknownField(ref f)) if f == "extra"
+        Err(SchemaError::UnknownField(ref f)) if f == "extra"
     ));
 }
 
@@ -481,7 +481,7 @@ fn test_validate_struct_wrong_field_type() {
     let result = validate(&value, &schema);
     assert!(matches!(
         result,
-        Err(ValidationError::FieldError { ref field, .. }) if field == "age"
+        Err(SchemaError::FieldError { ref field, .. }) if field == "age"
     ));
 }
 
@@ -548,7 +548,7 @@ fn test_validate_struct_nested_error_propagation() {
     let result = validate(&value, &schema);
     assert!(matches!(
         result,
-        Err(ValidationError::FieldError { ref field, .. }) if field == "address"
+        Err(SchemaError::FieldError { ref field, .. }) if field == "address"
     ));
 }
 
@@ -574,7 +574,7 @@ fn test_validate_enum_unknown_variant() {
     let result = validate(&value, &schema);
     assert!(matches!(
         result,
-        Err(ValidationError::UnknownVariant(ref v)) if v == "Unknown"
+        Err(SchemaError::UnknownVariant(ref v)) if v == "Unknown"
     ));
 }
 
@@ -596,7 +596,7 @@ fn test_validate_enum_tuple_variant_wrong_length() {
     let result = validate(&value, &schema);
     assert!(matches!(
         result,
-        Err(ValidationError::VariantError { ref variant, .. }) if variant == "Pair"
+        Err(SchemaError::VariantError { ref variant, .. }) if variant == "Pair"
     ));
 }
 
@@ -609,7 +609,7 @@ fn test_validate_enum_tuple_variant_wrong_type() {
     let result = validate(&value, &schema);
     assert!(matches!(
         result,
-        Err(ValidationError::VariantError { ref variant, .. }) if variant == "Data"
+        Err(SchemaError::VariantError { ref variant, .. }) if variant == "Data"
     ));
 }
 
@@ -643,7 +643,7 @@ fn test_validate_enum_struct_variant_missing_field() {
     let result = validate(&value, &schema);
     assert!(matches!(
         result,
-        Err(ValidationError::VariantError { ref variant, .. }) if variant == "Person"
+        Err(SchemaError::VariantError { ref variant, .. }) if variant == "Person"
     ));
 }
 
@@ -772,7 +772,7 @@ fn test_validate_error_path_in_nested_structure() {
     // Should report error in items field, element 1, value field
     assert!(matches!(
         result,
-        Err(ValidationError::FieldError { ref field, .. }) if field == "items"
+        Err(SchemaError::FieldError { ref field, .. }) if field == "items"
     ));
 }
 
@@ -783,7 +783,7 @@ fn test_validate_error_path_in_nested_structure() {
 #[test]
 fn test_error_type_mismatch_message() {
     let result = validate_type(&Value::Bool(true), &TypeKind::String);
-    if let Err(ValidationError::TypeMismatch { expected, actual }) = result {
+    if let Err(SchemaError::TypeMismatch { expected, actual }) = result {
         assert_eq!(expected, "String");
         assert_eq!(actual, "Bool");
     } else {
@@ -799,7 +799,7 @@ fn test_error_missing_field_message() {
     // Use {} for empty map (struct with no fields provided)
     let value: Value = parse_ron(r#"{}"#);
     let result = validate(&value, &schema);
-    if let Err(ValidationError::MissingField(field)) = result {
+    if let Err(SchemaError::MissingField(field)) = result {
         assert_eq!(field, "required_field");
     } else {
         panic!("Expected MissingField error");
@@ -811,7 +811,7 @@ fn test_error_unknown_field_message() {
     let schema = Schema::new(TypeKind::Struct { fields: vec![] });
     let value: Value = parse_ron(r#"(unknown: 42)"#);
     let result = validate(&value, &schema);
-    if let Err(ValidationError::UnknownField(field)) = result {
+    if let Err(SchemaError::UnknownField(field)) = result {
         assert_eq!(field, "unknown");
     } else {
         panic!("Expected UnknownField error");
@@ -825,7 +825,7 @@ fn test_error_unknown_variant_message() {
     });
     let value: Value = parse_ron(r#""UnknownVariant""#);
     let result = validate(&value, &schema);
-    if let Err(ValidationError::UnknownVariant(variant)) = result {
+    if let Err(SchemaError::UnknownVariant(variant)) = result {
         assert_eq!(variant, "UnknownVariant");
     } else {
         panic!("Expected UnknownVariant error");
@@ -837,7 +837,7 @@ fn test_error_tuple_length_mismatch_message() {
     let kind = TypeKind::Tuple(vec![TypeKind::I32, TypeKind::I32]);
     let value = Value::Seq(vec![Value::Number(1.into())]);
     let result = validate_type(&value, &kind);
-    if let Err(ValidationError::TupleLengthMismatch { expected, actual }) = result {
+    if let Err(SchemaError::TupleLengthMismatch { expected, actual }) = result {
         assert_eq!(expected, 2);
         assert_eq!(actual, 1);
     } else {
@@ -854,7 +854,7 @@ fn test_error_element_error_index() {
         Value::String("bad".into()),
     ]);
     let result = validate_type(&value, &kind);
-    if let Err(ValidationError::ElementError { index, .. }) = result {
+    if let Err(SchemaError::ElementError { index, .. }) = result {
         assert_eq!(index, 2);
     } else {
         panic!("Expected ElementError");
@@ -868,7 +868,7 @@ fn test_error_field_error_name() {
     });
     let value: Value = parse_ron(r#"(my_field: "not int")"#);
     let result = validate(&value, &schema);
-    if let Err(ValidationError::FieldError { field, .. }) = result {
+    if let Err(SchemaError::FieldError { field, .. }) = result {
         assert_eq!(field, "my_field");
     } else {
         panic!("Expected FieldError");
@@ -882,7 +882,7 @@ fn test_error_variant_error_name() {
     });
     let value: Value = parse_ron(r#"{ "MyVariant": ["not int"] }"#);
     let result = validate(&value, &schema);
-    if let Err(ValidationError::VariantError { variant, .. }) = result {
+    if let Err(SchemaError::VariantError { variant, .. }) = result {
         assert_eq!(variant, "MyVariant");
     } else {
         panic!("Expected VariantError");
@@ -944,9 +944,9 @@ fn test_typeref_resolves_and_validates() {
     assert!(result.is_err());
 
     // Check the error includes the type path
-    if let Err(ValidationError::FieldError { field, source }) = result {
+    if let Err(SchemaError::FieldError { field, source }) = result {
         assert_eq!(field, "inner");
-        assert!(matches!(*source, ValidationError::TypeRefError { .. }));
+        assert!(matches!(*source, SchemaError::TypeRefError { .. }));
     } else {
         panic!("Expected FieldError containing TypeRefError");
     }
@@ -1096,10 +1096,10 @@ fn test_typeref_error_propagation() {
 
     // Verify error chain includes type path
     match result {
-        Err(ValidationError::FieldError { field, source }) => {
+        Err(SchemaError::FieldError { field, source }) => {
             assert_eq!(field, "nested");
             match *source {
-                ValidationError::TypeRefError { type_path, .. } => {
+                SchemaError::TypeRefError { type_path, .. } => {
                     assert_eq!(type_path, "pkg::Inner");
                 }
                 _ => panic!("Expected TypeRefError in source"),

@@ -95,9 +95,3 @@ pub use validation::{
     validate, validate_type, validate_type_with_resolver, validate_with_resolver,
     AcceptAllResolver, SchemaResolver, StorageResolver,
 };
-
-// Deprecated type aliases for backward compatibility
-#[deprecated(since = "0.2.0", note = "Use SchemaError instead")]
-pub type ValidationError = SchemaError;
-#[deprecated(since = "0.2.0", note = "Use SchemaError instead")]
-pub type StorageError = SchemaError;
