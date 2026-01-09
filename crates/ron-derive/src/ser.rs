@@ -35,10 +35,15 @@ pub fn derive_to_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
 /// Generate serialization for a struct.
 fn derive_struct_ser(
-    _name: &Ident,
+    name: &Ident,
     fields: &Fields,
     container_attrs: &ContainerAttrs,
 ) -> syn::Result<TokenStream2> {
+    let struct_name = container_attrs
+        .rename
+        .clone()
+        .unwrap_or_else(|| name.to_string());
+
     match fields {
         Fields::Named(named) => {
             let mut field_serializations = Vec::new();
@@ -60,30 +65,28 @@ fn derive_struct_ser(
                 if let Some(ref predicate) = field_attrs.skip_serializing_if {
                     field_serializations.push(quote! {
                         if !#predicate(&self.#field_ident) {
-                            map.insert(
-                                ::ron2::Value::String(#field_name.to_string()),
-                                #serialize_expr
-                            );
+                            fields.push((#field_name.to_string(), #serialize_expr));
                         }
                     });
                 } else {
                     field_serializations.push(quote! {
-                        map.insert(
-                            ::ron2::Value::String(#field_name.to_string()),
-                            #serialize_expr
-                        );
+                        fields.push((#field_name.to_string(), #serialize_expr));
                     });
                 }
             }
 
+            // Produce Named struct: StructName(field: val, ...)
             Ok(quote! {
-                let mut map = ::ron2::value::Map::new();
+                let mut fields: ::ron2::StructFields = ::std::vec::Vec::new();
                 #(#field_serializations)*
-                Ok(::ron2::Value::Map(map))
+                Ok(::ron2::Value::Named {
+                    name: #struct_name.to_string(),
+                    content: ::ron2::NamedContent::Struct(fields),
+                })
             })
         }
         Fields::Unnamed(unnamed) => {
-            // Tuple struct -> serialize as sequence
+            // Tuple struct -> serialize as Named tuple: TupleStruct(a, b, c)
             let field_serializations: Vec<_> = unnamed
                 .unnamed
                 .iter()
@@ -97,12 +100,19 @@ fn derive_struct_ser(
                 .collect();
 
             Ok(quote! {
-                Ok(::ron2::Value::Seq(vec![#(#field_serializations),*]))
+                Ok(::ron2::Value::Named {
+                    name: #struct_name.to_string(),
+                    content: ::ron2::NamedContent::Tuple(vec![#(#field_serializations),*]),
+                })
             })
         }
         Fields::Unit => {
+            // Unit struct -> Named unit: UnitStruct
             Ok(quote! {
-                Ok(::ron2::Value::Unit)
+                Ok(::ron2::Value::Named {
+                    name: #struct_name.to_string(),
+                    content: ::ron2::NamedContent::Unit,
+                })
             })
         }
     }

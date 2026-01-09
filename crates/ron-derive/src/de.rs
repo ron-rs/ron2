@@ -41,6 +41,7 @@ fn derive_struct_de(
 ) -> syn::Result<TokenStream2> {
     match fields {
         Fields::Named(named) => {
+            let struct_name = name.to_string();
             let mut field_extractions = Vec::new();
             let mut field_names = Vec::new();
             let mut known_fields = Vec::new();
@@ -123,7 +124,18 @@ fn derive_struct_de(
                         }
                         result
                     }
-                    other => return Err(::ron2::error::Error::type_mismatch("struct", &other)),
+                    // Named struct: StructName(field: val) from original ron crate
+                    ::ron2::Value::Named { name: _, content: ::ron2::NamedContent::Struct(fields) } => {
+                        let mut result = ::std::collections::HashMap::new();
+                        for (name, v) in fields {
+                            result.insert(name, v);
+                        }
+                        result
+                    }
+                    other => return Err(::ron2::error::Error::type_mismatch(
+                        concat!("named struct like ", #struct_name, "(field: val)"),
+                        &other
+                    )),
                 };
 
                 #(#field_extractions)*
@@ -135,7 +147,8 @@ fn derive_struct_de(
             })
         }
         Fields::Unnamed(unnamed) => {
-            // Tuple struct -> deserialize from sequence
+            // Tuple struct -> deserialize from sequence or Named tuple
+            let struct_name = name.to_string();
             let field_count = unnamed.unnamed.len();
             let field_extractions: Vec<_> = unnamed
                 .unnamed
@@ -157,27 +170,40 @@ fn derive_struct_de(
                 .collect();
 
             Ok(quote! {
-                match value {
-                    ::ron2::Value::Seq(mut seq) => {
-                        if seq.len() != #field_count {
-                            return Err(::ron2::error::Error::invalid_value(
-                                format!("expected {} elements, got {}", #field_count, seq.len())
-                            ));
-                        }
-                        seq.reverse();
-                        Ok(#name(#(#field_extractions),*))
-                    }
-                    other => Err(::ron2::error::Error::type_mismatch("tuple struct (Seq)", &other)),
+                let mut seq = match value {
+                    // Sequence: [a, b, c]
+                    ::ron2::Value::Seq(seq) => seq,
+                    // Tuple: (a, b, c)
+                    ::ron2::Value::Tuple(seq) => seq,
+                    // Named tuple: TupleStruct(a, b, c) from original ron crate
+                    ::ron2::Value::Named { name: _, content: ::ron2::NamedContent::Tuple(seq) } => seq,
+                    other => return Err(::ron2::error::Error::type_mismatch(
+                        concat!("tuple struct like ", #struct_name, "(...)"),
+                        &other
+                    )),
+                };
+                if seq.len() != #field_count {
+                    return Err(::ron2::error::Error::invalid_value(
+                        format!("expected {} elements, got {}", #field_count, seq.len())
+                    ));
                 }
+                seq.reverse();
+                Ok(#name(#(#field_extractions),*))
             })
         }
         Fields::Unit => {
+            let struct_name = name.to_string();
             Ok(quote! {
                 match value {
                     ::ron2::Value::Unit => Ok(#name),
                     // Also accept empty map for compatibility
                     ::ron2::Value::Map(m) if m.is_empty() => Ok(#name),
-                    other => Err(::ron2::error::Error::type_mismatch("unit struct", &other)),
+                    // Named unit: UnitStruct from original ron crate
+                    ::ron2::Value::Named { name: _, content: ::ron2::NamedContent::Unit } => Ok(#name),
+                    other => Err(::ron2::error::Error::type_mismatch(
+                        concat!("unit struct like ", #struct_name),
+                        &other
+                    )),
                 }
             })
         }
