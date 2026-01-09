@@ -5,6 +5,7 @@ members = [
     "crates/ron-schema",
     "crates/ron-derive",
     "crates/ron-lsp",
+    "crates/ronfmt",
     "examples/showcase",
     "examples/pretty-errors-miette",
     "examples/pretty-errors-ariadne",

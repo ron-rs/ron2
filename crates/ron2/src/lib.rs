@@ -1,9 +1,23 @@
-//! RON2 - Rusty Object Notation (Value-only variant)
+//! RON2 - Rusty Object Notation parser with full AST access
 //!
-//! This crate provides serialization and deserialization for RON,
-//! but only to/from the [`Value`] type. It does not use serde.
+//! This crate provides a standalone RON parser with two APIs:
+//! - **AST API**: Full fidelity parsing with perfect round-trip support
+//! - **Value API**: Simplified access to semantic content only
 //!
-//! # Example
+//! No serde dependency required.
+//!
+//! # AST Example (full fidelity)
+//!
+//! ```
+//! use ron2::ast::{parse_document, serialize_document};
+//!
+//! let source = "// config\nPoint(x: 1, y: 2)";
+//! let doc = parse_document(source).unwrap();
+//! let output = serialize_document(&doc).unwrap();
+//! assert_eq!(source, output); // Perfect round-trip
+//! ```
+//!
+//! # Value Example (semantic only)
 //!
 //! ```
 //! use ron2::{from_str, to_string, Value};

@@ -40,7 +40,7 @@ RON text → Lexer → Tokens (with trivia)
 | `value/mod.rs` | Value enum and operations |
 | `value/number.rs` | Number wrapper with total float ordering |
 | `value/map.rs` | Map type (BTreeMap or IndexMap) |
-| `parse.rs` | Legacy parser (Value-only path) |
+| `parse.rs` | Direct Value parser (convenience API) |
 | `ser.rs` | Value serialization, PrettyConfig |
 | `de.rs` | Value deserialization |
 | `error.rs` | Error types with position spans |
@@ -118,9 +118,9 @@ Default 128-level depth limit during serialization. Configure via `Options::with
 
 `Options` has two fields:
 - `recursion_limit` - Used during serialization only
-- `default_extensions` - Defined but **not used** in Value-only context
+- `default_extensions` - Defined for API compatibility
 
-The extensions (`UNWRAP_NEWTYPES`, `IMPLICIT_SOME`, etc.) are serde-level semantic features requiring type information. They exist for API compatibility but are essentially dead code in ron2's Value-only architecture.
+The extensions (`UNWRAP_NEWTYPES`, `IMPLICIT_SOME`, etc.) are serde-level semantic features requiring type information. They have no effect in ron2 since it operates without serde.
 
 ## Code Style
 

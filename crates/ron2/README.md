@@ -116,7 +116,7 @@ Control output formatting when serializing Values:
 
 - `recursion_limit` - Max nesting depth during serialization (default: 128)
 
-Note: The `default_extensions` field exists for API compatibility but extensions like `UNWRAP_NEWTYPES` and `IMPLICIT_SOME` require type information and are not applicable in a Value-only context.
+Note: The `default_extensions` field exists for API compatibility but extensions like `UNWRAP_NEWTYPES` and `IMPLICIT_SOME` require type information from serde and have no effect when using ron2's Value or AST APIs directly.
 
 ## License
 

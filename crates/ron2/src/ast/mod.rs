@@ -35,10 +35,12 @@
 //! ```
 
 mod convert;
+mod fmt;
 mod parse;
 mod ser;
 
 pub use convert::{expr_to_value, to_value, value_to_expr};
+pub use fmt::{FormatConfig, format_document};
 pub use parse::parse_document;
 pub use ser::{serialize_document, serialize_document_to};
 
