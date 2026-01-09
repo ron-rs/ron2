@@ -24,7 +24,8 @@
 //! }
 //! ```
 
-use crate::TypeKind;
+use crate::{Schema, StorageError, TypeKind};
+use std::path::PathBuf;
 
 /// Core trait for types that can be represented in the RON schema system.
 ///
@@ -34,8 +35,8 @@ use crate::TypeKind;
 ///
 /// # Implementing for Custom Types
 ///
-/// For most custom structs and enums, you would use `#[derive(RonSchema)]`
-/// which generates both the `RonSchemaType` and `RonSchema` implementations.
+/// For most custom structs and enums, use `#[derive(RonSchema)]` which
+/// generates a complete implementation including schema storage support.
 ///
 /// For wrapper types or newtypes that should behave like existing types,
 /// implement this trait manually:
@@ -60,6 +61,44 @@ pub trait RonSchemaType {
     /// Override this to provide documentation that appears in the schema.
     fn type_doc() -> Option<&'static str> {
         None
+    }
+
+    /// Returns the complete schema for this type, including documentation.
+    ///
+    /// The default implementation constructs a schema from `type_kind()` and `type_doc()`.
+    /// Types using `#[derive(RonSchema)]` will override this with a more complete
+    /// implementation that includes field-level documentation.
+    fn schema() -> Schema {
+        Schema {
+            doc: Self::type_doc().map(|s| s.to_string()),
+            kind: Self::type_kind(),
+        }
+    }
+
+    /// Returns the fully-qualified type path for this type.
+    ///
+    /// This is used to locate schema files and for `TypeRef` references.
+    /// Returns `None` for primitive types and standard library types.
+    fn type_path() -> Option<&'static str> {
+        None
+    }
+
+    /// Writes the schema to the specified output directory.
+    ///
+    /// If `output_dir` is `None`, the schema is written to the default location
+    /// determined by `RON_SCHEMA_DIR` env var or XDG data directory.
+    ///
+    /// Returns the path to the written schema file, or `None` if this type
+    /// doesn't support schema storage (e.g., primitive types).
+    fn write_schema(output_dir: Option<&std::path::Path>) -> Result<PathBuf, StorageError> {
+        let type_path = Self::type_path().ok_or_else(|| {
+            StorageError::Io(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "type does not support schema storage",
+            ))
+        })?;
+        let schema = Self::schema();
+        crate::write_schema(type_path, &schema, output_dir)
     }
 }
 

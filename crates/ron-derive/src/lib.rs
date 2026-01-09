@@ -251,42 +251,20 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // Generate a unique function name for this type (using snake_case)
-    let snake_name = to_snake_case(&type_name);
-    let schema_fn_name = Ident::new(&format!("__ron_schema_{}", snake_name), name.span());
-
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let expanded = quote! {
-        impl #impl_generics #name #ty_generics #where_clause {
-            /// Returns the RON schema for this type.
-            #[doc(hidden)]
-            pub fn #schema_fn_name() -> ::ron_schema::Schema {
-                #schema_tokens
-            }
-        }
-
-        // Implement RonSchemaType trait
         impl #impl_generics ::ron_schema::RonSchemaType for #name #ty_generics #where_clause {
             fn type_kind() -> ::ron_schema::TypeKind {
                 #type_kind_tokens
             }
-        }
 
-        // Implement RonSchema trait
-        impl #impl_generics ::ron_schema::RonSchema for #name #ty_generics #where_clause {
             fn schema() -> ::ron_schema::Schema {
-                Self::#schema_fn_name()
+                #schema_tokens
             }
 
-            fn write_schema(output_dir: Option<&::std::path::Path>) -> ::std::result::Result<::std::path::PathBuf, ::ron_schema::StorageError> {
-                let schema = Self::schema();
-                let type_path = Self::type_path();
-                ::ron_schema::write_schema(type_path, &schema, output_dir)
-            }
-
-            fn type_path() -> &'static str {
-                concat!(module_path!(), "::", #type_name)
+            fn type_path() -> Option<&'static str> {
+                Some(concat!(module_path!(), "::", #type_name))
             }
         }
     };
@@ -627,21 +605,6 @@ fn path_to_string(path: &syn::Path) -> String {
     }
 }
 
-/// Convert a PascalCase string to snake_case.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
 
 /// Get the crate name, normalized for Rust path syntax (hyphens replaced with underscores).
 fn get_crate_name() -> String {

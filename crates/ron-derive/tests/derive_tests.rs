@@ -4,7 +4,7 @@
 
 use ron2::{FromRon, ToRon};
 use ron_derive::{Ron, RonSchema};
-use ron_schema::{RonSchema as RonSchemaTrait, TypeKind, VariantKind};
+use ron_schema::{RonSchemaType, TypeKind, VariantKind};
 
 /// A simple struct for testing.
 #[derive(RonSchema)]
@@ -219,7 +219,7 @@ fn test_tuple_struct() {
 /// Test type_path method.
 #[test]
 fn test_type_path() {
-    let path = SimpleStruct::type_path();
+    let path = SimpleStruct::type_path().expect("type_path should return Some for derived types");
     assert!(path.ends_with("SimpleStruct"));
 }
 
@@ -484,4 +484,135 @@ fn test_enum_skip_variant_field() {
         }
         _ => panic!("Expected enum type kind"),
     }
+}
+
+// =============================================================================
+// Field-Level Error Span Tests
+// =============================================================================
+
+/// Struct for testing field-level error spans.
+#[derive(Debug, Ron, PartialEq)]
+struct ConfigWithPort {
+    name: String,
+    port: u16,
+    enabled: bool,
+}
+
+#[test]
+fn test_field_level_error_span_invalid_type() {
+    // The error should point to "not_a_number" (line 2, col 11), not the whole struct
+    let input = r#"(
+    port: "not_a_number",
+    name: "test",
+    enabled: true,
+)"#;
+
+    let err = ConfigWithPort::from_ron(input).unwrap_err();
+
+    // The span should point to the invalid value "not_a_number"
+    // which starts at line 2, column 11
+    assert_eq!(err.span.start.line, 2, "Error should be on line 2");
+    assert_eq!(
+        err.span.start.col, 11,
+        "Error should point to column 11 (start of string)"
+    );
+}
+
+#[test]
+fn test_field_level_error_span_missing_field() {
+    // Missing required field 'port'
+    let input = r#"(
+    name: "test",
+    enabled: true,
+)"#;
+
+    let err = ConfigWithPort::from_ron(input).unwrap_err();
+
+    // For missing fields, the error points to the struct itself
+    // The span should be at line 1 where the struct starts
+    assert_eq!(err.span.start.line, 1, "Error should be on line 1");
+}
+
+#[test]
+fn test_nested_field_error_span() {
+    #[derive(Debug, Ron, PartialEq)]
+    struct Inner {
+        value: i32,
+    }
+
+    #[derive(Debug, Ron, PartialEq)]
+    struct Outer {
+        name: String,
+        inner: Inner,
+    }
+
+    // Error in nested struct field
+    let input = r#"(
+    name: "test",
+    inner: (
+        value: "not_an_int",
+    ),
+)"#;
+
+    let err = Outer::from_ron(input).unwrap_err();
+
+    // Error should point to "not_an_int" at line 4
+    assert_eq!(err.span.start.line, 4, "Error should be on line 4");
+}
+
+#[test]
+fn test_enum_variant_field_error_span() {
+    #[derive(Debug, Ron, PartialEq)]
+    enum Message {
+        Text { content: String },
+        Number { value: i32 },
+    }
+
+    // Error in enum variant field
+    let input = r#"Number(value: "not_a_number")"#;
+
+    let err = Message::from_ron(input).unwrap_err();
+
+    // Error should point to "not_a_number"
+    assert_eq!(err.span.start.line, 1, "Error should be on line 1");
+    assert_eq!(
+        err.span.start.col, 15,
+        "Error should point to the invalid string"
+    );
+}
+
+#[test]
+fn test_sequence_element_error_span() {
+    #[derive(Debug, Ron, PartialEq)]
+    struct WithVec {
+        numbers: Vec<i32>,
+    }
+
+    // Error in sequence element
+    let input = r#"(
+    numbers: [1, 2, "three", 4],
+)"#;
+
+    let err = WithVec::from_ron(input).unwrap_err();
+
+    // Error should point to "three" at line 2
+    assert_eq!(err.span.start.line, 2, "Error should be on line 2");
+}
+
+#[test]
+fn test_tuple_struct_element_error_span() {
+    #[derive(Debug, Ron, PartialEq)]
+    struct Point(i32, i32);
+
+    // Error in second tuple element
+    let input = r#"(1, "not_an_int")"#;
+
+    let err = Point::from_ron(input).unwrap_err();
+
+    // Error should point to "not_an_int"
+    assert_eq!(err.span.start.line, 1, "Error should be on line 1");
+    assert_eq!(
+        err.span.start.col, 5,
+        "Error should point to the invalid string"
+    );
 }

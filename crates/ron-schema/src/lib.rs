@@ -26,13 +26,12 @@
 //!
 //! # Trait-Based Schema System
 //!
-//! The schema system is built on traits that allow custom types to participate:
+//! The schema system is built on the [`RonSchemaType`] trait:
 //!
 //! - [`RonSchemaType`] - Core trait for types representable in schemas
 //! - [`RonList`] - Marker trait for list/sequence-like types
 //! - [`RonMap`] - Marker trait for map/dictionary-like types
 //! - [`RonOptional`] - Marker trait for optional/nullable types
-//! - [`RonSchema`] - High-level trait for types with full schema support
 //!
 //! ## Implementing Custom Types
 //!
@@ -96,35 +95,3 @@ pub use validation::{
     validate, validate_type, validate_type_with_resolver, validate_with_resolver,
     AcceptAllResolver, SchemaResolver, StorageResolver, ValidationError,
 };
-
-use std::path::PathBuf;
-
-/// Trait implemented by types that have a full RON schema.
-///
-/// This trait is automatically implemented by the `#[derive(RonSchema)]` macro
-/// from the `ron-derive` crate. It combines [`RonSchemaType`] with additional
-/// capabilities for schema storage and type path resolution.
-///
-/// # Difference from `RonSchemaType`
-///
-/// - [`RonSchemaType`] is the low-level trait for getting type information
-/// - [`RonSchema`] is the high-level trait that adds schema storage and type paths
-///
-/// Most users will use `#[derive(RonSchema)]` which implements both traits.
-pub trait RonSchema: RonSchemaType {
-    /// Returns the complete schema for this type, including documentation.
-    fn schema() -> Schema;
-
-    /// Writes the schema to the specified output directory.
-    ///
-    /// If `output_dir` is `None`, the schema is written to the default location
-    /// determined by `RON_SCHEMA_DIR` env var or XDG data directory.
-    ///
-    /// Returns the path to the written schema file.
-    fn write_schema(output_dir: Option<&std::path::Path>) -> Result<PathBuf, StorageError>;
-
-    /// Returns the fully-qualified type path for this type.
-    ///
-    /// This is used to locate schema files and for `TypeRef` references.
-    fn type_path() -> &'static str;
-}
