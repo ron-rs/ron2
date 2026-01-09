@@ -1112,4 +1112,67 @@ mod tests {
         assert_eq!(access.required::<i32>("value").unwrap(), 42);
         assert!(access.deny_unknown_fields().is_ok());
     }
+
+    #[test]
+    fn test_spanned_error_line_numbers() {
+        // Type mismatch on line 1 - expected i32, got string
+        let err = i32::from_ron(r#""not a number""#).unwrap_err();
+        assert_eq!(err.span.start.line, 1);
+        assert_eq!(err.span.start.col, 1);
+        assert_eq!(err.span.end.line, 1);
+        assert_eq!(err.span.end.col, 15);
+
+        // Type mismatch on line 3 in a multiline document
+        let input = r#"[
+    1,
+    "wrong",
+    3
+]"#;
+        let err = Vec::<i32>::from_ron(input).unwrap_err();
+        assert_eq!(err.span.start.line, 3);
+        assert_eq!(err.span.start.col, 5);
+        assert_eq!(err.span.end.line, 3);
+        assert_eq!(err.span.end.col, 12);
+
+        // Nested structure - tuple with wrong type in second position
+        let input = r#"(
+    100,
+    "not an int"
+)"#;
+        let err = <(i32, i32)>::from_ron(input).unwrap_err();
+        // The error should point to "not an int" on line 3
+        assert_eq!(err.span.start.line, 3);
+
+        // Integer out of range
+        let err = i8::from_ron("128").unwrap_err();
+        assert_eq!(err.span.start.line, 1);
+        assert_eq!(err.span.start.col, 1);
+
+        // Boolean type mismatch
+        let err = bool::from_ron("42").unwrap_err();
+        assert_eq!(err.span.start.line, 1);
+        assert!(matches!(err.code, crate::error::Error::InvalidValueForType { .. }));
+    }
+
+    #[test]
+    fn test_spanned_error_in_map() {
+        let input = r#"{
+    "a": 1,
+    "b": "wrong"
+}"#;
+        let err = BTreeMap::<String, i32>::from_ron(input).unwrap_err();
+        // Error should point to "wrong" on line 3
+        assert_eq!(err.span.start.line, 3);
+        assert_eq!(err.span.start.col, 10);
+    }
+
+    #[test]
+    fn test_from_ron_value_strips_span() {
+        use crate::Value;
+        // from_ron_value returns Result (not SpannedResult) since Value has no span
+        let value = Value::String("not a number".to_string());
+        let err = i32::from_ron_value(value).unwrap_err();
+        // The error should still have the correct error code
+        assert!(matches!(err, crate::error::Error::InvalidValueForType { .. }));
+    }
 }
