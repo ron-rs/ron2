@@ -15,7 +15,7 @@ use crate::ast::{
     OptionExpr, SeqExpr, StringExpr, StructBody, StructExpr, TupleBody, TupleExpr,
 };
 use crate::error::{Error, Result};
-use crate::value::{NamedContent, Number, StructFields, Value, F32, F64};
+use crate::value::{F32, F64, NamedContent, Number, StructFields, Value};
 
 /// Convert an AST document to a Value.
 ///
@@ -204,7 +204,11 @@ fn option_to_value(opt: &OptionExpr<'_>) -> Result<Value> {
 }
 
 fn seq_to_value(seq: &SeqExpr<'_>) -> Result<Value> {
-    let items: Result<Vec<Value>> = seq.items.iter().map(|item| expr_to_value(&item.expr)).collect();
+    let items: Result<Vec<Value>> = seq
+        .items
+        .iter()
+        .map(|item| expr_to_value(&item.expr))
+        .collect();
     Ok(Value::Seq(items?))
 }
 
@@ -435,7 +439,10 @@ mod tests {
         let doc = parse_document("Point { x: 1, y: 2 }").unwrap();
         let value = to_value(&doc).unwrap().unwrap();
         match value {
-            Value::Named { name, content: NamedContent::Struct(fields) } => {
+            Value::Named {
+                name,
+                content: NamedContent::Struct(fields),
+            } => {
                 assert_eq!(name, "Point");
                 assert_eq!(fields.len(), 2);
                 // StructFields is Vec<(String, Value)>

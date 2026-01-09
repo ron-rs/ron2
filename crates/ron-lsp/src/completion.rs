@@ -82,7 +82,7 @@ fn completions_for_fields(kind: &TypeKind, used_fields: &[String]) -> Vec<Comple
     fields
         .iter()
         .filter(|f| !used_fields.contains(&f.name))
-        .map(|f| completion_for_field(f))
+        .map(completion_for_field)
         .collect()
 }
 

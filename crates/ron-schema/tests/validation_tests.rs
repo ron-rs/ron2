@@ -181,9 +181,9 @@ fn test_validate_nested_option() {
     assert!(validate_type(&value, &kind).is_ok());
 
     // Some(Some(42))
-    let value = Value::Option(Some(Box::new(Value::Option(Some(Box::new(Value::Number(
-        42.into(),
-    )))))));
+    let value = Value::Option(Some(Box::new(Value::Option(Some(Box::new(
+        Value::Number(42.into()),
+    ))))));
     assert!(validate_type(&value, &kind).is_ok());
 }
 
@@ -677,10 +677,7 @@ fn test_validate_enum_all_variant_types() {
         variants: vec![
             Variant::unit("Unit"),
             Variant::tuple("Tuple", vec![TypeKind::I32, TypeKind::String]),
-            Variant::struct_variant(
-                "Struct",
-                vec![Field::new("value", TypeKind::Bool)],
-            ),
+            Variant::struct_variant("Struct", vec![Field::new("value", TypeKind::Bool)]),
         ],
     });
 

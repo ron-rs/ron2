@@ -235,8 +235,8 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn test_nan_hash() {
-        use std::collections::hash_map::DefaultHasher;
         use core::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
 
         fn hash<T: Hash>(v: &T) -> u64 {
             let mut state = DefaultHasher::new();

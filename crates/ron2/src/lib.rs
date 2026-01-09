@@ -48,9 +48,9 @@ pub mod token;
 mod util;
 pub mod value;
 
-pub use crate::convert::{FromRon, ToRon};
 #[cfg(feature = "std")]
 pub use crate::convert::MapAccess;
+pub use crate::convert::{FromRon, ToRon};
 pub use crate::error::{Error, SpannedError, SpannedResult};
 pub use crate::extensions::Extensions;
 pub use crate::options::Options;

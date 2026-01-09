@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
-use ron2::{FromRon, ToRon};
 use crate::Schema;
+use ron2::{FromRon, ToRon};
 
 /// Environment variable for schema directory override.
 pub const SCHEMA_DIR_ENV: &str = "RON_SCHEMA_DIR";

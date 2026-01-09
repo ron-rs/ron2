@@ -4,9 +4,9 @@ use alloc::string::String;
 use core::fmt::{self, Write};
 
 use crate::{
+    Options,
     error::{Error, Result},
     value::{Map, NamedContent, Number, StructFields, Value},
-    Options,
 };
 
 /// Serializer for converting Value to RON text.
@@ -109,7 +109,11 @@ impl<W: Write> Serializer<W> {
     }
 
     /// Create a new Serializer with options.
-    pub fn with_options(writer: W, pretty: Option<PrettyConfig>, options: &Options) -> Result<Self> {
+    pub fn with_options(
+        writer: W,
+        pretty: Option<PrettyConfig>,
+        options: &Options,
+    ) -> Result<Self> {
         Ok(Self {
             writer,
             pretty,
@@ -252,16 +256,14 @@ impl<W: Write> Serializer<W> {
             Value::Unit => {
                 self.writer.write_str("()")?;
             }
-            Value::Option(opt) => {
-                match opt {
-                    None => self.writer.write_str("None")?,
-                    Some(v) => {
-                        self.writer.write_str("Some(")?;
-                        self.serialize(v)?;
-                        self.writer.write_char(')')?;
-                    }
+            Value::Option(opt) => match opt {
+                None => self.writer.write_str("None")?,
+                Some(v) => {
+                    self.writer.write_str("Some(")?;
+                    self.serialize(v)?;
+                    self.writer.write_char(')')?;
                 }
-            }
+            },
             Value::Seq(seq) => {
                 self.serialize_seq(seq)?;
             }
@@ -298,9 +300,11 @@ impl<W: Write> Serializer<W> {
             ($v:expr, $suffix:literal) => {{
                 let f = $v.get();
                 if f.is_nan() {
-                    self.writer.write_str(if f.is_sign_negative() { "-NaN" } else { "NaN" })?;
+                    self.writer
+                        .write_str(if f.is_sign_negative() { "-NaN" } else { "NaN" })?;
                 } else if f.is_infinite() {
-                    self.writer.write_str(if f.is_sign_negative() { "-inf" } else { "inf" })?;
+                    self.writer
+                        .write_str(if f.is_sign_negative() { "-inf" } else { "inf" })?;
                 } else {
                     write!(self.writer, "{f}")?;
                     if !Self::has_decimal_point(f) {
@@ -341,23 +345,20 @@ impl<W: Write> Serializer<W> {
     }
 
     fn serialize_seq(&mut self, seq: &[Value]) -> Result<()> {
-        self.serialize_delimited('[', ']', seq.iter(), seq.len(), |s, item| {
-            s.serialize(item)
-        })
+        self.serialize_delimited('[', ']', seq.iter(), seq.len(), Self::serialize)
     }
 
     /// Serialize a tuple: `(a, b, c)`
     fn serialize_tuple(&mut self, elements: &[Value]) -> Result<()> {
-        self.serialize_delimited('(', ')', elements.iter(), elements.len(), |s, item| {
-            s.serialize(item)
-        })
+        self.serialize_delimited('(', ')', elements.iter(), elements.len(), Self::serialize)
     }
 
     /// Serialize a map: `{ key: value, ... }`
     fn serialize_map(&mut self, map: &Map) -> Result<()> {
         self.serialize_delimited('{', '}', map.iter(), map.len(), |s, (key, value)| {
             s.serialize(key)?;
-            s.writer.write_str(if s.pretty.is_some() { ": " } else { ":" })?;
+            s.writer
+                .write_str(if s.pretty.is_some() { ": " } else { ":" })?;
             s.serialize(value)
         })
     }
@@ -367,11 +368,18 @@ impl<W: Write> Serializer<W> {
         if let Some(name) = name {
             self.writer.write_str(name)?;
         }
-        self.serialize_delimited('(', ')', fields.iter(), fields.len(), |s, (field_name, value)| {
-            s.writer.write_str(field_name)?;
-            s.writer.write_str(if s.pretty.is_some() { ": " } else { ":" })?;
-            s.serialize(value)
-        })
+        self.serialize_delimited(
+            '(',
+            ')',
+            fields.iter(),
+            fields.len(),
+            |s, (field_name, value)| {
+                s.writer.write_str(field_name)?;
+                s.writer
+                    .write_str(if s.pretty.is_some() { ": " } else { ":" })?;
+                s.serialize(value)
+            },
+        )
     }
 
     /// Serialize a named type: `Point`, `Point(1, 2)`, or `Point(x: 1, y: 2)`
@@ -402,7 +410,9 @@ impl<W: Write> Serializer<W> {
 
     fn write_escaped_char(&mut self, c: char) -> fmt::Result {
         // Only use common_escape for ASCII characters to avoid truncation of multi-byte chars
-        if c.is_ascii() && let Some(escaped) = common_escape(c as u8) {
+        if c.is_ascii()
+            && let Some(escaped) = common_escape(c as u8)
+        {
             return self.writer.write_str(escaped);
         }
         match c {
@@ -495,7 +505,10 @@ mod tests {
     fn test_option() {
         assert_eq!(to_string(&Value::Option(None)).unwrap(), "None");
         assert_eq!(
-            to_string(&Value::Option(Some(Box::new(Value::Number(Number::U8(42)))))).unwrap(),
+            to_string(&Value::Option(Some(Box::new(Value::Number(Number::U8(
+                42
+            ))))))
+            .unwrap(),
             "Some(42)"
         );
     }
@@ -521,8 +534,14 @@ mod tests {
     #[test]
     fn test_map() {
         let mut map = Map::new();
-        map.insert(Value::String(String::from("x")), Value::Number(Number::U8(1)));
-        map.insert(Value::String(String::from("y")), Value::Number(Number::U8(2)));
+        map.insert(
+            Value::String(String::from("x")),
+            Value::Number(Number::U8(1)),
+        );
+        map.insert(
+            Value::String(String::from("y")),
+            Value::Number(Number::U8(2)),
+        );
 
         let result = to_string(&Value::Map(map)).unwrap();
         // Maps use brace syntax with Value keys serialized (compact: no space after colon)

@@ -7,7 +7,7 @@ mod map;
 mod number;
 
 pub use map::Map;
-pub use number::{Number, F32, F64};
+pub use number::{F32, F64, Number};
 
 /// Ordered list of struct fields (name-value pairs).
 ///

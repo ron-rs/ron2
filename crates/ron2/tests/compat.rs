@@ -3,8 +3,8 @@
 //! This module tests that ron2 can parse ron output and vice versa,
 //! validating roundtrips and semantic equivalence.
 
-use ron2::{FromRon, ToRon, Value};
 use ron_derive::{FromRon, ToRon};
+use ron2::{FromRon, ToRon, Value};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -222,8 +222,8 @@ mod ron_to_ron2 {
             u16_val: 65535,
             u32_val: 4294967295,
             u64_val: 18446744073709551615,
-            f32_val: 3.14,
-            f64_val: 2.718281828,
+            f32_val: 1.5,
+            f64_val: 2.5,
         });
     }
 
@@ -231,7 +231,7 @@ mod ron_to_ron2 {
     fn tuples() {
         ron_output_parseable_by_ron2(&Tuples {
             pair: (42, "answer".into()),
-            triple: (true, -1, 3.14),
+            triple: (true, -1, 1.5),
         });
     }
 }

@@ -56,7 +56,8 @@ fn derive_struct_ser(
                 }
 
                 let field_ident = field.ident.as_ref().unwrap();
-                let field_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
+                let field_name =
+                    field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
                 let serialize_expr = quote! {
                     ::ron2::ToRon::to_ron_value(&self.#field_ident)?
@@ -134,7 +135,8 @@ fn derive_enum_ser(
         }
 
         let variant_ident = &variant.ident;
-        let variant_name = variant_attrs.effective_name(&variant_ident.to_string(), container_attrs);
+        let variant_name =
+            variant_attrs.effective_name(&variant_ident.to_string(), container_attrs);
 
         let arm = match &variant.fields {
             Fields::Unit => {
@@ -184,7 +186,8 @@ fn derive_enum_ser(
                     }
 
                     let field_ident = field.ident.as_ref().unwrap();
-                    let ron_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
+                    let ron_name =
+                        field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
                     field_serializations.push(quote! {
                         (#ron_name.to_string(), ::ron2::ToRon::to_ron_value(#field_ident)?)

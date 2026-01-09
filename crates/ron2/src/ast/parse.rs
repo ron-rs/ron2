@@ -72,7 +72,7 @@ impl<'a> AstParser<'a> {
     }
 
     /// Peek at the next two non-trivia token kinds without consuming.
-    /// Returns (first_kind, second_kind).
+    /// Returns (`first_kind`, `second_kind`).
     fn peek_two_kinds(&mut self) -> (TokenKind, TokenKind) {
         // First, ensure we have at least one token in lookahead
         if self.lookahead.is_empty() {
@@ -91,7 +91,7 @@ impl<'a> AstParser<'a> {
             }
         }
 
-        let first_kind = self.lookahead.last().map(|t| t.kind).unwrap_or(TokenKind::Eof);
+        let first_kind = self.lookahead.last().map_or(TokenKind::Eof, |t| t.kind);
 
         // Now find the second non-trivia token
         // Skip trivia to find second token
@@ -105,7 +105,7 @@ impl<'a> AstParser<'a> {
             }
         }
 
-        let second_kind = self.tokens.peek().map(|t| t.kind).unwrap_or(TokenKind::Eof);
+        let second_kind = self.tokens.peek().map_or(TokenKind::Eof, |t| t.kind);
 
         (first_kind, second_kind)
     }
@@ -377,7 +377,10 @@ impl<'a> AstParser<'a> {
             TokenKind::Eof => Err(Self::error(self.eof_span(), Error::Eof)),
             _ => {
                 let tok = self.next_token();
-                Err(Self::error(tok.span, Error::UnexpectedChar(tok.text.chars().next().unwrap_or('?'))))
+                Err(Self::error(
+                    tok.span,
+                    Error::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
+                ))
             }
         }
     }
@@ -852,11 +855,19 @@ impl<'a> AstParser<'a> {
             name_tok.span.clone()
         };
 
-        Ok(Expr::Struct(StructExpr { span, name, pre_body, body }))
+        Ok(Expr::Struct(StructExpr {
+            span,
+            name,
+            pre_body,
+            body,
+        }))
     }
 
     /// Parse tuple elements until closing paren.
-    fn parse_tuple_elements(&mut self, mut leading: Trivia<'a>) -> SpannedResult<Vec<TupleElement<'a>>> {
+    fn parse_tuple_elements(
+        &mut self,
+        mut leading: Trivia<'a>,
+    ) -> SpannedResult<Vec<TupleElement<'a>>> {
         let mut elements = Vec::new();
 
         loop {
@@ -908,11 +919,8 @@ impl<'a> AstParser<'a> {
             // Check if followed by colon (named field)
             if self.peek_kind() == TokenKind::Colon {
                 // Named fields: Point(x: 1, y: 2)
-                let (fields, trailing) = self.parse_struct_fields_from_first(
-                    leading,
-                    &first_tok,
-                    post_ident_trivia,
-                )?;
+                let (fields, trailing) =
+                    self.parse_struct_fields_from_first(leading, &first_tok, post_ident_trivia)?;
 
                 if self.peek_kind() != TokenKind::RParen {
                     return Err(Self::error(open_paren.span, Error::ExpectedStructLikeEnd));
@@ -930,7 +938,8 @@ impl<'a> AstParser<'a> {
                 // Tuple elements: Point(x, y) where x is a struct/enum name
                 // Convert the identifier to an expression
                 let first_expr = self.ident_token_to_expr(first_tok, post_ident_trivia)?;
-                let (elements, trailing) = self.parse_tuple_elements_from_first(leading, first_expr)?;
+                let (elements, trailing) =
+                    self.parse_tuple_elements_from_first(leading, first_expr)?;
 
                 if self.peek_kind() != TokenKind::RParen {
                     return Err(Self::error(open_paren.span, Error::ExpectedStructLikeEnd));
@@ -1213,7 +1222,10 @@ impl<'a> AstParser<'a> {
 
     /// Parse struct fields until closing brace.
     /// Returns the fields and any trailing trivia before the closing brace.
-    fn parse_struct_fields(&mut self, mut leading: Trivia<'a>) -> SpannedResult<(Vec<StructField<'a>>, Trivia<'a>)> {
+    fn parse_struct_fields(
+        &mut self,
+        mut leading: Trivia<'a>,
+    ) -> SpannedResult<(Vec<StructField<'a>>, Trivia<'a>)> {
         let mut fields = Vec::new();
 
         loop {
@@ -1307,8 +1319,8 @@ impl<'a> AstParser<'a> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::String);
 
-        let (value, kind) = Self::decode_string(tok.text)
-            .map_err(|e| Self::error(tok.span.clone(), e))?;
+        let (value, kind) =
+            Self::decode_string(tok.text).map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::String(StringExpr {
             span: tok.span,
@@ -1390,8 +1402,8 @@ impl<'a> AstParser<'a> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::ByteString);
 
-        let (value, kind) = Self::decode_byte_string(tok.text)
-            .map_err(|e| Self::error(tok.span.clone(), e))?;
+        let (value, kind) =
+            Self::decode_byte_string(tok.text).map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::Bytes(BytesExpr {
             span: tok.span,
@@ -1468,8 +1480,8 @@ impl<'a> AstParser<'a> {
         // Check if it's a byte literal b'x'
         if tok.text.starts_with("b'") {
             let content = &tok.text[2..tok.text.len() - 1];
-            let value = Self::unescape_byte_char(content)
-                .map_err(|e| Self::error(tok.span.clone(), e))?;
+            let value =
+                Self::unescape_byte_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
             return Ok(Expr::Byte(ByteExpr {
                 span: tok.span,
                 raw: Cow::Borrowed(tok.text),
@@ -1479,8 +1491,7 @@ impl<'a> AstParser<'a> {
 
         // Regular char literal 'x'
         let content = &tok.text[1..tok.text.len() - 1];
-        let value = Self::unescape_char(content)
-            .map_err(|e| Self::error(tok.span.clone(), e))?;
+        let value = Self::unescape_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::Char(CharExpr {
             span: tok.span,
@@ -1857,7 +1868,7 @@ mod tests {
     #[test]
     fn parse_anon_struct_nested_values() {
         // Anonymous struct with nested complex values
-        let doc = parse_document(r#"(items: [1, 2, 3], config: (enabled: true))"#).unwrap();
+        let doc = parse_document(r"(items: [1, 2, 3], config: (enabled: true))").unwrap();
         match doc.value {
             Some(Expr::AnonStruct(s)) => {
                 assert_eq!(s.fields.len(), 2);
@@ -1968,14 +1979,17 @@ mod tests {
     #[test]
     fn parse_anon_struct_field_values() {
         // Verify various field value types are parsed correctly
-        let doc = parse_document(r#"(
+        let doc = parse_document(
+            r#"(
             bool_field: true,
             int_field: 42,
             str_field: "hello",
             option_field: Some(1),
             seq_field: [1, 2],
             map_field: {"a": 1}
-        )"#).unwrap();
+        )"#,
+        )
+        .unwrap();
         match doc.value {
             Some(Expr::AnonStruct(s)) => {
                 assert_eq!(s.fields.len(), 6);

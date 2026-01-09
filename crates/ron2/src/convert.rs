@@ -28,7 +28,12 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use core::{cell::{Cell, RefCell}, hash::Hash};
+#[cfg(feature = "std")]
+use core::hash::BuildHasher;
+use core::{
+    cell::{Cell, RefCell},
+    hash::Hash,
+};
 
 #[cfg(feature = "std")]
 use std::{
@@ -37,10 +42,10 @@ use std::{
 };
 
 use crate::{
+    Value,
     error::{Error, Result},
     ser::PrettyConfig,
     value::{Map, Number},
-    Value,
 };
 
 /// Trait for types that can be converted to RON.
@@ -388,6 +393,7 @@ impl_from_ron_int!(i8, i16, i32, i64, u8, u16, u32, u64);
 impl_from_ron_int!(i128, u128);
 
 impl FromRon for f32 {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn from_ron_value(value: Value) -> Result<Self> {
         match value {
             Value::Number(Number::F32(f)) => Ok(f.get()),
@@ -417,6 +423,7 @@ impl FromRon for f32 {
 }
 
 impl FromRon for f64 {
+    #[allow(clippy::cast_precision_loss)]
     fn from_ron_value(value: Value) -> Result<Self> {
         match value {
             Value::Number(Number::F64(f)) => Ok(f.get()),
@@ -471,7 +478,7 @@ impl<T: ToRon> ToRon for LinkedList<T> {
 }
 
 #[cfg(feature = "std")]
-impl<T: ToRon + Eq + Hash> ToRon for HashSet<T> {
+impl<T: ToRon + Eq + Hash, S: BuildHasher> ToRon for HashSet<T, S> {
     fn to_ron_value(&self) -> Result<Value> {
         let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
         Ok(Value::Seq(values?))
@@ -501,7 +508,7 @@ impl<T: ToRon> ToRon for [T] {
 
 // Map types
 #[cfg(feature = "std")]
-impl<K: ToRon + Eq + Hash, V: ToRon> ToRon for HashMap<K, V> {
+impl<K: ToRon + Eq + Hash, V: ToRon, S: BuildHasher> ToRon for HashMap<K, V, S> {
     fn to_ron_value(&self) -> Result<Value> {
         let mut map = Map::new();
         for (k, v) in self {
@@ -528,9 +535,7 @@ impl<K: ToRon + Ord, V: ToRon> ToRon for BTreeMap<K, V> {
 impl<T: FromRon> FromRon for Vec<T> {
     fn from_ron_value(value: Value) -> Result<Self> {
         match value {
-            Value::Seq(seq) | Value::Tuple(seq) => {
-                seq.into_iter().map(T::from_ron_value).collect()
-            }
+            Value::Seq(seq) | Value::Tuple(seq) => seq.into_iter().map(T::from_ron_value).collect(),
             other => Err(Error::type_mismatch("sequence", &other)),
         }
     }
@@ -539,9 +544,7 @@ impl<T: FromRon> FromRon for Vec<T> {
 impl<T: FromRon> FromRon for VecDeque<T> {
     fn from_ron_value(value: Value) -> Result<Self> {
         match value {
-            Value::Seq(seq) | Value::Tuple(seq) => {
-                seq.into_iter().map(T::from_ron_value).collect()
-            }
+            Value::Seq(seq) | Value::Tuple(seq) => seq.into_iter().map(T::from_ron_value).collect(),
             other => Err(Error::type_mismatch("sequence", &other)),
         }
     }
@@ -550,21 +553,20 @@ impl<T: FromRon> FromRon for VecDeque<T> {
 impl<T: FromRon> FromRon for LinkedList<T> {
     fn from_ron_value(value: Value) -> Result<Self> {
         match value {
-            Value::Seq(seq) | Value::Tuple(seq) => {
-                seq.into_iter().map(T::from_ron_value).collect()
-            }
+            Value::Seq(seq) | Value::Tuple(seq) => seq.into_iter().map(T::from_ron_value).collect(),
             other => Err(Error::type_mismatch("sequence", &other)),
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl<T: FromRon + Eq + Hash> FromRon for HashSet<T> {
+impl<T: FromRon + Eq + Hash, S: BuildHasher + Default> FromRon for HashSet<T, S> {
     fn from_ron_value(value: Value) -> Result<Self> {
         match value {
-            Value::Seq(seq) | Value::Tuple(seq) => {
-                seq.into_iter().map(T::from_ron_value).collect()
-            }
+            Value::Seq(seq) | Value::Tuple(seq) => seq
+                .into_iter()
+                .map(T::from_ron_value)
+                .collect::<Result<HashSet<T, S>>>(),
             other => Err(Error::type_mismatch("sequence", &other)),
         }
     }
@@ -573,9 +575,7 @@ impl<T: FromRon + Eq + Hash> FromRon for HashSet<T> {
 impl<T: FromRon + Ord> FromRon for BTreeSet<T> {
     fn from_ron_value(value: Value) -> Result<Self> {
         match value {
-            Value::Seq(seq) | Value::Tuple(seq) => {
-                seq.into_iter().map(T::from_ron_value).collect()
-            }
+            Value::Seq(seq) | Value::Tuple(seq) => seq.into_iter().map(T::from_ron_value).collect(),
             other => Err(Error::type_mismatch("sequence", &other)),
         }
     }
@@ -591,7 +591,10 @@ impl<T: FromRon, const N: usize> FromRon for [T; N] {
                         seq.len()
                     )));
                 }
-                let vec: Vec<T> = seq.into_iter().map(T::from_ron_value).collect::<Result<_>>()?;
+                let vec: Vec<T> = seq
+                    .into_iter()
+                    .map(T::from_ron_value)
+                    .collect::<Result<_>>()?;
                 vec.try_into().map_err(|_| {
                     Error::invalid_value(alloc::format!("failed to convert to array of length {N}"))
                 })
@@ -603,11 +606,11 @@ impl<T: FromRon, const N: usize> FromRon for [T; N] {
 
 // Map types
 #[cfg(feature = "std")]
-impl<K: FromRon + Eq + Hash, V: FromRon> FromRon for HashMap<K, V> {
+impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRon for HashMap<K, V, S> {
     fn from_ron_value(value: Value) -> Result<Self> {
         match value {
             Value::Map(map) => {
-                let mut result = HashMap::with_capacity(map.len());
+                let mut result = HashMap::with_capacity_and_hasher(map.len(), Default::default());
                 for (k, v) in map {
                     result.insert(K::from_ron_value(k)?, V::from_ron_value(v)?);
                 }
@@ -854,7 +857,7 @@ impl MapAccess {
                         other => {
                             return Err(Error::invalid_value(alloc::format!(
                                 "expected string key, got {other:?}"
-                            )))
+                            )));
                         }
                     };
                     result.insert(key, v);
@@ -862,21 +865,22 @@ impl MapAccess {
                 Ok(Self { map: result })
             }
             // Named struct: Type(field: val)
-            Value::Named { content, .. } => {
-                match content {
-                    crate::NamedContent::Struct(fields) => {
-                        let mut result = HashMap::with_capacity(fields.len());
-                        for (name, v) in fields {
-                            result.insert(name, v);
-                        }
-                        Ok(Self { map: result })
+            Value::Named { content, .. } => match content {
+                crate::NamedContent::Struct(fields) => {
+                    let mut result = HashMap::with_capacity(fields.len());
+                    for (name, v) in fields {
+                        result.insert(name, v);
                     }
-                    _ => Err(Error::type_mismatch("struct", &Value::Named {
+                    Ok(Self { map: result })
+                }
+                _ => Err(Error::type_mismatch(
+                    "struct",
+                    &Value::Named {
                         name: String::new(),
                         content,
-                    })),
-                }
-            }
+                    },
+                )),
+            },
             other => Err(Error::type_mismatch("map/struct", &other)),
         }
     }

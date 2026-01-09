@@ -117,8 +117,7 @@ impl Options {
 
     /// Parse RON bytes into a Value using the AST parser.
     pub fn from_bytes(&self, s: &[u8]) -> SpannedResult<Value> {
-        let s = core::str::from_utf8(s)
-            .map_err(|e| SpannedError::at_start(Error::Utf8Error(e)))?;
+        let s = core::str::from_utf8(s).map_err(|e| SpannedError::at_start(Error::Utf8Error(e)))?;
         self.from_str(s)
     }
 
@@ -165,7 +164,12 @@ impl Options {
 
     /// Serializes a Value into `writer` in a pretty way.
     #[cfg(feature = "std")]
-    pub fn to_io_writer_pretty<W>(&self, writer: W, value: &Value, config: PrettyConfig) -> Result<()>
+    pub fn to_io_writer_pretty<W>(
+        &self,
+        writer: W,
+        value: &Value,
+        config: PrettyConfig,
+    ) -> Result<()>
     where
         W: io::Write,
     {

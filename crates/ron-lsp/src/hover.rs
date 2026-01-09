@@ -105,8 +105,9 @@ fn search_in_type_kind(word: &str, kind: &TypeKind) -> Option<String> {
         }
         TypeKind::Option(inner) => search_in_type_kind(word, inner),
         TypeKind::List(inner) => search_in_type_kind(word, inner),
-        TypeKind::Map { key, value } => search_in_type_kind(word, key)
-            .or_else(|| search_in_type_kind(word, value)),
+        TypeKind::Map { key, value } => {
+            search_in_type_kind(word, key).or_else(|| search_in_type_kind(word, value))
+        }
         TypeKind::Tuple(types) => {
             for ty in types {
                 if let Some(info) = search_in_type_kind(word, ty) {

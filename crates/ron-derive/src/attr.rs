@@ -11,6 +11,7 @@ use syn::{Attribute, Expr, ExprPath, Lit, Meta};
 
 /// Rename strategy for fields/variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum RenameRule {
     /// camelCase
     CamelCase,
@@ -352,13 +353,15 @@ fn get_expr_path(expr: &Expr) -> syn::Result<ExprPath> {
     }) = expr
     {
         let path_str = lit_str.value();
-        let path: ExprPath = syn::parse_str(&path_str).map_err(|_| {
-            syn::Error::new_spanned(expr, format!("invalid path: {}", path_str))
-        })?;
+        let path: ExprPath = syn::parse_str(&path_str)
+            .map_err(|_| syn::Error::new_spanned(expr, format!("invalid path: {}", path_str)))?;
         return Ok(path);
     }
 
-    Err(syn::Error::new_spanned(expr, "expected path or string literal"))
+    Err(syn::Error::new_spanned(
+        expr,
+        "expected path or string literal",
+    ))
 }
 
 // =============================================================================

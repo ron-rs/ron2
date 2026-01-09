@@ -1,8 +1,5 @@
 use alloc::string::{String, ToString};
-use core::{
-    fmt,
-    str::Utf8Error,
-};
+use core::{fmt, str::Utf8Error};
 
 use crate::chars::{is_ident_first_char, is_ident_raw_char};
 use unicode_ident::is_xid_continue;
@@ -496,7 +493,10 @@ mod tests {
         check_error_message(&Error::InvalidEscape("Invalid escape"), "Invalid escape");
         check_error_message(&Error::IntegerOutOfBounds, "Integer is out of bounds");
         check_error_message(&Error::UnclosedBlockComment, "Unclosed block comment");
-        check_error_message(&Error::TrailingCharacters, "Non-whitespace trailing characters");
+        check_error_message(
+            &Error::TrailingCharacters,
+            "Non-whitespace trailing characters",
+        );
     }
 
     fn check_error_message<T: core::fmt::Display>(err: &T, msg: &str) {

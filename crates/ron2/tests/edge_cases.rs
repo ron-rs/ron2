@@ -2,7 +2,7 @@
 //!
 //! These tests cover boundary conditions, error cases, and unusual inputs.
 
-use ron2::{from_str, to_string, Map, NamedContent, Number, Value};
+use ron2::{Map, NamedContent, Number, Value, from_str, to_string};
 
 // =============================================================================
 // Number Boundaries
@@ -369,7 +369,10 @@ fn edge_multiline_named_struct() {
         Value::Named {
             name: String::from("Config"),
             content: NamedContent::Struct(vec![
-                (String::from("host"), Value::String(String::from("localhost"))),
+                (
+                    String::from("host"),
+                    Value::String(String::from("localhost"))
+                ),
                 (String::from("port"), Value::Number(Number::U16(8080))),
             ]),
         }
@@ -661,5 +664,8 @@ fn edge_serialize_float_whole_number() {
     // Float that looks like an integer should still have decimal point
     let value = Value::Number(Number::F64(ron2::value::F64::from(42.0)));
     let serialized = to_string(&value).unwrap();
-    assert!(serialized.contains('.'), "Float should have decimal point: {serialized}");
+    assert!(
+        serialized.contains('.'),
+        "Float should have decimal point: {serialized}"
+    );
 }

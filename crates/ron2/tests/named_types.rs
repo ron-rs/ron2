@@ -6,7 +6,7 @@
 //! Note: The current parser does not support `::` paths (e.g., `Module::Type`).
 //! Named structs use brace syntax: `Point { x: 1, y: 2 }` not paren syntax.
 
-use ron2::{from_str, to_string, to_string_pretty, NamedContent, Number, PrettyConfig, Value};
+use ron2::{NamedContent, Number, PrettyConfig, Value, from_str, to_string, to_string_pretty};
 
 // =============================================================================
 // Unit Named Types

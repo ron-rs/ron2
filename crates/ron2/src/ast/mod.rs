@@ -179,7 +179,11 @@ impl Document<'_> {
         Document {
             source: Cow::Owned(self.source.into_owned()),
             leading: self.leading.into_owned(),
-            attributes: self.attributes.into_iter().map(Attribute::into_owned).collect(),
+            attributes: self
+                .attributes
+                .into_iter()
+                .map(Attribute::into_owned)
+                .collect(),
             pre_value: self.pre_value.into_owned(),
             value: self.value.map(Expr::into_owned),
             trailing: self.trailing.into_owned(),
@@ -239,7 +243,9 @@ impl AttributeContent<'_> {
             Self::None => AttributeContent::None,
             Self::Value(v) => AttributeContent::Value(Cow::Owned(v.into_owned())),
             Self::Args(args) => AttributeContent::Args(
-                args.into_iter().map(|a| Cow::Owned(a.into_owned())).collect(),
+                args.into_iter()
+                    .map(|a| Cow::Owned(a.into_owned()))
+                    .collect(),
             ),
         }
     }
@@ -716,7 +722,11 @@ impl TupleExpr<'_> {
             span: self.span,
             open_paren: self.open_paren,
             leading: self.leading.into_owned(),
-            elements: self.elements.into_iter().map(TupleElement::into_owned).collect(),
+            elements: self
+                .elements
+                .into_iter()
+                .map(TupleElement::into_owned)
+                .collect(),
             trailing: self.trailing.into_owned(),
             close_paren: self.close_paren,
         }
@@ -750,7 +760,11 @@ impl AnonStructExpr<'_> {
             span: self.span,
             open_paren: self.open_paren,
             leading: self.leading.into_owned(),
-            fields: self.fields.into_iter().map(StructField::into_owned).collect(),
+            fields: self
+                .fields
+                .into_iter()
+                .map(StructField::into_owned)
+                .collect(),
             trailing: self.trailing.into_owned(),
             close_paren: self.close_paren,
         }
@@ -881,7 +895,11 @@ impl TupleBody<'_> {
         TupleBody {
             open_paren: self.open_paren,
             leading: self.leading.into_owned(),
-            elements: self.elements.into_iter().map(TupleElement::into_owned).collect(),
+            elements: self
+                .elements
+                .into_iter()
+                .map(TupleElement::into_owned)
+                .collect(),
             trailing: self.trailing.into_owned(),
             close_paren: self.close_paren,
         }
@@ -910,7 +928,11 @@ impl FieldsBody<'_> {
         FieldsBody {
             open_brace: self.open_brace,
             leading: self.leading.into_owned(),
-            fields: self.fields.into_iter().map(StructField::into_owned).collect(),
+            fields: self
+                .fields
+                .into_iter()
+                .map(StructField::into_owned)
+                .collect(),
             trailing: self.trailing.into_owned(),
             close_brace: self.close_brace,
         }

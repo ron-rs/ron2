@@ -19,10 +19,7 @@ pub enum RonError {
     /// Unknown enum variant.
     UnknownVariant(String),
     /// Integer value out of range for target type.
-    IntegerOutOfRange {
-        ty: &'static str,
-        value: String,
-    },
+    IntegerOutOfRange { ty: &'static str, value: String },
     /// Invalid value for the target type.
     InvalidValue(String),
     /// IO error.

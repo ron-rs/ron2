@@ -113,10 +113,7 @@ fn test_write_and_read_schema_complex() {
             fields: vec![
                 Field::new("port", TypeKind::U16).with_doc("Server port"),
                 Field::optional("host", TypeKind::String).with_doc("Hostname"),
-                Field::new(
-                    "tags",
-                    TypeKind::List(Box::new(TypeKind::String)),
-                ),
+                Field::new("tags", TypeKind::List(Box::new(TypeKind::String))),
             ],
         },
     );
@@ -136,12 +133,7 @@ fn test_write_creates_parent_directories() {
     let schema = Schema::new(TypeKind::I32);
 
     // Write to deeply nested path
-    let path = write_schema(
-        "a::b::c::d::e::DeepType",
-        &schema,
-        Some(temp_dir.path()),
-    )
-    .unwrap();
+    let path = write_schema("a::b::c::d::e::DeepType", &schema, Some(temp_dir.path())).unwrap();
 
     assert!(path.exists());
     assert!(path.ends_with("a/b/c/d/e/DeepType.schema.ron"));
@@ -395,14 +387,8 @@ fn test_write_enum_schema() {
             variants: vec![
                 Variant::unit("Pending"),
                 Variant::unit("Running"),
-                Variant::struct_variant(
-                    "Completed",
-                    vec![Field::new("result", TypeKind::String)],
-                ),
-                Variant::struct_variant(
-                    "Failed",
-                    vec![Field::new("error", TypeKind::String)],
-                ),
+                Variant::struct_variant("Completed", vec![Field::new("result", TypeKind::String)]),
+                Variant::struct_variant("Failed", vec![Field::new("error", TypeKind::String)]),
             ],
         },
     );

@@ -301,8 +301,10 @@ fn validate_type_internal<R: SchemaResolver>(
         TypeKind::Map { key, value: val_ty } => match value {
             Value::Map(map) => {
                 for (k, v) in map.iter() {
-                    validate_type_internal(k, key, ctx).map_err(|e| ValidationError::MapKeyError {
-                        source: Box::new(e),
+                    validate_type_internal(k, key, ctx).map_err(|e| {
+                        ValidationError::MapKeyError {
+                            source: Box::new(e),
+                        }
                     })?;
                     validate_type_internal(v, val_ty, ctx).map_err(|e| {
                         ValidationError::MapValueError {
@@ -392,9 +394,11 @@ fn validate_struct_internal<R: SchemaResolver>(
                 .find(|f| f.name == key_str)
                 .ok_or_else(|| ValidationError::UnknownField(key_str.to_string()))?;
 
-            validate_type_internal(val, &field.ty, ctx).map_err(|e| ValidationError::FieldError {
-                field: key_str.to_string(),
-                source: Box::new(e),
+            validate_type_internal(val, &field.ty, ctx).map_err(|e| {
+                ValidationError::FieldError {
+                    field: key_str.to_string(),
+                    source: Box::new(e),
+                }
             })?;
         }
 
@@ -410,12 +414,7 @@ fn validate_struct_internal<R: SchemaResolver>(
 
     match value {
         // Empty struct: () - parsed as Unit
-        Value::Unit => validate_struct_fields_inner(
-            std::iter::empty(),
-            fields,
-            |_| false,
-            ctx,
-        ),
+        Value::Unit => validate_struct_fields_inner(std::iter::empty(), fields, |_| false, ctx),
         // Anonymous struct: (x: 1, y: 2)
         Value::Struct(struct_fields) => validate_struct_fields_inner(
             struct_fields.iter().map(|(k, v)| (k.as_str(), v)),
@@ -448,7 +447,10 @@ fn validate_struct_internal<R: SchemaResolver>(
             validate_struct_fields_inner(
                 string_fields.iter().copied(),
                 fields,
-                |name| map.iter().any(|(k, _)| matches!(k, Value::String(s) if s == name)),
+                |name| {
+                    map.iter()
+                        .any(|(k, _)| matches!(k, Value::String(s) if s == name))
+                },
                 ctx,
             )
         }
@@ -494,64 +496,65 @@ fn validate_enum_internal<R: SchemaResolver>(
         .ok_or_else(|| ValidationError::UnknownVariant(variant_name.to_string()))?;
 
     // Helper to validate struct fields
-    let validate_struct_fields =
-        |fields: &[crate::Field],
-         struct_fields: &[(String, Value)],
-         ctx: &mut ValidationContext<R>|
-         -> Result<()> {
-            for (key, val) in struct_fields.iter() {
-                let field = fields.iter().find(|f| f.name == *key).ok_or_else(|| {
-                    ValidationError::VariantError {
-                        variant: variant_name.to_string(),
-                        source: Box::new(ValidationError::UnknownField(key.clone())),
-                    }
-                })?;
-
-                validate_type_internal(val, &field.ty, ctx).map_err(|e| {
-                    ValidationError::VariantError {
-                        variant: variant_name.to_string(),
-                        source: Box::new(ValidationError::FieldError {
-                            field: key.clone(),
-                            source: Box::new(e),
-                        }),
-                    }
-                })?;
-            }
-            // Check required fields
-            for field in fields {
-                if !field.optional && !struct_fields.iter().any(|(k, _)| k == &field.name) {
-                    return Err(ValidationError::VariantError {
-                        variant: variant_name.to_string(),
-                        source: Box::new(ValidationError::MissingField(field.name.clone())),
-                    });
+    let validate_struct_fields = |fields: &[crate::Field],
+                                  struct_fields: &[(String, Value)],
+                                  ctx: &mut ValidationContext<R>|
+     -> Result<()> {
+        for (key, val) in struct_fields.iter() {
+            let field = fields.iter().find(|f| f.name == *key).ok_or_else(|| {
+                ValidationError::VariantError {
+                    variant: variant_name.to_string(),
+                    source: Box::new(ValidationError::UnknownField(key.clone())),
                 }
-            }
-            Ok(())
-        };
+            })?;
 
-    // Helper to validate tuple elements
-    let validate_tuple_elements =
-        |types: &[TypeKind], items: &[Value], ctx: &mut ValidationContext<R>| -> Result<()> {
-            if items.len() != types.len() {
-                return Err(ValidationError::VariantError {
+            validate_type_internal(val, &field.ty, ctx).map_err(|e| {
+                ValidationError::VariantError {
                     variant: variant_name.to_string(),
-                    source: Box::new(ValidationError::TupleLengthMismatch {
-                        expected: types.len(),
-                        actual: items.len(),
-                    }),
-                });
-            }
-            for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
-                validate_type_internal(item, ty, ctx).map_err(|e| ValidationError::VariantError {
-                    variant: variant_name.to_string(),
-                    source: Box::new(ValidationError::ElementError {
-                        index: i,
+                    source: Box::new(ValidationError::FieldError {
+                        field: key.clone(),
                         source: Box::new(e),
                     }),
-                })?;
+                }
+            })?;
+        }
+        // Check required fields
+        for field in fields {
+            if !field.optional && !struct_fields.iter().any(|(k, _)| k == &field.name) {
+                return Err(ValidationError::VariantError {
+                    variant: variant_name.to_string(),
+                    source: Box::new(ValidationError::MissingField(field.name.clone())),
+                });
             }
-            Ok(())
-        };
+        }
+        Ok(())
+    };
+
+    // Helper to validate tuple elements
+    let validate_tuple_elements = |types: &[TypeKind],
+                                   items: &[Value],
+                                   ctx: &mut ValidationContext<R>|
+     -> Result<()> {
+        if items.len() != types.len() {
+            return Err(ValidationError::VariantError {
+                variant: variant_name.to_string(),
+                source: Box::new(ValidationError::TupleLengthMismatch {
+                    expected: types.len(),
+                    actual: items.len(),
+                }),
+            });
+        }
+        for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
+            validate_type_internal(item, ty, ctx).map_err(|e| ValidationError::VariantError {
+                variant: variant_name.to_string(),
+                source: Box::new(ValidationError::ElementError {
+                    index: i,
+                    source: Box::new(e),
+                }),
+            })?;
+        }
+        Ok(())
+    };
 
     match (&variant.kind, content) {
         // Unit variants
@@ -685,10 +688,7 @@ mod tests {
             variants: vec![
                 Variant::unit("None"),
                 Variant::tuple("Some", vec![TypeKind::I32]),
-                Variant::struct_variant(
-                    "Complex",
-                    vec![Field::new("value", TypeKind::String)],
-                ),
+                Variant::struct_variant("Complex", vec![Field::new("value", TypeKind::String)]),
             ],
         });
 

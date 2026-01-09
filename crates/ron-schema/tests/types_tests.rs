@@ -491,11 +491,8 @@ fn test_enum_schema_roundtrip() {
                     vec![Field::new("value", TypeKind::TypeRef("T".to_string()))],
                 )
                 .with_doc("Success with value"),
-                Variant::struct_variant(
-                    "Err",
-                    vec![Field::new("error", TypeKind::String)],
-                )
-                .with_doc("Error with message"),
+                Variant::struct_variant("Err", vec![Field::new("error", TypeKind::String)])
+                    .with_doc("Error with message"),
             ],
         },
     );

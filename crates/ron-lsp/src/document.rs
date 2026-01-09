@@ -95,12 +95,10 @@ impl Document {
             &self.content[line_start..]
         };
 
-        let mut char_count = 0;
-        for (i, _) in line_content.char_indices() {
+        for (char_count, (i, _)) in line_content.char_indices().enumerate() {
             if char_count == col {
                 return Some(line_start + i);
             }
-            char_count += 1;
         }
 
         // Column is at or past end of line

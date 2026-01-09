@@ -124,7 +124,10 @@ fn main() {
     // Verify defaults were applied
     println!("4. Checking defaults:");
     println!("--------------------");
-    println!("  database.timeout_secs (should be 30): {}", parsed.database.timeout_secs);
+    println!(
+        "  database.timeout_secs (should be 30): {}",
+        parsed.database.timeout_secs
+    );
 
     // Write schema files
     println!("\n5. Writing schema files:");
@@ -149,7 +152,9 @@ fn main() {
     println!("\n6. Generated AppConfig schema:");
     println!("------------------------------");
     let schema = AppConfig::schema();
-    let schema_ron = schema.to_ron_pretty(&ron_schema::PrettyConfig::default()).unwrap();
+    let schema_ron = schema
+        .to_ron_pretty(&ron_schema::PrettyConfig::default())
+        .unwrap();
     println!("{}", schema_ron);
 
     // Roundtrip test
@@ -201,9 +206,9 @@ mod tests {
         )"#;
 
         let config: AppConfig = AppConfig::from_ron(ron).unwrap();
-        assert_eq!(config.host, "");  // Default String
-        assert_eq!(config.debug, false);  // Default bool
-        assert_eq!(config.database.timeout_secs, 30);  // Custom default
+        assert_eq!(config.host, ""); // Default String
+        assert!(!config.debug); // Default bool
+        assert_eq!(config.database.timeout_secs, 30); // Custom default
     }
 
     #[test]

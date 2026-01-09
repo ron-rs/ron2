@@ -304,7 +304,10 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
 }
 
 /// Generate TypeKind tokens for a struct's fields.
-fn generate_struct_kind(fields: &Fields, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
+fn generate_struct_kind(
+    fields: &Fields,
+    container_attrs: &ContainerAttrs,
+) -> syn::Result<TokenStream2> {
     match fields {
         Fields::Named(named) => {
             let mut field_tokens: Vec<TokenStream2> = Vec::new();
@@ -348,7 +351,10 @@ fn generate_struct_kind(fields: &Fields, container_attrs: &ContainerAttrs) -> sy
 }
 
 /// Generate TypeKind tokens for an enum.
-fn generate_enum_kind(data_enum: &syn::DataEnum, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
+fn generate_enum_kind(
+    data_enum: &syn::DataEnum,
+    container_attrs: &ContainerAttrs,
+) -> syn::Result<TokenStream2> {
     let variant_tokens: Vec<TokenStream2> = data_enum
         .variants
         .iter()
@@ -397,7 +403,10 @@ fn generate_field(
 }
 
 /// Generate Variant tokens for an enum variant.
-fn generate_variant(variant: &syn::Variant, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
+fn generate_variant(
+    variant: &syn::Variant,
+    container_attrs: &ContainerAttrs,
+) -> syn::Result<TokenStream2> {
     let variant_attrs = attr::VariantAttrs::from_ast(&variant.attrs)?;
     let original_name = variant.ident.to_string();
     let name = variant_attrs.effective_name(&original_name, container_attrs);
@@ -547,7 +556,7 @@ fn type_to_type_kind(ty: &Type) -> syn::Result<TokenStream2> {
             let elem_tokens: Vec<TokenStream2> = tuple
                 .elems
                 .iter()
-                .map(|t| type_to_type_kind(t))
+                .map(type_to_type_kind)
                 .collect::<syn::Result<Vec<_>>>()?;
 
             Ok(quote! {

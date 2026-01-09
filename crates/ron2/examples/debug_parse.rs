@@ -6,7 +6,7 @@ fn main() {
         Ok(doc) => println!("OK: {:?}", doc.value.map(|v| format!("{:?}", v))),
         Err(e) => println!("ERR: {:?}", e),
     }
-    
+
     // Test with Config
     let config = "Config { name: \"test\" }";
     println!("\nParsing: {:?}", config);

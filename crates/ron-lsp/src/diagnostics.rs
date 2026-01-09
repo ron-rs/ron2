@@ -49,11 +49,7 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
         } else {
             "schema"
         };
-        let attr_value = doc
-            .type_attr
-            .as_ref()
-            .or(doc.schema_attr.as_ref())
-            .unwrap();
+        let attr_value = doc.type_attr.as_ref().or(doc.schema_attr.as_ref()).unwrap();
 
         diagnostics.push(Diagnostic {
             range: Range {
@@ -163,7 +159,10 @@ fn format_validation_error(error: &ValidationError, doc: &Document) -> (String, 
         }
         ValidationError::MapValueError { key, source } => {
             let (inner_msg, _) = format_validation_error(source, doc);
-            (format!("Error in map value for '{}': {}", key, inner_msg), None)
+            (
+                format!("Error in map value for '{}': {}", key, inner_msg),
+                None,
+            )
         }
         ValidationError::VariantError { variant, source } => {
             let range = find_text_position(doc, variant);

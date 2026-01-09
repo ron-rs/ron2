@@ -316,9 +316,10 @@ impl ToRon for TypeKind {
                 content: NamedContent::Tuple(vec![inner.to_ron_value()?]),
             }),
             TypeKind::Map { key, value } => {
-                let mut fields: StructFields = Vec::new();
-                fields.push(("key".to_string(), key.to_ron_value()?));
-                fields.push(("value".to_string(), value.to_ron_value()?));
+                let fields: StructFields = vec![
+                    ("key".to_string(), key.to_ron_value()?),
+                    ("value".to_string(), value.to_ron_value()?),
+                ];
                 Ok(Value::Named {
                     name: "Map".to_string(),
                     content: NamedContent::Struct(fields),
@@ -514,9 +515,7 @@ impl FromRon for TypeKind {
                 }
                 Ok(TypeKind::Map {
                     key: Box::new(key.ok_or_else(|| Error::missing_field("key"))?),
-                    value: Box::new(
-                        value.ok_or_else(|| Error::missing_field("value"))?,
-                    ),
+                    value: Box::new(value.ok_or_else(|| Error::missing_field("value"))?),
                 })
             }
             "Tuple" => {

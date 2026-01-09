@@ -2,7 +2,7 @@
 //!
 //! These tests verify that parsing and serialization are consistent.
 
-use ron2::{from_str, to_string, to_string_pretty, Map, NamedContent, Number, PrettyConfig, Value};
+use ron2::{Map, NamedContent, Number, PrettyConfig, Value, from_str, to_string, to_string_pretty};
 
 /// Helper: parse, serialize, parse again, and verify values match.
 fn roundtrip(input: &str) -> Value {
@@ -381,10 +381,7 @@ fn roundtrip_option_some_string() {
 #[test]
 fn roundtrip_option_some_none() {
     let value = roundtrip("Some(None)");
-    assert_eq!(
-        value,
-        Value::Option(Some(Box::new(Value::Option(None))))
-    );
+    assert_eq!(value, Value::Option(Some(Box::new(Value::Option(None)))));
 }
 
 #[test]
@@ -938,17 +935,13 @@ fn roundtrip_pretty_complex() {
 
 #[test]
 fn roundtrip_with_line_comment() {
-    let value = roundtrip(
-        "42 // this is a comment",
-    );
+    let value = roundtrip("42 // this is a comment");
     assert_eq!(value, Value::Number(Number::U8(42)));
 }
 
 #[test]
 fn roundtrip_with_block_comment() {
-    let value = roundtrip(
-        "/* comment */ 42 /* another */",
-    );
+    let value = roundtrip("/* comment */ 42 /* another */");
     assert_eq!(value, Value::Number(Number::U8(42)));
 }
 

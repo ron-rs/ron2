@@ -61,7 +61,8 @@ fn derive_struct_de(
                     continue;
                 }
 
-                let ron_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
+                let ron_name =
+                    field_attrs.effective_name(&field_ident.to_string(), container_attrs);
                 known_fields.push(ron_name.clone());
 
                 let deserialize_expr = quote! {
@@ -153,8 +154,7 @@ fn derive_struct_de(
             let field_extractions: Vec<_> = unnamed
                 .unnamed
                 .iter()
-                .enumerate()
-                .map(|(_i, field)| {
+                .map(|field| {
                     let field_ty = &field.ty;
                     quote! {
                         {
@@ -227,7 +227,8 @@ fn derive_enum_de(
         }
 
         let variant_ident = &variant.ident;
-        let variant_name = variant_attrs.effective_name(&variant_ident.to_string(), container_attrs);
+        let variant_name =
+            variant_attrs.effective_name(&variant_ident.to_string(), container_attrs);
 
         let arm = match &variant.fields {
             Fields::Unit => {
@@ -302,7 +303,8 @@ fn derive_enum_de(
                         continue;
                     }
 
-                    let ron_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
+                    let ron_name =
+                        field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
                     let default_expr = match &field_attrs.default {
                         FieldDefault::None => {
@@ -355,7 +357,11 @@ fn derive_enum_de(
     let variant_names: Vec<_> = data
         .variants
         .iter()
-        .filter(|v| !VariantAttrs::from_ast(&v.attrs).map(|a| a.skip).unwrap_or(false))
+        .filter(|v| {
+            !VariantAttrs::from_ast(&v.attrs)
+                .map(|a| a.skip)
+                .unwrap_or(false)
+        })
         .map(|v| {
             let attrs = VariantAttrs::from_ast(&v.attrs).unwrap_or_default();
             attrs.effective_name(&v.ident.to_string(), container_attrs)

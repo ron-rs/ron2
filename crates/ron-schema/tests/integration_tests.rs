@@ -80,10 +80,13 @@ fn test_complete_workflow_complex_enum() {
                     "Success",
                     vec![
                         Field::new("data", TypeKind::String),
-                        Field::optional("metadata", TypeKind::Map {
-                            key: Box::new(TypeKind::String),
-                            value: Box::new(TypeKind::String),
-                        }),
+                        Field::optional(
+                            "metadata",
+                            TypeKind::Map {
+                                key: Box::new(TypeKind::String),
+                                value: Box::new(TypeKind::String),
+                            },
+                        ),
                     ],
                 )
                 .with_doc("Successful response"),
@@ -100,8 +103,7 @@ fn test_complete_workflow_complex_enum() {
     );
 
     // Write and read back
-    let schema_path =
-        write_schema("api::Response", &schema, Some(temp_dir.path())).unwrap();
+    let schema_path = write_schema("api::Response", &schema, Some(temp_dir.path())).unwrap();
     let loaded_schema = read_schema(&schema_path).unwrap();
 
     // Test unit variant
@@ -109,15 +111,12 @@ fn test_complete_workflow_complex_enum() {
     assert!(validate(&loading, &loaded_schema).is_ok());
 
     // Test struct variant with all fields
-    let success: ron2::Value = ron2::from_str(
-        r#"{ "Success": (data: "hello", metadata: { "key": "value" }) }"#,
-    )
-    .unwrap();
+    let success: ron2::Value =
+        ron2::from_str(r#"{ "Success": (data: "hello", metadata: { "key": "value" }) }"#).unwrap();
     assert!(validate(&success, &loaded_schema).is_ok());
 
     // Test struct variant with optional field omitted
-    let success_minimal: ron2::Value =
-        ron2::from_str(r#"{ "Success": (data: "hello") }"#).unwrap();
+    let success_minimal: ron2::Value = ron2::from_str(r#"{ "Success": (data: "hello") }"#).unwrap();
     assert!(validate(&success_minimal, &loaded_schema).is_ok());
 
     // Test error variant
@@ -146,10 +145,7 @@ fn test_complete_workflow_nested_structures() {
                         fields: vec![
                             Field::new("host", TypeKind::String),
                             Field::new("port", TypeKind::U16),
-                            Field::optional(
-                                "tags",
-                                TypeKind::List(Box::new(TypeKind::String)),
-                            ),
+                            Field::optional("tags", TypeKind::List(Box::new(TypeKind::String))),
                         ],
                     })),
                 ),
@@ -165,8 +161,7 @@ fn test_complete_workflow_nested_structures() {
     );
 
     // Write and read back
-    let schema_path =
-        write_schema("config::AppConfig", &schema, Some(temp_dir.path())).unwrap();
+    let schema_path = write_schema("config::AppConfig", &schema, Some(temp_dir.path())).unwrap();
     let loaded_schema = read_schema(&schema_path).unwrap();
 
     // Valid complex configuration
@@ -307,10 +302,7 @@ fn test_multiple_schemas_in_project() {
                 Field::new("title", TypeKind::String),
                 Field::new("content", TypeKind::String),
                 Field::new("author_id", TypeKind::U64),
-                Field::new(
-                    "tags",
-                    TypeKind::List(Box::new(TypeKind::String)),
-                ),
+                Field::new("tags", TypeKind::List(Box::new(TypeKind::String))),
             ],
         },
     );
@@ -403,7 +395,10 @@ fn test_schema_file_preserves_documentation() {
     let path = write_schema("doc::Test", &schema, Some(temp_dir.path())).unwrap();
     let loaded = read_schema(&path).unwrap();
 
-    assert_eq!(loaded.doc, Some("This is the main documentation".to_string()));
+    assert_eq!(
+        loaded.doc,
+        Some("This is the main documentation".to_string())
+    );
 
     if let TypeKind::Struct { fields } = loaded.kind {
         assert_eq!(fields[0].doc, Some("Field one documentation".to_string()));
@@ -522,7 +517,10 @@ fn test_all_type_kinds_roundtrip_through_file() {
             "option",
             Schema::new(TypeKind::Option(Box::new(TypeKind::I32))),
         ),
-        ("vec", Schema::new(TypeKind::List(Box::new(TypeKind::String)))),
+        (
+            "vec",
+            Schema::new(TypeKind::List(Box::new(TypeKind::String))),
+        ),
         (
             "map",
             Schema::new(TypeKind::Map {

@@ -461,8 +461,9 @@ impl<'a> Lexer<'a> {
         self.advance(prefix_len + 1); // consume r###..."
 
         // Find the closing sequence: " followed by same number of #
-        let closing: alloc::string::String =
-            core::iter::once('"').chain(core::iter::repeat_n('#', hash_count)).collect();
+        let closing: alloc::string::String = core::iter::once('"')
+            .chain(core::iter::repeat_n('#', hash_count))
+            .collect();
 
         loop {
             if self.remaining().is_empty() {
@@ -513,8 +514,9 @@ impl<'a> Lexer<'a> {
                 self.advance(prefix_len + 1); // consume br###..."
 
                 // Find the closing sequence
-                let closing: alloc::string::String =
-                    core::iter::once('"').chain(core::iter::repeat_n('#', hash_count)).collect();
+                let closing: alloc::string::String = core::iter::once('"')
+                    .chain(core::iter::repeat_n('#', hash_count))
+                    .collect();
 
                 loop {
                     if self.remaining().is_empty() {
