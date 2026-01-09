@@ -37,18 +37,12 @@ fn error_details(err: &Error) -> (&'static str, Option<&'static str>) {
             "expected `[`",
             Some("Arrays use square brackets: [1, 2, 3]"),
         ),
-        Error::ExpectedArrayEnd => (
-            "expected `]`",
-            Some("Did you forget to close the array?"),
-        ),
+        Error::ExpectedArrayEnd => ("expected `]`", Some("Did you forget to close the array?")),
         Error::ExpectedMap => (
             "expected `{`",
             Some("Maps use curly braces: { \"key\": value }"),
         ),
-        Error::ExpectedMapEnd => (
-            "expected `}`",
-            Some("Did you forget to close the map?"),
-        ),
+        Error::ExpectedMapEnd => ("expected `}`", Some("Did you forget to close the map?")),
         Error::ExpectedMapColon { context } => (
             "expected `:`",
             context
@@ -77,7 +71,9 @@ fn error_details(err: &Error) -> (&'static str, Option<&'static str>) {
                     "struct" => "Separate struct fields with commas",
                     _ => "Separate elements with commas. Trailing commas are allowed.",
                 })
-                .or(Some("Separate elements with commas. Trailing commas are allowed.")),
+                .or(Some(
+                    "Separate elements with commas. Trailing commas are allowed.",
+                )),
         ),
         Error::ExpectedIdentifier => (
             "expected an identifier",
@@ -108,10 +104,9 @@ fn error_details(err: &Error) -> (&'static str, Option<&'static str>) {
         Error::NoSuchEnumVariant { .. } => ("unknown enum variant", None),
         Error::NoSuchStructField { .. } => ("unknown struct field", None),
         Error::MissingStructField { .. } => ("missing required field", None),
-        Error::DuplicateStructField { .. } => (
-            "duplicate field",
-            Some("Each field can only appear once"),
-        ),
+        Error::DuplicateStructField { .. } => {
+            ("duplicate field", Some("Each field can only appear once"))
+        }
         Error::InvalidValueForType { .. } => ("type mismatch", None),
         Error::SuggestRawIdentifier(_) => (
             "invalid identifier",
@@ -306,16 +301,14 @@ is never closed
         use ron2::ast::{Expr, StructBody};
 
         // Helper to find a field by name
-        fn find_field_value<'a>(
-            body: &'a StructBody<'a>,
-            name: &str,
-        ) -> Option<&'a Expr<'a>> {
+        fn find_field_value<'a>(body: &'a StructBody<'a>, name: &str) -> Option<&'a Expr<'a>> {
             match body {
                 StructBody::Tuple(t) => {
                     // Tuple elements with named fields - look for AnonStruct pattern
                     t.elements.iter().find_map(|elem| {
                         if let Expr::AnonStruct(anon) = &elem.expr {
-                            anon.fields.iter()
+                            anon.fields
+                                .iter()
                                 .find(|f| f.name.name == name)
                                 .map(|f| &f.value)
                         } else {
@@ -323,11 +316,11 @@ is never closed
                         }
                     })
                 }
-                StructBody::Fields(f) => {
-                    f.fields.iter()
-                        .find(|field| field.name.name == name)
-                        .map(|field| &field.value)
-                }
+                StructBody::Fields(f) => f
+                    .fields
+                    .iter()
+                    .find(|field| field.name.name == name)
+                    .map(|field| &field.value),
             }
         }
 
@@ -339,7 +332,9 @@ is never closed
 
                     if let Some(player_body) = &player.body {
                         // Player has an `inventory` field
-                        if let Some(Expr::Seq(inventory)) = find_field_value(player_body, "inventory") {
+                        if let Some(Expr::Seq(inventory)) =
+                            find_field_value(player_body, "inventory")
+                        {
                             let inv_span = &inventory.span;
 
                             // Find the `42` (3rd item in array, index 2)
@@ -350,22 +345,33 @@ is never closed
                                 Report::build(ReportKind::Error, "game.ron", bad_span.start_offset)
                                     .with_message("Type mismatch in array")
                                     .with_label(
-                                        Label::new(("game.ron", bad_span.start_offset..bad_span.end_offset))
-                                            .with_message("expected String, found integer")
-                                            .with_color(Color::Red),
+                                        Label::new((
+                                            "game.ron",
+                                            bad_span.start_offset..bad_span.end_offset,
+                                        ))
+                                        .with_message("expected String, found integer")
+                                        .with_color(Color::Red),
                                     )
                                     .with_label(
-                                        Label::new(("game.ron", inv_span.start_offset..inv_span.end_offset))
-                                            .with_message("in this array")
-                                            .with_color(Color::Blue),
+                                        Label::new((
+                                            "game.ron",
+                                            inv_span.start_offset..inv_span.end_offset,
+                                        ))
+                                        .with_message("in this array")
+                                        .with_color(Color::Blue),
                                     )
                                     .with_label(
-                                        Label::new(("game.ron", player_span.start_offset..player_span.end_offset))
-                                            .with_message("in field `player`")
-                                            .with_color(Color::Cyan),
+                                        Label::new((
+                                            "game.ron",
+                                            player_span.start_offset..player_span.end_offset,
+                                        ))
+                                        .with_message("in field `player`")
+                                        .with_color(Color::Cyan),
                                     )
                                     .with_note("Arrays should contain elements of the same type")
-                                    .with_help("Remove the integer or convert it to a string: \"42\"")
+                                    .with_help(
+                                        "Remove the integer or convert it to a string: \"42\"",
+                                    )
                                     .with_config(Config::default().with_tab_width(4))
                                     .finish()
                                     .print(("game.ron", Source::from(example8)))
@@ -377,7 +383,6 @@ is never closed
                 }
             }
         }
-
     } else {
         println!("Failed to parse example8");
     }

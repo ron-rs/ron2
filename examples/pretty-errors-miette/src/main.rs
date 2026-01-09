@@ -40,7 +40,11 @@ impl RonDiagnostic {
         Self {
             message: err.code.to_string(),
             src: NamedSource::new(filename, src),
-            span: (err.span.start_offset, err.span.end_offset - err.span.start_offset).into(),
+            span: (
+                err.span.start_offset,
+                err.span.end_offset - err.span.start_offset,
+            )
+                .into(),
             label,
             help,
         }
@@ -128,16 +132,15 @@ fn error_label_and_help(err: &Error) -> (String, Option<String>) {
                     "struct" => "Separate struct fields with commas".into(),
                     _ => "Separate elements with commas. Trailing commas are allowed.".into(),
                 })
-                .or(Some("Separate elements with commas. Trailing commas are allowed.".into())),
+                .or(Some(
+                    "Separate elements with commas. Trailing commas are allowed.".into(),
+                )),
         ),
         Error::ExpectedIdentifier => (
             "expected an identifier".into(),
             Some("Identifiers start with a letter or underscore".into()),
         ),
-        Error::UnexpectedChar(c) => (
-            format!("unexpected character `{c}`"),
-            None,
-        ),
+        Error::UnexpectedChar(c) => (format!("unexpected character `{c}`"), None),
         Error::Eof => (
             "unexpected end of input".into(),
             Some("The file ended unexpectedly. Check for unclosed brackets.".into()),
@@ -150,10 +153,7 @@ fn error_label_and_help(err: &Error) -> (String, Option<String>) {
             "unexpected content after value".into(),
             Some("RON files should contain exactly one value".into()),
         ),
-        Error::InvalidEscape(msg) => (
-            "invalid escape sequence".into(),
-            Some((*msg).into()),
-        ),
+        Error::InvalidEscape(msg) => ("invalid escape sequence".into(), Some((*msg).into())),
         Error::IntegerOutOfBounds { .. } => (
             "integer out of bounds".into(),
             Some("The number is too large or too small for the target type".into()),
@@ -162,26 +162,28 @@ fn error_label_and_help(err: &Error) -> (String, Option<String>) {
             "underscore in float".into(),
             Some("Underscores are not allowed in float literals".into()),
         ),
-        Error::NoSuchEnumVariant { expected, found, .. } => (
+        Error::NoSuchEnumVariant {
+            expected, found, ..
+        } => (
             format!("unknown variant `{found}`"),
             Some(format!("Valid variants: {}", expected.join(", "))),
         ),
-        Error::NoSuchStructField { expected, found, .. } => (
+        Error::NoSuchStructField {
+            expected, found, ..
+        } => (
             format!("unknown field `{found}`"),
             Some(format!("Valid fields: {}", expected.join(", "))),
         ),
-        Error::MissingStructField { field, .. } => (
-            format!("missing required field `{field}`"),
-            None,
-        ),
+        Error::MissingStructField { field, .. } => {
+            (format!("missing required field `{field}`"), None)
+        }
         Error::DuplicateStructField { field, .. } => (
             format!("duplicate field `{field}`"),
             Some("Each field can only appear once".into()),
         ),
-        Error::InvalidValueForType { expected, found } => (
-            format!("expected {expected}, found {found}"),
-            None,
-        ),
+        Error::InvalidValueForType { expected, found } => {
+            (format!("expected {expected}, found {found}"), None)
+        }
         Error::SuggestRawIdentifier(ident) => (
             "invalid identifier".into(),
             Some(format!("Try using a raw identifier: r#{ident}")),
@@ -192,7 +194,8 @@ fn error_label_and_help(err: &Error) -> (String, Option<String>) {
 
 /// Parse RON and return a miette Result for nice error display.
 pub fn parse_ron<'a>(src: &'a str, filename: &str) -> Result<Document<'a>, Report> {
-    parse_document(src).map_err(|err| RonDiagnostic::from_spanned(err, src.to_string(), filename).into())
+    parse_document(src)
+        .map_err(|err| RonDiagnostic::from_spanned(err, src.to_string(), filename).into())
 }
 
 /// Demonstrate various RON parsing errors with pretty output.

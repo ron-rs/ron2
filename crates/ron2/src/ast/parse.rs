@@ -1104,7 +1104,12 @@ impl<'a> AstParser<'a> {
             let pre_colon = self.collect_leading_trivia();
 
             if self.peek_kind() != TokenKind::Colon {
-                return Err(Self::error(name_tok.span, Error::ExpectedMapColon { context: Some("struct field") }));
+                return Err(Self::error(
+                    name_tok.span,
+                    Error::ExpectedMapColon {
+                        context: Some("struct field"),
+                    },
+                ));
             }
             let colon_tok = self.next_token();
 
@@ -1696,7 +1701,10 @@ mod tests {
         // "Point { x: 1 }" should fail because it parses as "Point" followed by a map,
         // but maps require string keys, not identifiers
         let result = parse_document("Point { x: 1 }");
-        assert!(result.is_err(), "Brace syntax after ident should not be valid");
+        assert!(
+            result.is_err(),
+            "Brace syntax after ident should not be valid"
+        );
     }
 
     #[test]

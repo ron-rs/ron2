@@ -126,10 +126,12 @@ fn fit_signed(val: i128, #[allow(unused_variables)] raw: &str) -> Result<Value> 
 
     #[cfg(not(feature = "integer128"))]
     {
-        i64::try_from(val).map(fit_signed_64).map_err(|_| Error::IntegerOutOfBounds {
-            value: raw.to_string().into(),
-            target_type: "i64",
-        })
+        i64::try_from(val)
+            .map(fit_signed_64)
+            .map_err(|_| Error::IntegerOutOfBounds {
+                value: raw.to_string().into(),
+                target_type: "i64",
+            })
     }
 }
 
@@ -161,10 +163,12 @@ fn fit_unsigned(val: u128, #[allow(unused_variables)] raw: &str) -> Result<Value
 
     #[cfg(not(feature = "integer128"))]
     {
-        u64::try_from(val).map(fit_unsigned_64).map_err(|_| Error::IntegerOutOfBounds {
-            value: raw.to_string().into(),
-            target_type: "u64",
-        })
+        u64::try_from(val)
+            .map(fit_unsigned_64)
+            .map_err(|_| Error::IntegerOutOfBounds {
+                value: raw.to_string().into(),
+                target_type: "u64",
+            })
     }
 }
 

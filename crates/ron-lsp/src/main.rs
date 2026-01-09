@@ -101,7 +101,12 @@ impl RonLanguageServer {
             )
             .await;
 
-        if workspace_roots.is_empty() && config.schema_dirs.iter().any(|d| !PathBuf::from(d).is_absolute()) {
+        if workspace_roots.is_empty()
+            && config
+                .schema_dirs
+                .iter()
+                .any(|d| !PathBuf::from(d).is_absolute())
+        {
             self.client
                 .log_message(
                     MessageType::WARNING,
@@ -222,19 +227,13 @@ impl LanguageServer for RonLanguageServer {
         // Log workspace roots for debugging
         let roots = self.workspace_roots.read().await;
         self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Workspace roots: {:?}", *roots),
-            )
+            .log_message(MessageType::INFO, format!("Workspace roots: {:?}", *roots))
             .await;
 
         // Log configured schema dirs
         let dirs = self.schema_resolver.schema_dirs();
         self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Schema directories: {:?}", dirs),
-            )
+            .log_message(MessageType::INFO, format!("Schema directories: {:?}", dirs))
             .await;
     }
 

@@ -317,7 +317,11 @@ fn extract_field_names_from_expr(expr: &ast::Expr<'_>) -> Vec<String> {
         ast::Expr::AnonStruct(s) => s.fields.iter().map(|f| f.name.name.to_string()).collect(),
         ast::Expr::Struct(s) => {
             if let Some(ast::StructBody::Fields(fields)) = &s.body {
-                fields.fields.iter().map(|f| f.name.name.to_string()).collect()
+                fields
+                    .fields
+                    .iter()
+                    .map(|f| f.name.name.to_string())
+                    .collect()
             } else {
                 vec![]
             }

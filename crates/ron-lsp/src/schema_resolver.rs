@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use ron_schema::{find_schema, find_schema_in, read_schema, Schema, SchemaResolver as SchemaResolverTrait};
+use ron_schema::{
+    find_schema, find_schema_in, read_schema, Schema, SchemaResolver as SchemaResolverTrait,
+};
 
 use crate::document::Document;
 

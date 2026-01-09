@@ -218,7 +218,10 @@ impl fmt::Display for Error {
             Error::ExpectedStringEnd => f.write_str("Expected end of string"),
             Error::ExpectedIdentifier => f.write_str("Expected identifier"),
             Error::InvalidEscape(s) => f.write_str(s),
-            Error::IntegerOutOfBounds { ref value, target_type } => {
+            Error::IntegerOutOfBounds {
+                ref value,
+                target_type,
+            } => {
                 write!(f, "Integer {value} is out of bounds for {target_type}")
             }
             Error::InvalidIntegerDigit { digit, base } => {
@@ -304,7 +307,10 @@ impl fmt::Display for Error {
                     }
                 )
             }
-            Error::MissingStructField { ref field, ref outer } => {
+            Error::MissingStructField {
+                ref field,
+                ref outer,
+            } => {
                 write!(f, "Missing required field {}", Identifier(field.as_ref()))?;
 
                 match outer {
@@ -312,7 +318,10 @@ impl fmt::Display for Error {
                     None => Ok(()),
                 }
             }
-            Error::DuplicateStructField { ref field, ref outer } => {
+            Error::DuplicateStructField {
+                ref field,
+                ref outer,
+            } => {
                 write!(f, "Duplicate field {}", Identifier(field.as_ref()))?;
 
                 match outer {
@@ -541,10 +550,7 @@ mod tests {
             "Expected closing `)]` after the enable attribute",
         );
         check_error_message(&Error::ExpectedBoolean, "Expected boolean");
-        check_error_message(
-            &Error::ExpectedComma { context: None },
-            "Expected comma",
-        );
+        check_error_message(&Error::ExpectedComma { context: None }, "Expected comma");
         check_error_message(
             &Error::ExpectedComma {
                 context: Some("array"),
@@ -560,10 +566,7 @@ mod tests {
         check_error_message(&Error::ExpectedOptionEnd, "Expected closing `)`");
         check_error_message(&Error::ExpectedStructLikeEnd, "Expected closing `)`");
         check_error_message(&Error::ExpectedMap, "Expected opening `{`");
-        check_error_message(
-            &Error::ExpectedMapColon { context: None },
-            "Expected colon",
-        );
+        check_error_message(&Error::ExpectedMapColon { context: None }, "Expected colon");
         check_error_message(
             &Error::ExpectedMapColon {
                 context: Some("struct field"),

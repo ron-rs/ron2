@@ -43,7 +43,9 @@ use std::{
 
 use crate::{
     Value,
-    ast::{parse_document, value_to_expr, AnonStructExpr, Expr, FieldsBody, NumberKind, StructField},
+    ast::{
+        AnonStructExpr, Expr, FieldsBody, NumberKind, StructField, parse_document, value_to_expr,
+    },
     error::{Error, Result, Span, SpannedError, SpannedResult},
     ser::PrettyConfig,
     value::{Map, Number},
@@ -191,7 +193,8 @@ fn value_type_name(value: &Value) -> &'static str {
 }
 
 /// Get a human-readable type name for an AST expression.
-fn expr_type_name(expr: &Expr<'_>) -> &'static str {
+#[must_use]
+pub fn expr_type_name(expr: &Expr<'_>) -> &'static str {
     match expr {
         Expr::Unit(_) => "unit",
         Expr::Bool(_) => "bool",
@@ -256,11 +259,20 @@ pub fn parse_int_raw(raw: &str) -> Result<ParsedInt> {
     let cleaned: String = unsigned_raw.chars().filter(|&c| c != '_').collect();
 
     // Determine base and strip prefix
-    let (base, digits) = if let Some(d) = cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+    let (base, digits) = if let Some(d) = cleaned
+        .strip_prefix("0x")
+        .or_else(|| cleaned.strip_prefix("0X"))
+    {
         (16, d)
-    } else if let Some(d) = cleaned.strip_prefix("0b").or_else(|| cleaned.strip_prefix("0B")) {
+    } else if let Some(d) = cleaned
+        .strip_prefix("0b")
+        .or_else(|| cleaned.strip_prefix("0B"))
+    {
         (2, d)
-    } else if let Some(d) = cleaned.strip_prefix("0o").or_else(|| cleaned.strip_prefix("0O")) {
+    } else if let Some(d) = cleaned
+        .strip_prefix("0o")
+        .or_else(|| cleaned.strip_prefix("0O"))
+    {
         (8, d)
     } else {
         (10, cleaned.as_str())
@@ -271,7 +283,10 @@ pub fn parse_int_raw(raw: &str) -> Result<ParsedInt> {
         target_type: "u128",
     })?;
 
-    Ok(ParsedInt { magnitude, negative })
+    Ok(ParsedInt {
+        magnitude,
+        negative,
+    })
 }
 
 /// Parse an integer from a raw string representation into a specific type.
@@ -480,8 +495,8 @@ impl FromRon for f32 {
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
         match expr {
             Expr::Number(n) => {
-                let val = parse_float_from_raw(&n.raw, &n.kind)
-                    .map_err(|e| spanned_err(e, expr))?;
+                let val =
+                    parse_float_from_raw(&n.raw, &n.kind).map_err(|e| spanned_err(e, expr))?;
                 Ok(val as f32)
             }
             _ => Err(spanned_type_mismatch("f32", expr)),
@@ -673,7 +688,8 @@ impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRon for H
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
         match expr {
             Expr::Map(map) => {
-                let mut result = HashMap::with_capacity_and_hasher(map.entries.len(), Default::default());
+                let mut result =
+                    HashMap::with_capacity_and_hasher(map.entries.len(), Default::default());
                 for entry in &map.entries {
                     let k = K::from_ast(&entry.key)?;
                     let v = V::from_ast(&entry.value)?;
@@ -1200,7 +1216,10 @@ mod tests {
         // Boolean type mismatch
         let err = bool::from_ron("42").unwrap_err();
         assert_eq!(err.span.start.line, 1);
-        assert!(matches!(err.code, crate::error::Error::InvalidValueForType { .. }));
+        assert!(matches!(
+            err.code,
+            crate::error::Error::InvalidValueForType { .. }
+        ));
     }
 
     #[test]
@@ -1222,6 +1241,9 @@ mod tests {
         let value = Value::String("not a number".to_string());
         let err = i32::from_ron_value(value).unwrap_err();
         // The error should still have the correct error code
-        assert!(matches!(err, crate::error::Error::InvalidValueForType { .. }));
+        assert!(matches!(
+            err,
+            crate::error::Error::InvalidValueForType { .. }
+        ));
     }
 }

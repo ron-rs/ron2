@@ -78,9 +78,15 @@ mod completion_integration {
         let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
 
         // Should suggest version, window, graphics, audio, keybindings, player
-        assert!(labels.contains(&"version"), "Should suggest 'version' field");
+        assert!(
+            labels.contains(&"version"),
+            "Should suggest 'version' field"
+        );
         assert!(labels.contains(&"window"), "Should suggest 'window' field");
-        assert!(labels.contains(&"graphics"), "Should suggest 'graphics' field");
+        assert!(
+            labels.contains(&"graphics"),
+            "Should suggest 'graphics' field"
+        );
         assert!(labels.contains(&"audio"), "Should suggest 'audio' field");
         assert!(
             labels.contains(&"keybindings"),
@@ -110,12 +116,19 @@ mod completion_integration {
 
         // Find the 'window' completion
         let window_completion = completions.iter().find(|c| c.label == "window");
-        assert!(window_completion.is_some(), "Should have 'window' completion");
+        assert!(
+            window_completion.is_some(),
+            "Should have 'window' completion"
+        );
 
         let window = window_completion.unwrap();
         // Detail should show the fully qualified TypeRef path
         assert!(
-            window.detail.as_ref().unwrap().contains("ron_showcase::WindowConfig"),
+            window
+                .detail
+                .as_ref()
+                .unwrap()
+                .contains("ron_showcase::WindowConfig"),
             "Window field should show TypeRef type: {:?}",
             window.detail
         );
@@ -136,7 +149,10 @@ mod completion_integration {
 
         // Should suggest all enum variants
         assert!(labels.contains(&"Low"), "Should suggest 'Low' variant");
-        assert!(labels.contains(&"Medium"), "Should suggest 'Medium' variant");
+        assert!(
+            labels.contains(&"Medium"),
+            "Should suggest 'Medium' variant"
+        );
         assert!(labels.contains(&"High"), "Should suggest 'High' variant");
         assert!(labels.contains(&"Ultra"), "Should suggest 'Ultra' variant");
     }
@@ -155,8 +171,14 @@ mod completion_integration {
 
         // Should suggest all variants
         assert!(labels.contains(&"Scout"), "Should suggest 'Scout' variant");
-        assert!(labels.contains(&"Fighter"), "Should suggest 'Fighter' variant");
-        assert!(labels.contains(&"Cruiser"), "Should suggest 'Cruiser' variant");
+        assert!(
+            labels.contains(&"Fighter"),
+            "Should suggest 'Fighter' variant"
+        );
+        assert!(
+            labels.contains(&"Cruiser"),
+            "Should suggest 'Cruiser' variant"
+        );
 
         // Fighter should show struct fields in detail
         let fighter = completions.iter().find(|c| c.label == "Fighter").unwrap();
@@ -354,7 +376,10 @@ mod completion_integration {
 
         // Should suggest all GraphicsQuality variants
         assert!(labels.contains(&"Low"), "Should suggest 'Low' variant");
-        assert!(labels.contains(&"Medium"), "Should suggest 'Medium' variant");
+        assert!(
+            labels.contains(&"Medium"),
+            "Should suggest 'Medium' variant"
+        );
         assert!(labels.contains(&"High"), "Should suggest 'High' variant");
         assert!(labels.contains(&"Ultra"), "Should suggest 'Ultra' variant");
     }

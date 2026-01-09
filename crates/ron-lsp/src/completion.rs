@@ -108,10 +108,7 @@ fn get_field_type<'a>(kind: &'a TypeKind, field_name: &str) -> Option<&'a TypeKi
         return None;
     };
 
-    fields
-        .iter()
-        .find(|f| f.name == field_name)
-        .map(|f| &f.ty)
+    fields.iter().find(|f| f.name == field_name).map(|f| &f.ty)
 }
 
 /// Generate completions for a type at root level.

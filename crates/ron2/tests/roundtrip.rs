@@ -1260,7 +1260,10 @@ fn brace_syntax_after_ident_is_rejected() {
     // Brace syntax for structs is NOT valid: Point { x: 1, y: 2 }
     // This parses "Point" as a unit struct, then "{" starts a map which expects string keys
     let result = from_str("Point { x: 1, y: 2 }");
-    assert!(result.is_err(), "Brace syntax after identifier should be rejected");
+    assert!(
+        result.is_err(),
+        "Brace syntax after identifier should be rejected"
+    );
 }
 
 /// Verify nested structs serialize with parentheses.

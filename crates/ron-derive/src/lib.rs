@@ -215,7 +215,12 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
     if should_write_at_compile_time {
         if let Some(schema) = build_schema(input, &container_attrs) {
             // Ignore errors during compile-time schema writing - don't fail the build
-            let _ = write_schema_at_compile_time(name, &schema, &container_attrs, schema_dir.as_deref());
+            let _ = write_schema_at_compile_time(
+                name,
+                &schema,
+                &container_attrs,
+                schema_dir.as_deref(),
+            );
         }
     }
 
@@ -659,7 +664,9 @@ fn build_schema(input: &DeriveInput, container_attrs: &ContainerAttrs) -> Option
     let doc = extract_doc_comment(&input.attrs);
 
     let type_kind = match &input.data {
-        Data::Struct(data_struct) => build_struct_kind(&data_struct.fields, container_attrs).ok()?,
+        Data::Struct(data_struct) => {
+            build_struct_kind(&data_struct.fields, container_attrs).ok()?
+        }
         Data::Enum(data_enum) => build_enum_kind(data_enum, container_attrs).ok()?,
         Data::Union(_) => return None,
     };
@@ -672,10 +679,7 @@ fn build_schema(input: &DeriveInput, container_attrs: &ContainerAttrs) -> Option
 }
 
 /// Build TypeKind for a struct's fields.
-fn build_struct_kind(
-    fields: &Fields,
-    container_attrs: &ContainerAttrs,
-) -> syn::Result<TypeKind> {
+fn build_struct_kind(fields: &Fields, container_attrs: &ContainerAttrs) -> syn::Result<TypeKind> {
     match fields {
         Fields::Named(named) => {
             let mut field_values: Vec<Field> = Vec::new();
@@ -747,10 +751,7 @@ fn build_field(
 }
 
 /// Build a Variant value for an enum variant.
-fn build_variant(
-    variant: &syn::Variant,
-    container_attrs: &ContainerAttrs,
-) -> syn::Result<Variant> {
+fn build_variant(variant: &syn::Variant, container_attrs: &ContainerAttrs) -> syn::Result<Variant> {
     let variant_attrs = attr::VariantAttrs::from_ast(&variant.attrs)?;
     let original_name = variant.ident.to_string();
     let name = variant_attrs.effective_name(&original_name, container_attrs);
@@ -779,11 +780,7 @@ fn build_variant(
         }
     };
 
-    Ok(Variant {
-        name,
-        doc,
-        kind,
-    })
+    Ok(Variant { name, doc, kind })
 }
 
 /// Convert a Rust type to a TypeKind value (not tokens).
@@ -867,11 +864,8 @@ fn rust_type_to_type_kind(ty: &Type) -> TypeKind {
                 return TypeKind::Unit;
             }
 
-            let elem_kinds: Vec<TypeKind> = tuple
-                .elems
-                .iter()
-                .map(rust_type_to_type_kind)
-                .collect();
+            let elem_kinds: Vec<TypeKind> =
+                tuple.elems.iter().map(rust_type_to_type_kind).collect();
 
             TypeKind::Tuple(elem_kinds)
         }
