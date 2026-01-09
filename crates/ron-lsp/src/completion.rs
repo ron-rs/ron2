@@ -239,6 +239,17 @@ fn get_used_fields(doc: &Document) -> Vec<String> {
 /// Extract field names from a RON value.
 fn extract_field_names(value: &Value) -> Vec<String> {
     match value {
+        // Anonymous struct: (field: value, ...)
+        Value::Struct(fields) => fields.iter().map(|(name, _)| name.clone()).collect(),
+        // Named struct: TypeName(field: value, ...)
+        Value::Named { content, .. } => {
+            if let ron2::NamedContent::Struct(fields) = content {
+                fields.iter().map(|(name, _)| name.clone()).collect()
+            } else {
+                vec![]
+            }
+        }
+        // Map with string keys: { "field": value, ... }
         Value::Map(map) => map
             .iter()
             .filter_map(|(k, _)| {
