@@ -3,12 +3,6 @@
 //! A Language Server Protocol implementation for RON (Rusty Object Notation) files.
 //! Provides auto-completion, diagnostics, and hover documentation based on schemas.
 
-mod completion;
-mod diagnostics;
-mod document;
-mod hover;
-mod schema_resolver;
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,8 +13,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use document::Document;
-use schema_resolver::SchemaResolver;
+use ron_lsp::{diagnostics, hover, provide_completions, Document, SchemaResolver};
 
 /// LSP configuration settings.
 ///
@@ -239,7 +232,7 @@ impl LanguageServer for RonLanguageServer {
 
         let documents = self.documents.read().await;
         if let Some(doc) = documents.get(uri) {
-            let items = completion::provide_completions(doc, position, &self.schema_resolver);
+            let items = provide_completions(doc, position, &self.schema_resolver);
             if !items.is_empty() {
                 return Ok(Some(CompletionResponse::Array(items)));
             }
