@@ -19,8 +19,9 @@ use crate::ast::{
     StringExpr, StringKind, StructBody, StructExpr, StructField, Trivia, TupleBody, TupleElement,
     TupleExpr, UnitExpr,
 };
+use crate::convert::parse_int_raw;
 use crate::error::{Error, Result, Span, SpannedError, SpannedResult};
-use crate::value::{F32, F64, NamedContent, Number, StructFields, Value};
+use crate::value::{F64, NamedContent, Number, StructFields, Value};
 
 /// Extension trait to attach span information to `Result` errors.
 trait SpanExt<T> {
@@ -93,32 +94,18 @@ fn number_to_value(n: &NumberExpr<'_>) -> Result<Value> {
 }
 
 fn parse_integer(raw: &str) -> Result<Value> {
-    let negative = raw.starts_with('-');
-    let raw = if negative { &raw[1..] } else { raw };
+    let parsed = parse_int_raw(raw)?;
 
-    // Remove underscores
-    let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
-
-    // Determine base
-    let (base, digits) = if cleaned.starts_with("0x") || cleaned.starts_with("0X") {
-        (16, &cleaned[2..])
-    } else if cleaned.starts_with("0b") || cleaned.starts_with("0B") {
-        (2, &cleaned[2..])
-    } else if cleaned.starts_with("0o") || cleaned.starts_with("0O") {
-        (8, &cleaned[2..])
-    } else {
-        (10, cleaned.as_str())
-    };
-
-    if negative {
-        // Try to parse as signed
-        let val = i128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds)?;
+    if parsed.negative {
+        // Convert magnitude to signed and negate
+        let val = i128::try_from(parsed.magnitude).map_err(|_| Error::IntegerOutOfBounds {
+            value: raw.to_string().into(),
+            target_type: "i128",
+        })?;
         let val = -val;
-        fit_signed(val)
+        fit_signed(val, raw)
     } else {
-        // Try to parse as unsigned
-        let val = u128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds)?;
-        fit_unsigned(val)
+        fit_unsigned(parsed.magnitude, raw)
     }
 }
 
@@ -126,7 +113,7 @@ fn parse_integer(raw: &str) -> Result<Value> {
 ///
 /// Returns an error if the value is outside the representable range
 /// (i64 range when `integer128` feature is disabled).
-fn fit_signed(val: i128) -> Result<Value> {
+fn fit_signed(val: i128, #[allow(unused_variables)] raw: &str) -> Result<Value> {
     #[cfg(feature = "integer128")]
     {
         if let Ok(v) = i64::try_from(val) {
@@ -138,9 +125,10 @@ fn fit_signed(val: i128) -> Result<Value> {
 
     #[cfg(not(feature = "integer128"))]
     {
-        i64::try_from(val)
-            .map(fit_signed_64)
-            .map_err(|_| Error::IntegerOutOfBounds)
+        i64::try_from(val).map(fit_signed_64).map_err(|_| Error::IntegerOutOfBounds {
+            value: raw.to_string().into(),
+            target_type: "i64",
+        })
     }
 }
 
@@ -160,7 +148,7 @@ fn fit_signed_64(val: i64) -> Value {
 ///
 /// Returns an error if the value is outside the representable range
 /// (u64 range when `integer128` feature is disabled).
-fn fit_unsigned(val: u128) -> Result<Value> {
+fn fit_unsigned(val: u128, #[allow(unused_variables)] raw: &str) -> Result<Value> {
     #[cfg(feature = "integer128")]
     {
         if let Ok(v) = u64::try_from(val) {
@@ -172,9 +160,10 @@ fn fit_unsigned(val: u128) -> Result<Value> {
 
     #[cfg(not(feature = "integer128"))]
     {
-        u64::try_from(val)
-            .map(fit_unsigned_64)
-            .map_err(|_| Error::IntegerOutOfBounds)
+        u64::try_from(val).map(fit_unsigned_64).map_err(|_| Error::IntegerOutOfBounds {
+            value: raw.to_string().into(),
+            target_type: "u64",
+        })
     }
 }
 
@@ -194,18 +183,9 @@ fn parse_float(raw: &str) -> Result<Value> {
     // Remove underscores (not in exponent position as that would be invalid)
     let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
 
-    // Try to parse as f64
+    // Always parse as f64 for consistency
     let val: f64 = cleaned.parse().map_err(|_| Error::ExpectedFloat)?;
-
-    // Check if it fits in f32 without loss
-    // The cast is intentional - we're checking if f32 can represent this value
-    #[allow(clippy::cast_possible_truncation)]
-    let as_f32 = val as f32;
-    if (f64::from(as_f32) - val).abs() < f64::EPSILON {
-        Ok(Value::Number(Number::F32(F32(as_f32))))
-    } else {
-        Ok(Value::Number(Number::F64(F64(val))))
-    }
+    Ok(Value::Number(Number::F64(F64(val))))
 }
 
 fn parse_special_float(raw: &str) -> Result<Value> {

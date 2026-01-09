@@ -20,7 +20,7 @@
 #![warn(clippy::pedantic)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
-#![deny(clippy::panic)]
+#![cfg_attr(not(test), deny(clippy::panic))]
 #![warn(clippy::todo)]
 #![deny(clippy::unimplemented)]
 #![deny(clippy::unreachable)]
@@ -49,8 +49,8 @@ mod util;
 pub mod value;
 
 #[cfg(feature = "std")]
-pub use crate::convert::MapAccess;
-pub use crate::convert::{FromRon, ToRon};
+pub use crate::convert::AstMapAccess;
+pub use crate::convert::{FromRon, ParsedInt, ToRon, parse_int_raw};
 pub use crate::error::{Error, SpannedError, SpannedResult};
 pub use crate::extensions::Extensions;
 pub use crate::options::Options;

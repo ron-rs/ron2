@@ -1,4 +1,7 @@
-use alloc::string::{String, ToString};
+use alloc::{
+    borrow::Cow,
+    string::{String, ToString},
+};
 use core::{fmt, str::Utf8Error};
 
 use crate::chars::{is_ident_first_char, is_ident_raw_char};
@@ -71,11 +74,10 @@ pub enum Error {
 
     InvalidEscape(&'static str),
 
-    IntegerOutOfBounds,
     /// Integer out of bounds with context about the value and target type.
-    IntegerOutOfBoundsFor {
+    IntegerOutOfBounds {
         /// The string representation of the integer that was out of bounds.
-        value: String,
+        value: Cow<'static, str>,
         /// The target type that couldn't hold the value.
         target_type: &'static str,
     },
@@ -104,21 +106,21 @@ pub enum Error {
     },
     NoSuchEnumVariant {
         expected: &'static [&'static str],
-        found: String,
-        outer: Option<String>,
+        found: Cow<'static, str>,
+        outer: Option<Cow<'static, str>>,
     },
     NoSuchStructField {
         expected: &'static [&'static str],
-        found: String,
-        outer: Option<String>,
+        found: Cow<'static, str>,
+        outer: Option<Cow<'static, str>>,
     },
     MissingStructField {
-        field: &'static str,
-        outer: Option<String>,
+        field: Cow<'static, str>,
+        outer: Option<Cow<'static, str>>,
     },
     DuplicateStructField {
-        field: &'static str,
-        outer: Option<String>,
+        field: Cow<'static, str>,
+        outer: Option<Cow<'static, str>>,
     },
     InvalidIdentifier(String),
     SuggestRawIdentifier(String),
@@ -216,8 +218,7 @@ impl fmt::Display for Error {
             Error::ExpectedStringEnd => f.write_str("Expected end of string"),
             Error::ExpectedIdentifier => f.write_str("Expected identifier"),
             Error::InvalidEscape(s) => f.write_str(s),
-            Error::IntegerOutOfBounds => f.write_str("Integer is out of bounds"),
-            Error::IntegerOutOfBoundsFor { ref value, target_type } => {
+            Error::IntegerOutOfBounds { ref value, target_type } => {
                 write!(f, "Integer {value} is out of bounds for {target_type}")
             }
             Error::InvalidIntegerDigit { digit, base } => {
@@ -262,16 +263,16 @@ impl fmt::Display for Error {
                 ref found,
                 ref outer,
             } => {
-                f.write_str("Unexpected ")?;
+                f.write_str("Unknown ")?;
 
                 if outer.is_none() {
                     f.write_str("enum ")?;
                 }
 
-                write!(f, "variant named {}", Identifier(found))?;
+                write!(f, "variant {}", Identifier(found.as_ref()))?;
 
                 if let Some(outer) = outer {
-                    write!(f, " in enum {}", Identifier(outer))?;
+                    write!(f, " in enum {}", Identifier(outer.as_ref()))?;
                 }
 
                 write!(
@@ -288,10 +289,10 @@ impl fmt::Display for Error {
                 ref found,
                 ref outer,
             } => {
-                write!(f, "Unexpected field named {}", Identifier(found))?;
+                write!(f, "Unknown field {}", Identifier(found.as_ref()))?;
 
                 if let Some(outer) = outer {
-                    write!(f, " in {}", Identifier(outer))?;
+                    write!(f, " in {}", Identifier(outer.as_ref()))?;
                 }
 
                 write!(
@@ -303,19 +304,19 @@ impl fmt::Display for Error {
                     }
                 )
             }
-            Error::MissingStructField { field, ref outer } => {
-                write!(f, "Unexpected missing field named {}", Identifier(field))?;
+            Error::MissingStructField { ref field, ref outer } => {
+                write!(f, "Missing required field {}", Identifier(field.as_ref()))?;
 
                 match outer {
-                    Some(outer) => write!(f, " in {}", Identifier(outer)),
+                    Some(outer) => write!(f, " in {}", Identifier(outer.as_ref())),
                     None => Ok(()),
                 }
             }
-            Error::DuplicateStructField { field, ref outer } => {
-                write!(f, "Unexpected duplicate field named {}", Identifier(field))?;
+            Error::DuplicateStructField { ref field, ref outer } => {
+                write!(f, "Duplicate field {}", Identifier(field.as_ref()))?;
 
                 match outer {
-                    Some(outer) => write!(f, " in {}", Identifier(outer)),
+                    Some(outer) => write!(f, " in {}", Identifier(outer.as_ref())),
                     None => Ok(()),
                 }
             }
@@ -577,7 +578,13 @@ mod tests {
         check_error_message(&Error::ExpectedStringEnd, "Expected end of string");
         check_error_message(&Error::ExpectedIdentifier, "Expected identifier");
         check_error_message(&Error::InvalidEscape("Invalid escape"), "Invalid escape");
-        check_error_message(&Error::IntegerOutOfBounds, "Integer is out of bounds");
+        check_error_message(
+            &Error::IntegerOutOfBounds {
+                value: "256".into(),
+                target_type: "u8",
+            },
+            "Integer 256 is out of bounds for u8",
+        );
         check_error_message(&Error::UnclosedBlockComment, "Unclosed block comment");
         check_error_message(
             &Error::TrailingCharacters,

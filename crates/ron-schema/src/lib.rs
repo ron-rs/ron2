@@ -83,7 +83,7 @@ pub mod types;
 pub mod validation;
 
 // Re-export conversion traits from ron2
-pub use ron2::{FromRon, MapAccess, PrettyConfig, ToRon};
+pub use ron2::{AstMapAccess, FromRon, PrettyConfig, ToRon};
 
 pub use error::RonError;
 pub use storage::{

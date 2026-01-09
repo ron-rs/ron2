@@ -151,7 +151,7 @@ fn error_label_and_help(err: &Error) -> (String, Option<String>) {
             "invalid escape sequence".into(),
             Some((*msg).into()),
         ),
-        Error::IntegerOutOfBounds => (
+        Error::IntegerOutOfBounds { .. } => (
             "integer out of bounds".into(),
             Some("The number is too large or too small for the target type".into()),
         ),

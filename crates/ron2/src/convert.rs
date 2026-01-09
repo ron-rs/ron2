@@ -43,8 +43,8 @@ use std::{
 
 use crate::{
     Value,
-    ast::{parse_document, value_to_expr, Expr, NumberKind},
-    error::{Error, Result, SpannedError, SpannedResult},
+    ast::{parse_document, value_to_expr, AnonStructExpr, Expr, FieldsBody, NumberKind, StructField},
+    error::{Error, Result, Span, SpannedError, SpannedResult},
     ser::PrettyConfig,
     value::{Map, Number},
 };
@@ -232,45 +232,74 @@ fn spanned_err(code: Error, expr: &Expr<'_>) -> SpannedError {
 // Number parsing helpers (for FromRon)
 // =============================================================================
 
-/// Parse an integer from a raw string representation.
-fn parse_integer_from_raw<T>(raw: &str, kind: &NumberKind) -> Result<T>
+/// Result of parsing an integer from its raw string representation.
+#[derive(Debug, Clone, Copy)]
+pub struct ParsedInt {
+    /// The absolute value of the parsed integer.
+    pub magnitude: u128,
+    /// Whether the integer was negative.
+    pub negative: bool,
+}
+
+/// Parse an integer from its raw string representation.
+///
+/// Handles decimal, hex (0x), binary (0b), octal (0o), and underscores.
+/// Returns the magnitude and sign separately for flexible fitting into target types.
+pub fn parse_int_raw(raw: &str) -> Result<ParsedInt> {
+    let raw = raw.trim();
+    let (negative, unsigned_raw) = match raw.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, raw),
+    };
+
+    // Remove underscores
+    let cleaned: String = unsigned_raw.chars().filter(|&c| c != '_').collect();
+
+    // Determine base and strip prefix
+    let (base, digits) = if let Some(d) = cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+        (16, d)
+    } else if let Some(d) = cleaned.strip_prefix("0b").or_else(|| cleaned.strip_prefix("0B")) {
+        (2, d)
+    } else if let Some(d) = cleaned.strip_prefix("0o").or_else(|| cleaned.strip_prefix("0O")) {
+        (8, d)
+    } else {
+        (10, cleaned.as_str())
+    };
+
+    let magnitude = u128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds {
+        value: raw.to_string().into(),
+        target_type: "u128",
+    })?;
+
+    Ok(ParsedInt { magnitude, negative })
+}
+
+/// Parse an integer from a raw string representation into a specific type.
+fn parse_integer_from_raw<T>(raw: &str, kind: &NumberKind, target_type: &'static str) -> Result<T>
 where
     T: TryFrom<i128> + TryFrom<u128>,
 {
-    let raw = raw.trim();
-
+    let raw_trimmed = raw.trim();
     match kind {
         NumberKind::Integer => {
-            // Positive integer
-            let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
-            let (base, digits) = if cleaned.starts_with("0x") || cleaned.starts_with("0X") {
-                (16, &cleaned[2..])
-            } else if cleaned.starts_with("0b") || cleaned.starts_with("0B") {
-                (2, &cleaned[2..])
-            } else if cleaned.starts_with("0o") || cleaned.starts_with("0O") {
-                (8, &cleaned[2..])
-            } else {
-                (10, cleaned.as_str())
-            };
-            let val = u128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds)?;
-            T::try_from(val).map_err(|_| Error::IntegerOutOfBounds)
+            let parsed = parse_int_raw(raw)?;
+            T::try_from(parsed.magnitude).map_err(|_| Error::IntegerOutOfBounds {
+                value: raw_trimmed.to_string().into(),
+                target_type,
+            })
         }
         NumberKind::NegativeInteger => {
-            // Negative integer
-            let raw = raw.strip_prefix('-').unwrap_or(raw);
-            let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
-            let (base, digits) = if cleaned.starts_with("0x") || cleaned.starts_with("0X") {
-                (16, &cleaned[2..])
-            } else if cleaned.starts_with("0b") || cleaned.starts_with("0B") {
-                (2, &cleaned[2..])
-            } else if cleaned.starts_with("0o") || cleaned.starts_with("0O") {
-                (8, &cleaned[2..])
-            } else {
-                (10, cleaned.as_str())
-            };
-            let val = i128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds)?;
+            let parsed = parse_int_raw(raw)?;
+            // Convert magnitude to signed and negate
+            let val = i128::try_from(parsed.magnitude).map_err(|_| Error::IntegerOutOfBounds {
+                value: raw_trimmed.to_string().into(),
+                target_type,
+            })?;
             let val = -val;
-            T::try_from(val).map_err(|_| Error::IntegerOutOfBounds)
+            T::try_from(val).map_err(|_| Error::IntegerOutOfBounds {
+                value: raw_trimmed.to_string().into(),
+                target_type,
+            })
         }
         NumberKind::Float | NumberKind::SpecialFloat => Err(Error::ExpectedInteger),
     }
@@ -422,13 +451,16 @@ macro_rules! impl_from_ron_int {
                 fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
                     match expr {
                         Expr::Number(n) => {
-                            parse_integer_from_raw::<$ty>(&n.raw, &n.kind)
+                            parse_integer_from_raw::<$ty>(&n.raw, &n.kind, stringify!($ty))
                                 .map_err(|e| spanned_err(e, expr))
                         }
                         Expr::Byte(b) => {
                             // Byte literals can be converted to integers
                             <$ty>::try_from(b.value)
-                                .map_err(|_| spanned_err(Error::IntegerOutOfBounds, expr))
+                                .map_err(|_| spanned_err(Error::IntegerOutOfBounds {
+                                    value: format!("b'{}'", b.value as char).into(),
+                                    target_type: stringify!($ty),
+                                }, expr))
                         }
                         _ => Err(spanned_type_mismatch(stringify!($ty), expr)),
                     }
@@ -842,123 +874,130 @@ macro_rules! impl_from_ron_tuple {
 impl_from_ron_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
 // =============================================================================
-// MapAccess helper for struct deserialization
+// AstMapAccess helper for struct deserialization with span preservation
 // =============================================================================
 
-/// Helper struct for deserializing RON maps/structs to Rust structs.
+/// Helper struct for deserializing RON structs to Rust structs from AST.
 ///
-/// This is primarily used by the `#[derive(FromRon)]` macro.
+/// Unlike Value-based deserialization, this preserves span information for
+/// precise error reporting at the field level.
 ///
 /// # Example
 ///
 /// ```
-/// use ron2::{Value, MapAccess, FromRon};
-/// use ron2::ast::Expr;
-/// use ron2::error::{SpannedResult, SpannedError};
+/// use ron2::{AstMapAccess, FromRon};
+/// use ron2::ast::{Expr, AnonStructExpr};
+/// use ron2::error::SpannedResult;
 ///
 /// // Manually implementing FromRon for a struct
 /// struct Point { x: i32, y: i32 }
 ///
 /// impl FromRon for Point {
 ///     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
-///         // expr_to_value returns SpannedResult with span info included
-///         let value = ron2::ast::expr_to_value(expr)?;
-///         Self::from_ron_value(value).map_err(|e| SpannedError {
-///             code: e,
-///             span: expr.span().clone(),
-///         })
-///     }
-///
-///     fn from_ron_value(value: Value) -> ron2::error::Result<Self> {
-///         let mut access = MapAccess::new(value)?;
-///         let x = access.required("x")?;
-///         let y = access.required("y")?;
-///         access.deny_unknown_fields()?;
-///         Ok(Point { x, y })
+///         match expr {
+///             Expr::AnonStruct(s) => {
+///                 let mut access = AstMapAccess::from_anon(s);
+///                 let x = access.required("x")?;
+///                 let y = access.required("y")?;
+///                 access.deny_unknown_fields(&["x", "y"])?;
+///                 Ok(Point { x, y })
+///             }
+///             _ => Err(ron2::error::SpannedError {
+///                 code: ron2::error::Error::ExpectedStructLike,
+///                 span: expr.span().clone(),
+///             })
+///         }
 ///     }
 /// }
 /// ```
 #[cfg(feature = "std")]
-pub struct MapAccess {
-    map: HashMap<String, Value>,
+pub struct AstMapAccess<'a> {
+    /// Map from field name to the field struct
+    fields: HashMap<&'a str, &'a StructField<'a>>,
+    /// Track which fields have been consumed
+    consumed: HashSet<&'a str>,
+    /// The span of the entire struct (for missing field errors)
+    struct_span: Span,
+    /// Optional struct name for error messages
+    struct_name: Option<&'a str>,
 }
 
 #[cfg(feature = "std")]
-impl MapAccess {
-    /// Create a new `MapAccess` from a RON Value.
-    ///
-    /// Accepts both `Value::Struct` (named fields) and `Value::Map` (string keys).
-    pub fn new(value: Value) -> Result<Self> {
-        match value {
-            // ron2 parses (name: val) as Value::Struct
-            Value::Struct(fields) => {
-                let mut result = HashMap::with_capacity(fields.len());
-                for (name, v) in fields {
-                    result.insert(name, v);
-                }
-                Ok(Self { map: result })
-            }
-            // { key: val } is parsed as Value::Map
-            Value::Map(map) => {
-                let mut result = HashMap::with_capacity(map.len());
-                for (k, v) in map {
-                    let key = match k {
-                        Value::String(s) => s,
-                        other => {
-                            return Err(Error::invalid_value(alloc::format!(
-                                "expected string key, got {other:?}"
-                            )));
-                        }
-                    };
-                    result.insert(key, v);
-                }
-                Ok(Self { map: result })
-            }
-            // Named struct: Type(field: val)
-            Value::Named { content, .. } => match content {
-                crate::NamedContent::Struct(fields) => {
-                    let mut result = HashMap::with_capacity(fields.len());
-                    for (name, v) in fields {
-                        result.insert(name, v);
-                    }
-                    Ok(Self { map: result })
-                }
-                _ => Err(Error::type_mismatch(
-                    "struct",
-                    &Value::Named {
-                        name: String::new(),
-                        content,
-                    },
-                )),
-            },
-            other => Err(Error::type_mismatch("map/struct", &other)),
+impl<'a> AstMapAccess<'a> {
+    /// Create from an anonymous struct expression: `(field: value, ...)`
+    #[must_use]
+    pub fn from_anon(s: &'a AnonStructExpr<'a>) -> Self {
+        let mut fields = HashMap::with_capacity(s.fields.len());
+        for field in &s.fields {
+            fields.insert(field.name.name.as_ref(), field);
+        }
+        Self {
+            fields,
+            consumed: HashSet::new(),
+            struct_span: s.span.clone(),
+            struct_name: None,
         }
     }
 
-    /// Get a required field from the map.
-    ///
-    /// Returns an error if the field is missing.
-    pub fn required<T: FromRon>(&mut self, name: &str) -> Result<T> {
-        match self.map.remove(name) {
-            Some(v) => T::from_ron_value(v),
-            None => Err(Error::missing_field(name)),
+    /// Create from named struct fields: `Name { field: value, ... }`
+    #[must_use]
+    pub fn from_fields(
+        fields_body: &'a FieldsBody<'a>,
+        struct_name: Option<&'a str>,
+        struct_span: Span,
+    ) -> Self {
+        let mut fields = HashMap::with_capacity(fields_body.fields.len());
+        for field in &fields_body.fields {
+            fields.insert(field.name.name.as_ref(), field);
+        }
+        Self {
+            fields,
+            consumed: HashSet::new(),
+            struct_span,
+            struct_name,
         }
     }
 
-    /// Get an optional field from the map.
+    /// Get a required field.
+    ///
+    /// Returns an error with the field's span if deserialization fails,
+    /// or the struct's span if the field is missing.
+    pub fn required<T: FromRon>(&mut self, name: &'static str) -> SpannedResult<T> {
+        match self.fields.get(name) {
+            Some(field) => {
+                self.consumed.insert(name);
+                T::from_ast(&field.value)
+            }
+            None => Err(SpannedError {
+                code: Error::MissingStructField {
+                    field: Cow::Borrowed(name),
+                    outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
+                },
+                span: self.struct_span.clone(),
+            }),
+        }
+    }
+
+    /// Get an optional field.
     ///
     /// Returns `Ok(None)` if the field is missing.
-    pub fn optional<T: FromRon>(&mut self, name: &str) -> Result<Option<T>> {
-        match self.map.remove(name) {
-            Some(v) => Ok(Some(T::from_ron_value(v)?)),
+    pub fn optional<T: FromRon>(&mut self, name: &'static str) -> SpannedResult<Option<T>> {
+        match self.fields.get(name) {
+            Some(field) => {
+                self.consumed.insert(name);
+                Ok(Some(T::from_ast(&field.value)?))
+            }
             None => Ok(None),
         }
     }
 
     /// Get a field with a default value if missing.
-    pub fn with_default<T: FromRon + Default>(&mut self, name: &str) -> Result<T> {
-        match self.map.remove(name) {
-            Some(v) => T::from_ron_value(v),
+    pub fn with_default<T: FromRon + Default>(&mut self, name: &'static str) -> SpannedResult<T> {
+        match self.fields.get(name) {
+            Some(field) => {
+                self.consumed.insert(name);
+                T::from_ast(&field.value)
+            }
             None => Ok(T::default()),
         }
     }
@@ -966,29 +1005,44 @@ impl MapAccess {
     /// Get a field with a custom default function.
     pub fn with_default_fn<T: FromRon, F: FnOnce() -> T>(
         &mut self,
-        name: &str,
+        name: &'static str,
         default_fn: F,
-    ) -> Result<T> {
-        match self.map.remove(name) {
-            Some(v) => T::from_ron_value(v),
+    ) -> SpannedResult<T> {
+        match self.fields.get(name) {
+            Some(field) => {
+                self.consumed.insert(name);
+                T::from_ast(&field.value)
+            }
             None => Ok(default_fn()),
         }
     }
 
-    /// Check for unknown fields and return an error if any exist.
+    /// Check for unknown fields.
     ///
-    /// Call this after extracting all expected fields to ensure no
-    /// unexpected fields were present.
-    pub fn deny_unknown_fields(&self) -> Result<()> {
-        if let Some(key) = self.map.keys().next() {
-            return Err(Error::unknown_field(key));
+    /// Pass the list of expected field names. Returns an error pointing to
+    /// the first unknown field's span.
+    pub fn deny_unknown_fields(&self, expected: &'static [&'static str]) -> SpannedResult<()> {
+        for (&name, &field) in &self.fields {
+            if !self.consumed.contains(name) {
+                return Err(SpannedError {
+                    code: Error::NoSuchStructField {
+                        expected,
+                        found: Cow::Owned(name.to_string()),
+                        outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
+                    },
+                    span: field.name.span.clone(),
+                });
+            }
         }
         Ok(())
     }
 
     /// Get an iterator over remaining (unconsumed) field names.
-    pub fn remaining_keys(&self) -> impl Iterator<Item = &String> {
-        self.map.keys()
+    pub fn remaining_keys(&self) -> impl Iterator<Item = &str> {
+        self.fields
+            .keys()
+            .filter(|k| !self.consumed.contains(*k))
+            .copied()
     }
 }
 
@@ -1091,14 +1145,22 @@ mod tests {
 
     #[cfg(feature = "std")]
     #[test]
-    fn test_map_access() {
-        let ron = r#"(name: "test", value: 42)"#;
-        let value = crate::from_str(ron).unwrap();
-        let mut access = MapAccess::new(value).unwrap();
+    fn test_ast_map_access() {
+        use crate::ast::parse_document;
 
-        assert_eq!(access.required::<String>("name").unwrap(), "test");
-        assert_eq!(access.required::<i32>("value").unwrap(), 42);
-        assert!(access.deny_unknown_fields().is_ok());
+        let ron = r#"(name: "test", value: 42)"#;
+        let doc = parse_document(ron).unwrap();
+
+        // Get the anonymous struct from the document
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let mut access = AstMapAccess::from_anon(s);
+
+            assert_eq!(access.required::<String>("name").unwrap(), "test");
+            assert_eq!(access.required::<i32>("value").unwrap(), 42);
+            assert!(access.deny_unknown_fields(&["name", "value"]).is_ok());
+        } else {
+            panic!("Expected anonymous struct");
+        }
     }
 
     #[test]

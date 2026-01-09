@@ -97,7 +97,7 @@ fn error_details(err: &Error) -> (&'static str, Option<&'static str>) {
             Some("RON files should contain exactly one value"),
         ),
         Error::InvalidEscape(_) => ("invalid escape sequence", None),
-        Error::IntegerOutOfBounds => (
+        Error::IntegerOutOfBounds { .. } => (
             "integer out of bounds",
             Some("The number is too large or too small for the target type"),
         ),
