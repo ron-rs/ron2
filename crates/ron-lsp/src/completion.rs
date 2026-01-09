@@ -23,20 +23,115 @@ pub fn provide_completions(
     let context = doc.context_at_position(position.line, position.character);
 
     match context {
-        CompletionContext::Root => completions_for_type(&schema.kind, &schema),
+        CompletionContext::Root => completions_for_type(&schema.kind, &schema, resolver),
         CompletionContext::FieldName => {
             // Get fields that haven't been used yet
             let used_fields = get_used_fields(doc);
             completions_for_fields(&schema.kind, &used_fields)
         }
-        CompletionContext::Value => completions_for_value(&schema.kind),
+        CompletionContext::Value => {
+            // Try to determine which field we're completing a value for
+            if let Some(field_name) = find_field_at_cursor(doc, position.line, position.character) {
+                if let Some(field_type) = get_field_type(&schema.kind, &field_name) {
+                    return completions_for_value_type(field_type, resolver);
+                }
+            }
+            // Fall back to root type completions
+            completions_for_value_type(&schema.kind, resolver)
+        }
         CompletionContext::InString | CompletionContext::Unknown => vec![],
     }
 }
 
+/// Find the field name at the cursor position (for Value context).
+///
+/// Uses AST-based lookup when available, falling back to text-based heuristics.
+fn find_field_at_cursor(doc: &Document, line: u32, col: u32) -> Option<String> {
+    // Prefer AST-based lookup (more accurate)
+    if let Some(field) = doc.find_field_at_position(line, col) {
+        return Some(field);
+    }
+
+    // Fall back to text-based heuristics
+    find_field_at_cursor_text(doc, line, col)
+}
+
+/// Text-based fallback for finding field at cursor (used when AST unavailable).
+fn find_field_at_cursor_text(doc: &Document, line: u32, col: u32) -> Option<String> {
+    let offset = doc.position_to_offset(line, col)?;
+    let before = &doc.content[..offset];
+
+    // Find the most recent colon that's not inside a string
+    let mut in_string = false;
+    let mut escape_next = false;
+    let mut paren_depth = 0i32;
+    let mut colon_pos = None;
+
+    for (i, c) in before.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        match c {
+            '\\' if in_string => escape_next = true,
+            '"' => in_string = !in_string,
+            '(' if !in_string => paren_depth += 1,
+            ')' if !in_string => paren_depth -= 1,
+            ':' if !in_string && paren_depth > 0 => colon_pos = Some(i),
+            _ => {}
+        }
+    }
+
+    let colon_pos = colon_pos?;
+
+    // Extract the field name before the colon
+    let before_colon = &before[..colon_pos];
+    let trimmed = before_colon.trim_end();
+
+    // Find the start of the identifier
+    let field_start = trimmed
+        .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+
+    let field_name = &trimmed[field_start..];
+    if field_name.is_empty() {
+        return None;
+    }
+
+    Some(field_name.to_string())
+}
+
+/// Get the type of a field from a struct schema.
+fn get_field_type<'a>(kind: &'a TypeKind, field_name: &str) -> Option<&'a TypeKind> {
+    let TypeKind::Struct { fields } = kind else {
+        return None;
+    };
+
+    fields
+        .iter()
+        .find(|f| f.name == field_name)
+        .map(|f| &f.ty)
+}
+
 /// Generate completions for a type at root level.
-fn completions_for_type(kind: &TypeKind, schema: &Schema) -> Vec<CompletionItem> {
-    match kind {
+fn completions_for_type(
+    kind: &TypeKind,
+    schema: &Schema,
+    resolver: &SchemaResolver,
+) -> Vec<CompletionItem> {
+    // Resolve TypeRef if present
+    let resolved = match kind {
+        TypeKind::TypeRef(type_path) => {
+            if let Some(ref_schema) = resolver.load_schema_by_type(type_path) {
+                return completions_for_type(&ref_schema.kind, &ref_schema, resolver);
+            }
+            return vec![];
+        }
+        _ => kind,
+    };
+
+    match resolved {
         TypeKind::Struct { fields } => {
             // At root, suggest starting the struct
             let mut items = vec![];
@@ -156,8 +251,23 @@ fn completion_for_variant(variant: &Variant) -> CompletionItem {
     }
 }
 
+/// Generate completions for a value type, resolving TypeRefs.
+fn completions_for_value_type(kind: &TypeKind, resolver: &SchemaResolver) -> Vec<CompletionItem> {
+    // First resolve TypeRef if present
+    if let TypeKind::TypeRef(type_path) = kind {
+        if let Some(schema) = resolver.load_schema_by_type(type_path) {
+            return completions_for_value_type(&schema.kind, resolver);
+        }
+        // TypeRef couldn't be resolved, no completions
+        return vec![];
+    }
+
+    // Now handle the actual type
+    completions_for_value(kind, resolver)
+}
+
 /// Generate completions for value context (after a colon).
-fn completions_for_value(kind: &TypeKind) -> Vec<CompletionItem> {
+fn completions_for_value(kind: &TypeKind, resolver: &SchemaResolver) -> Vec<CompletionItem> {
     match kind {
         TypeKind::Bool => vec![
             CompletionItem {
@@ -188,11 +298,18 @@ fn completions_for_value(kind: &TypeKind) -> Vec<CompletionItem> {
                     ..Default::default()
                 },
             ];
-            // Also add completions for the inner type
-            items.extend(completions_for_value(inner));
+            // Also add completions for the inner type (resolving TypeRefs)
+            items.extend(completions_for_value_type(inner, resolver));
             items
         }
         TypeKind::Enum { variants } => completions_for_enum_variants(variants),
+        TypeKind::TypeRef(type_path) => {
+            // Resolve the TypeRef and recurse
+            if let Some(schema) = resolver.load_schema_by_type(type_path) {
+                return completions_for_value(&schema.kind, resolver);
+            }
+            vec![]
+        }
         TypeKind::List(_) => vec![CompletionItem {
             label: "[]".to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
@@ -229,15 +346,22 @@ fn completions_for_value(kind: &TypeKind) -> Vec<CompletionItem> {
 
 /// Get the list of field names already used in the document.
 fn get_used_fields(doc: &Document) -> Vec<String> {
+    // Prefer AST-based extraction (more reliable)
+    let ast_fields = doc.get_ast_field_names();
+    if !ast_fields.is_empty() {
+        return ast_fields;
+    }
+
+    // Fall back to Value-based extraction
     let Some(ref value) = doc.parsed_value else {
         return vec![];
     };
 
-    extract_field_names(value)
+    extract_field_names_from_value(value)
 }
 
-/// Extract field names from a RON value.
-fn extract_field_names(value: &Value) -> Vec<String> {
+/// Extract field names from a RON value (fallback when AST unavailable).
+fn extract_field_names_from_value(value: &Value) -> Vec<String> {
     match value {
         // Anonymous struct: (field: value, ...)
         Value::Struct(fields) => fields.iter().map(|(name, _)| name.clone()).collect(),

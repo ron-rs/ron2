@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use ron_schema::{find_schema, find_schema_in, read_schema, Schema};
+use ron_schema::{find_schema, find_schema_in, read_schema, Schema, SchemaResolver as SchemaResolverTrait};
 
 use crate::document::Document;
 
@@ -79,7 +79,7 @@ impl SchemaResolver {
     /// 1. Configured schema directories (from workspace config)
     /// 2. RON_SCHEMA_DIR environment variable
     /// 3. XDG default location
-    fn load_schema_by_type(&self, type_path: &str) -> Option<Schema> {
+    pub fn load_schema_by_type(&self, type_path: &str) -> Option<Schema> {
         // Check cache first
         let cache_key = PathBuf::from(format!("type:{}", type_path));
         if let Some(schema) = self.get_cached(&cache_key) {
@@ -145,5 +145,21 @@ impl SchemaResolver {
 impl Default for SchemaResolver {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl SchemaResolverTrait for SchemaResolver {
+    fn resolve(&self, type_path: &str) -> Option<Schema> {
+        self.load_schema_by_type(type_path)
+    }
+}
+
+/// Wrapper that implements ron_schema::SchemaResolver for &SchemaResolver.
+///
+/// This is needed because validate_with_resolver takes the resolver by reference,
+/// and we need to pass our SchemaResolver which is behind an Arc.
+impl SchemaResolverTrait for &SchemaResolver {
+    fn resolve(&self, type_path: &str) -> Option<Schema> {
+        self.load_schema_by_type(type_path)
     }
 }

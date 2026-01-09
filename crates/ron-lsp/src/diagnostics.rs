@@ -3,7 +3,7 @@
 //! Validates RON files against their schemas and produces
 //! diagnostic messages for errors.
 
-use ron_schema::{validate, ValidationError};
+use ron_schema::{validate_with_resolver, ValidationError};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
@@ -78,7 +78,7 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
         return diagnostics;
     };
 
-    if let Err(error) = validate(value, &schema) {
+    if let Err(error) = validate_with_resolver(value, &schema, resolver) {
         diagnostics.extend(validation_error_to_diagnostics(&error, doc));
     }
 
@@ -184,15 +184,62 @@ fn format_validation_error(error: &ValidationError, doc: &Document) -> (String, 
 
 /// Find the position of a field name in the document.
 fn find_field_position(doc: &Document, field: &str) -> Option<Range> {
-    // Search for "field:" pattern in the document
+    // Prefer AST-based position (more accurate)
+    if let Some(range) = find_field_position_from_ast(doc, field) {
+        return Some(range);
+    }
+
+    // Fall back to text search
     let pattern = format!("{}:", field);
     find_text_position(doc, &pattern).or_else(|| find_text_position(doc, field))
 }
 
+/// Find field position using AST spans.
+fn find_field_position_from_ast(doc: &Document, field: &str) -> Option<Range> {
+    let fields = doc.get_ast_fields_with_spans();
+    for (name, span) in fields {
+        if name == field {
+            return Some(span_to_range(&span));
+        }
+    }
+    None
+}
+
+/// Convert a ron2 Span to an LSP Range.
+fn span_to_range(span: &ron2::error::Span) -> Range {
+    Range {
+        start: Position {
+            line: span.start.line.saturating_sub(1) as u32,
+            character: span.start.col.saturating_sub(1) as u32,
+        },
+        end: Position {
+            line: span.end.line.saturating_sub(1) as u32,
+            character: span.end.col.saturating_sub(1) as u32,
+        },
+    }
+}
+
 /// Find a position where a missing field could be inserted.
 fn find_field_insert_position(doc: &Document, _field: &str) -> Option<Range> {
-    // For missing fields, highlight the opening paren or the end of the struct
-    // Try to find the first '(' after any attributes
+    // If we have an AST, use the root expression span
+    if let Some(ref ast) = doc.ast {
+        if let Some(ref expr) = ast.value {
+            let span = expr.span();
+            // Return the opening delimiter position
+            return Some(Range {
+                start: Position {
+                    line: span.start.line.saturating_sub(1) as u32,
+                    character: span.start.col.saturating_sub(1) as u32,
+                },
+                end: Position {
+                    line: span.start.line.saturating_sub(1) as u32,
+                    character: span.start.col as u32,
+                },
+            });
+        }
+    }
+
+    // Fall back to text search
     for (line_idx, line) in doc.content.lines().enumerate() {
         if line.trim().starts_with("#![") {
             continue;

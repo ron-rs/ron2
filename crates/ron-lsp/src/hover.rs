@@ -21,13 +21,36 @@ pub fn provide_hover(
     // Try to find documentation for this word in the schema
     let info = find_hover_info(word, &schema)?;
 
+    // Try to get a precise range from AST
+    let range = find_word_range_from_ast(doc, word);
+
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value: info,
         }),
-        range: None,
+        range,
     })
+}
+
+/// Find the range of a word (field name) from the AST.
+fn find_word_range_from_ast(doc: &Document, word: &str) -> Option<Range> {
+    let fields = doc.get_ast_fields_with_spans();
+    for (name, span) in fields {
+        if name == word {
+            return Some(Range {
+                start: Position {
+                    line: span.start.line.saturating_sub(1) as u32,
+                    character: span.start.col.saturating_sub(1) as u32,
+                },
+                end: Position {
+                    line: span.end.line.saturating_sub(1) as u32,
+                    character: span.end.col.saturating_sub(1) as u32,
+                },
+            });
+        }
+    }
+    None
 }
 
 /// Find hover information for a word in the schema.

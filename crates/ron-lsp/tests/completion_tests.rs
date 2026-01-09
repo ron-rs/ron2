@@ -310,10 +310,8 @@ mod completion_integration {
 
     #[test]
     fn test_value_context_detected() {
-        // Note: The current completion system doesn't track which specific field
-        // is being edited, so it provides general value completions for the root
-        // schema type. Field-specific value completions (like map {} for keybindings)
-        // would require tracking cursor position relative to field names.
+        // The completion system now tracks which field is being edited and
+        // provides field-type-specific completions.
         let content = r#"#![type = "ron_showcase::GameConfig"]
 
 (
@@ -330,14 +328,76 @@ mod completion_integration {
             "After colon should be Value context"
         );
 
-        // Completions in value context for a struct schema suggest struct snippet
+        // For a String field like 'title', no specific completions are provided
         let completions = ron_lsp::provide_completions(&doc, Position::new(3, 11), &resolver);
+        assert!(
+            completions.is_empty(),
+            "String field should have no completions (user types literal)"
+        );
+    }
 
-        // For struct root type, value context suggests struct snippet
+    #[test]
+    fn test_enum_value_completions_for_field() {
+        // Test that enum completions work when editing a field that has an enum type
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    graphics:
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        // After "graphics:" - value context, should suggest enum variants
+        let completions = ron_lsp::provide_completions(&doc, Position::new(3, 14), &resolver);
+
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+
+        // Should suggest all GraphicsQuality variants
+        assert!(labels.contains(&"Low"), "Should suggest 'Low' variant");
+        assert!(labels.contains(&"Medium"), "Should suggest 'Medium' variant");
+        assert!(labels.contains(&"High"), "Should suggest 'High' variant");
+        assert!(labels.contains(&"Ultra"), "Should suggest 'Ultra' variant");
+    }
+
+    #[test]
+    fn test_map_value_completions_for_field() {
+        // Test that map completions work for a Map field
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    keybindings:
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        // After "keybindings:" - should suggest map snippet
+        let completions = ron_lsp::provide_completions(&doc, Position::new(3, 17), &resolver);
+
+        let map_completion = completions.iter().find(|c| c.label == "{}");
+        assert!(
+            map_completion.is_some(),
+            "Map field should suggest empty map snippet"
+        );
+    }
+
+    #[test]
+    fn test_struct_value_completions_for_typeref_field() {
+        // Test that struct completions work for a TypeRef field pointing to a struct
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    window:
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        // After "window:" - should suggest struct snippet (WindowConfig is a struct)
+        let completions = ron_lsp::provide_completions(&doc, Position::new(3, 12), &resolver);
+
         let struct_completion = completions.iter().find(|c| c.label == "(...)");
         assert!(
             struct_completion.is_some(),
-            "Should suggest struct snippet in value context for struct schema"
+            "TypeRef to struct should suggest struct snippet"
         );
     }
 }

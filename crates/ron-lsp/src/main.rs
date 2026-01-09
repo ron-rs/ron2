@@ -91,16 +91,54 @@ impl RonLanguageServer {
         let workspace_roots = self.workspace_roots.read().await;
         let mut resolved_dirs: Vec<PathBuf> = Vec::new();
 
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Processing schema_dirs config: {:?} with workspace roots: {:?}",
+                    config.schema_dirs, *workspace_roots
+                ),
+            )
+            .await;
+
+        if workspace_roots.is_empty() && config.schema_dirs.iter().any(|d| !PathBuf::from(d).is_absolute()) {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    "No workspace root set - relative schema_dirs paths cannot be resolved. Use absolute paths or open a workspace folder.",
+                )
+                .await;
+        }
+
         for dir in &config.schema_dirs {
             let path = PathBuf::from(dir);
             if path.is_absolute() {
+                self.client
+                    .log_message(
+                        MessageType::INFO,
+                        format!("Adding absolute schema dir: {:?}", path),
+                    )
+                    .await;
                 resolved_dirs.push(path);
             } else {
                 // Resolve relative paths against each workspace root
                 for root in workspace_roots.iter() {
                     let resolved = root.join(&path);
                     if resolved.exists() {
+                        self.client
+                            .log_message(
+                                MessageType::INFO,
+                                format!("Adding resolved schema dir: {:?}", resolved),
+                            )
+                            .await;
                         resolved_dirs.push(resolved);
+                    } else {
+                        self.client
+                            .log_message(
+                                MessageType::WARNING,
+                                format!("Schema dir not found: {:?} (tried {:?})", dir, resolved),
+                            )
+                            .await;
                     }
                 }
             }
@@ -179,6 +217,24 @@ impl LanguageServer for RonLanguageServer {
     async fn initialized(&self, _params: InitializedParams) {
         self.client
             .log_message(MessageType::INFO, "RON Language Server initialized")
+            .await;
+
+        // Log workspace roots for debugging
+        let roots = self.workspace_roots.read().await;
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Workspace roots: {:?}", *roots),
+            )
+            .await;
+
+        // Log configured schema dirs
+        let dirs = self.schema_resolver.schema_dirs();
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Schema directories: {:?}", dirs),
+            )
             .await;
     }
 

@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use ron2::ast::{self, AttributeContent, Document as AstDocument};
 use tower_lsp::lsp_types::Url;
 
 /// A parsed RON document.
@@ -20,7 +21,9 @@ pub struct Document {
     pub type_attr: Option<String>,
     /// Extracted schema attribute (`#![schema = "..."]`).
     pub schema_attr: Option<String>,
-    /// Parsed RON value (if parsing succeeded).
+    /// Parsed AST document (if parsing succeeded).
+    pub ast: Option<AstDocument<'static>>,
+    /// Parsed RON value (if parsing succeeded, converted from AST).
     pub parsed_value: Option<ron2::Value>,
     /// Parse error (if parsing failed).
     pub parse_error: Option<ParseError>,
@@ -45,6 +48,7 @@ impl Document {
             version,
             type_attr: None,
             schema_attr: None,
+            ast: None,
             parsed_value: None,
             parse_error: None,
             line_offsets: Vec::new(),
@@ -58,7 +62,6 @@ impl Document {
         self.content = content;
         self.version = version;
         self.compute_line_offsets();
-        self.extract_attributes();
         self.parse_content();
     }
 
@@ -120,46 +123,66 @@ impl Document {
         (line as u32, col as u32)
     }
 
-    /// Extract inner attributes from the document.
-    fn extract_attributes(&mut self) {
+    /// Parse the RON content using the AST parser.
+    fn parse_content(&mut self) {
+        self.ast = None;
+        self.parsed_value = None;
+        self.parse_error = None;
         self.type_attr = None;
         self.schema_attr = None;
 
-        // Look for #![type = "..."] and #![schema = "..."]
-        for line in self.content.lines() {
-            let trimmed = line.trim();
+        match ast::parse_document(&self.content) {
+            Ok(doc) => {
+                // Extract attributes from AST
+                for attr in &doc.attributes {
+                    match attr.name.as_ref() {
+                        "type" => {
+                            if let AttributeContent::Value(v) = &attr.content {
+                                self.type_attr = Some(strip_string_quotes(v));
+                            }
+                        }
+                        "schema" => {
+                            if let AttributeContent::Value(v) = &attr.content {
+                                self.schema_attr = Some(strip_string_quotes(v));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
 
-            if let Some(rest) = trimmed.strip_prefix("#![type") {
-                if let Some(value) = extract_attribute_value(rest) {
-                    self.type_attr = Some(value);
-                }
-            } else if let Some(rest) = trimmed.strip_prefix("#![schema") {
-                if let Some(value) = extract_attribute_value(rest) {
-                    self.schema_attr = Some(value);
-                }
+                // Convert to Value for schema validation
+                self.parsed_value = ast::to_value(&doc).and_then(|r| r.ok());
+
+                // Store owned AST for position queries
+                self.ast = Some(doc.into_owned());
+            }
+            Err(err) => {
+                // AST parsing failed - fall back to text-based attribute extraction
+                // so completions and schema resolution still work
+                self.extract_attributes_from_text();
+
+                self.parse_error = Some(ParseError {
+                    message: format!("{}", err.code),
+                    line: err.span.start.line.saturating_sub(1),
+                    col: err.span.start.col.saturating_sub(1),
+                });
             }
         }
     }
 
-    /// Parse the RON content.
-    fn parse_content(&mut self) {
-        self.parsed_value = None;
-        self.parse_error = None;
+    /// Extract attributes from text (fallback when AST parsing fails).
+    fn extract_attributes_from_text(&mut self) {
+        for line in self.content.lines() {
+            let trimmed = line.trim();
 
-        // Strip attributes before parsing
-        let content_without_attrs = strip_inner_attributes(&self.content);
-
-        match ron2::from_str(&content_without_attrs) {
-            Ok(value) => {
-                self.parsed_value = Some(value);
-            }
-            Err(err) => {
-                let position = err.span.start;
-                self.parse_error = Some(ParseError {
-                    message: format!("{}", err.code),
-                    line: position.line.saturating_sub(1),
-                    col: position.col.saturating_sub(1),
-                });
+            if let Some(rest) = trimmed.strip_prefix("#![type") {
+                if let Some(value) = extract_attribute_value_from_text(rest) {
+                    self.type_attr = Some(value);
+                }
+            } else if let Some(rest) = trimmed.strip_prefix("#![schema") {
+                if let Some(value) = extract_attribute_value_from_text(rest) {
+                    self.schema_attr = Some(value);
+                }
             }
         }
     }
@@ -251,6 +274,116 @@ impl Document {
             CompletionContext::Root
         }
     }
+
+    /// Get field names from the root AST expression.
+    ///
+    /// Returns field names for anonymous structs `(field: value, ...)` or
+    /// named structs with fields `Name(field: value, ...)`.
+    pub fn get_ast_field_names(&self) -> Vec<String> {
+        let Some(ref ast) = self.ast else {
+            return vec![];
+        };
+        let Some(ref expr) = ast.value else {
+            return vec![];
+        };
+        extract_field_names_from_expr(expr)
+    }
+
+    /// Get field names with their spans from the root AST expression.
+    pub fn get_ast_fields_with_spans(&self) -> Vec<(String, ron2::error::Span)> {
+        let Some(ref ast) = self.ast else {
+            return vec![];
+        };
+        let Some(ref expr) = ast.value else {
+            return vec![];
+        };
+        extract_fields_with_spans_from_expr(expr)
+    }
+
+    /// Find the field name at a given position (for value completions).
+    ///
+    /// Walks the AST to find which field's value contains the cursor position.
+    pub fn find_field_at_position(&self, line: u32, col: u32) -> Option<String> {
+        let offset = self.position_to_offset(line, col)?;
+        let ast = self.ast.as_ref()?;
+        let expr = ast.value.as_ref()?;
+        find_field_containing_offset(expr, offset)
+    }
+}
+
+/// Extract field names from an AST expression.
+fn extract_field_names_from_expr(expr: &ast::Expr<'_>) -> Vec<String> {
+    match expr {
+        ast::Expr::AnonStruct(s) => s.fields.iter().map(|f| f.name.name.to_string()).collect(),
+        ast::Expr::Struct(s) => {
+            if let Some(ast::StructBody::Fields(fields)) = &s.body {
+                fields.fields.iter().map(|f| f.name.name.to_string()).collect()
+            } else {
+                vec![]
+            }
+        }
+        _ => vec![],
+    }
+}
+
+/// Extract field names with their spans from an AST expression.
+fn extract_fields_with_spans_from_expr(expr: &ast::Expr<'_>) -> Vec<(String, ron2::error::Span)> {
+    match expr {
+        ast::Expr::AnonStruct(s) => s
+            .fields
+            .iter()
+            .map(|f| (f.name.name.to_string(), f.name.span.clone()))
+            .collect(),
+        ast::Expr::Struct(s) => {
+            if let Some(ast::StructBody::Fields(fields)) = &s.body {
+                fields
+                    .fields
+                    .iter()
+                    .map(|f| (f.name.name.to_string(), f.name.span.clone()))
+                    .collect()
+            } else {
+                vec![]
+            }
+        }
+        _ => vec![],
+    }
+}
+
+/// Find the field name whose value contains the given offset.
+fn find_field_containing_offset(expr: &ast::Expr<'_>, offset: usize) -> Option<String> {
+    let fields: Vec<&ast::StructField<'_>> = match expr {
+        ast::Expr::AnonStruct(s) => s.fields.iter().collect(),
+        ast::Expr::Struct(s) => {
+            if let Some(ast::StructBody::Fields(f)) = &s.body {
+                f.fields.iter().collect()
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+
+    // Find the field whose value span contains the offset
+    for field in &fields {
+        let value_span = field.value.span();
+        if offset >= value_span.start_offset && offset <= value_span.end_offset {
+            return Some(field.name.name.to_string());
+        }
+    }
+
+    // Also check if we're after the colon but before any value (typing a new value)
+    for field in &fields {
+        // If offset is after the colon and before or at the value start
+        if offset > field.colon.end_offset {
+            let value_span = field.value.span();
+            // Check if we're between colon and value, or the cursor is at value start
+            if offset <= value_span.start_offset {
+                return Some(field.name.name.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 /// Context for completion suggestions.
@@ -268,26 +401,24 @@ pub enum CompletionContext {
     Unknown,
 }
 
-/// Extract the value from an attribute like `= "value"]`.
-fn extract_attribute_value(rest: &str) -> Option<String> {
+/// Strip surrounding quotes from a string literal (e.g., `"value"` -> `value`).
+fn strip_string_quotes(s: &str) -> String {
+    let s = s.trim();
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Extract the value from an attribute like `= "value"]` (text-based fallback).
+fn extract_attribute_value_from_text(rest: &str) -> Option<String> {
     let rest = rest.trim();
     let rest = rest.strip_prefix('=')?;
     let rest = rest.trim();
     let rest = rest.strip_prefix('"')?;
     let end = rest.find('"')?;
     Some(rest[..end].to_string())
-}
-
-/// Strip inner attributes from RON content.
-fn strip_inner_attributes(content: &str) -> String {
-    content
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.starts_with("#![")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Check if a byte is a valid identifier character.

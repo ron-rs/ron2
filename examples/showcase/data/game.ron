@@ -16,7 +16,7 @@
     graphics: Medium,
 
     audio: (
-        master_volume: 0.8,
+        master_volume: 1.5,
         music_volume: 0.6,
         effects_volume: 1.0,
     ),
