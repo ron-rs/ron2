@@ -26,9 +26,30 @@ unicode-ident = { version = "1.0", default-features = false }
 unicode-segmentation = { version = "1.11", default-features = false, optional = true }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 ron = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 ron-derive = { path = "../ron-derive" }
+
+[[bench]]
+name = "parsing"
+harness = false
+
+[[bench]]
+name = "serialization"
+harness = false
+
+[[bench]]
+name = "formatting"
+harness = false
+
+[[bench]]
+name = "roundtrip"
+harness = false
+
+[[bench]]
+name = "typed"
+harness = false
 
 [package.metadata.docs.rs]
 features = ["integer128"]

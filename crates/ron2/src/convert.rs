@@ -244,6 +244,20 @@ pub struct ParsedInt {
     pub negative: bool,
 }
 
+/// Determine base and strip prefix from a numeric string.
+/// Returns (base, digits_str).
+fn determine_base_and_digits(s: &str) -> (u32, &str) {
+    if let Some(d) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        (16, d)
+    } else if let Some(d) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
+        (2, d)
+    } else if let Some(d) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+        (8, d)
+    } else {
+        (10, s)
+    }
+}
+
 /// Parse an integer from its raw string representation.
 ///
 /// Handles decimal, hex (0x), binary (0b), octal (0o), and underscores.
@@ -255,30 +269,17 @@ pub fn parse_int_raw(raw: &str) -> Result<ParsedInt> {
         None => (false, raw),
     };
 
-    // Remove underscores
-    let cleaned: String = unsigned_raw.chars().filter(|&c| c != '_').collect();
-
-    // Determine base and strip prefix
-    let (base, digits) = if let Some(d) = cleaned
-        .strip_prefix("0x")
-        .or_else(|| cleaned.strip_prefix("0X"))
-    {
-        (16, d)
-    } else if let Some(d) = cleaned
-        .strip_prefix("0b")
-        .or_else(|| cleaned.strip_prefix("0B"))
-    {
-        (2, d)
-    } else if let Some(d) = cleaned
-        .strip_prefix("0o")
-        .or_else(|| cleaned.strip_prefix("0O"))
-    {
-        (8, d)
+    // Fast path: no underscores (common case)
+    let magnitude = if !unsigned_raw.contains('_') {
+        let (base, digits) = determine_base_and_digits(unsigned_raw);
+        u128::from_str_radix(digits, base)
     } else {
-        (10, cleaned.as_str())
-    };
-
-    let magnitude = u128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds {
+        // Slow path: filter underscores
+        let cleaned: String = unsigned_raw.chars().filter(|&c| c != '_').collect();
+        let (base, digits) = determine_base_and_digits(&cleaned);
+        u128::from_str_radix(digits, base)
+    }
+    .map_err(|_| Error::IntegerOutOfBounds {
         value: raw.to_string().into(),
         target_type: "u128",
     })?;
@@ -330,14 +331,15 @@ fn parse_float_from_raw(raw: &str, kind: &NumberKind) -> Result<f64> {
             "NaN" => Ok(f64::NAN),
             _ => Err(Error::ExpectedFloat),
         },
-        NumberKind::Float => {
-            let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
-            cleaned.parse().map_err(|_| Error::ExpectedFloat)
-        }
-        NumberKind::Integer | NumberKind::NegativeInteger => {
-            // Also accept integers as floats
-            let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
-            cleaned.parse().map_err(|_| Error::ExpectedFloat)
+        NumberKind::Float | NumberKind::Integer | NumberKind::NegativeInteger => {
+            // Fast path: no underscores (common case)
+            if !raw.contains('_') {
+                raw.parse().map_err(|_| Error::ExpectedFloat)
+            } else {
+                // Slow path: filter underscores
+                let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
+                cleaned.parse().map_err(|_| Error::ExpectedFloat)
+            }
         }
     }
 }
