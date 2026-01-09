@@ -512,7 +512,12 @@ impl<'a> AstParser<'a> {
 
             // Expect colon
             if self.peek_kind() != TokenKind::Colon {
-                return Err(Self::error(name_tok.span, Error::ExpectedMapColon));
+                return Err(Self::error(
+                    name_tok.span,
+                    Error::ExpectedMapColon {
+                        context: Some("struct field"),
+                    },
+                ));
             }
             let colon_tok = self.next_token();
 
@@ -659,7 +664,12 @@ impl<'a> AstParser<'a> {
             let pre_colon = self.collect_leading_trivia();
 
             if self.peek_kind() != TokenKind::Colon {
-                return Err(Self::error(key.span().clone(), Error::ExpectedMapColon));
+                return Err(Self::error(
+                    key.span().clone(),
+                    Error::ExpectedMapColon {
+                        context: Some("map entry"),
+                    },
+                ));
             }
             let colon_tok = self.next_token();
 
@@ -1114,7 +1124,7 @@ impl<'a> AstParser<'a> {
             let pre_colon = self.collect_leading_trivia();
 
             if self.peek_kind() != TokenKind::Colon {
-                return Err(Self::error(name_tok.span, Error::ExpectedMapColon));
+                return Err(Self::error(name_tok.span, Error::ExpectedMapColon { context: Some("struct field") }));
             }
             let colon_tok = self.next_token();
 
@@ -1243,7 +1253,7 @@ impl<'a> AstParser<'a> {
             let pre_colon = self.collect_leading_trivia();
 
             if self.peek_kind() != TokenKind::Colon {
-                return Err(Self::error(name_tok.span, Error::ExpectedMapColon));
+                return Err(Self::error(name_tok.span, Error::ExpectedMapColon { context: Some("struct field") }));
             }
             let colon_tok = self.next_token();
 

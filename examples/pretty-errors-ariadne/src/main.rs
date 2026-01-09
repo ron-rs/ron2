@@ -49,9 +49,15 @@ fn error_details(err: &Error) -> (&'static str, Option<&'static str>) {
             "expected `}`",
             Some("Did you forget to close the map?"),
         ),
-        Error::ExpectedMapColon => (
+        Error::ExpectedMapColon { context } => (
             "expected `:`",
-            Some("Map entries use colons: key: value"),
+            context
+                .map(|ctx| match ctx {
+                    "struct field" => "Struct fields use colons: field: value",
+                    "map entry" => "Map entries use colons: key: value",
+                    _ => "Colons separate keys from values",
+                })
+                .or(Some("Map entries use colons: key: value")),
         ),
         Error::ExpectedStructLike => (
             "expected `(`",
@@ -61,9 +67,17 @@ fn error_details(err: &Error) -> (&'static str, Option<&'static str>) {
             "expected `)`",
             Some("Did you forget to close the struct/tuple?"),
         ),
-        Error::ExpectedComma => (
+        Error::ExpectedComma { context } => (
             "expected `,`",
-            Some("Separate elements with commas. Trailing commas are allowed."),
+            context
+                .map(|ctx| match ctx {
+                    "array" => "Separate array elements with commas",
+                    "map" => "Separate map entries with commas",
+                    "tuple" => "Separate tuple elements with commas",
+                    "struct" => "Separate struct fields with commas",
+                    _ => "Separate elements with commas. Trailing commas are allowed.",
+                })
+                .or(Some("Separate elements with commas. Trailing commas are allowed.")),
         ),
         Error::ExpectedIdentifier => (
             "expected an identifier",

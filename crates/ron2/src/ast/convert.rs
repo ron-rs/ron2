@@ -114,29 +114,33 @@ fn parse_integer(raw: &str) -> Result<Value> {
         // Try to parse as signed
         let val = i128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds)?;
         let val = -val;
-        Ok(fit_signed(val))
+        fit_signed(val)
     } else {
         // Try to parse as unsigned
         let val = u128::from_str_radix(digits, base).map_err(|_| Error::IntegerOutOfBounds)?;
-        Ok(fit_unsigned(val))
+        fit_unsigned(val)
     }
 }
 
-/// Fit a signed value into the smallest Number variant
-fn fit_signed(val: i128) -> Value {
+/// Fit a signed value into the smallest Number variant.
+///
+/// Returns an error if the value is outside the representable range
+/// (i64 range when `integer128` feature is disabled).
+fn fit_signed(val: i128) -> Result<Value> {
     #[cfg(feature = "integer128")]
-    if let Ok(v) = i64::try_from(val) {
-        return fit_signed_64(v);
-    } else {
-        return Value::Number(Number::I128(val));
+    {
+        if let Ok(v) = i64::try_from(val) {
+            return Ok(fit_signed_64(v));
+        } else {
+            return Ok(Value::Number(Number::I128(val)));
+        }
     }
 
     #[cfg(not(feature = "integer128"))]
     {
-        // In non-integer128 mode, we truncate to i64 range
-        // This is intentional - values outside i64 range will overflow
-        #[allow(clippy::cast_possible_truncation)]
-        fit_signed_64(val as i64)
+        i64::try_from(val)
+            .map(fit_signed_64)
+            .map_err(|_| Error::IntegerOutOfBounds)
     }
 }
 
@@ -152,21 +156,25 @@ fn fit_signed_64(val: i64) -> Value {
     }
 }
 
-/// Fit an unsigned value into the smallest Number variant
-fn fit_unsigned(val: u128) -> Value {
+/// Fit an unsigned value into the smallest Number variant.
+///
+/// Returns an error if the value is outside the representable range
+/// (u64 range when `integer128` feature is disabled).
+fn fit_unsigned(val: u128) -> Result<Value> {
     #[cfg(feature = "integer128")]
-    if let Ok(v) = u64::try_from(val) {
-        return fit_unsigned_64(v);
-    } else {
-        return Value::Number(Number::U128(val));
+    {
+        if let Ok(v) = u64::try_from(val) {
+            return Ok(fit_unsigned_64(v));
+        } else {
+            return Ok(Value::Number(Number::U128(val)));
+        }
     }
 
     #[cfg(not(feature = "integer128"))]
     {
-        // In non-integer128 mode, we truncate to u64 range
-        // This is intentional - values outside u64 range will overflow
-        #[allow(clippy::cast_possible_truncation)]
-        fit_unsigned_64(val as u64)
+        u64::try_from(val)
+            .map(fit_unsigned_64)
+            .map_err(|_| Error::IntegerOutOfBounds)
     }
 }
 

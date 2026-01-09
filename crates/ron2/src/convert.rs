@@ -97,8 +97,12 @@ pub trait FromRon: Sized {
     /// Construct this type from a RON [`Value`].
     ///
     /// This converts the Value to an AST expression with synthetic spans,
-    /// then calls [`from_ast`](FromRon::from_ast). Error spans will be synthetic
-    /// (line 0) since the Value has no source position information.
+    /// then calls [`from_ast`](FromRon::from_ast).
+    ///
+    /// **Note:** Errors will have synthetic spans (line 0, column 0) since
+    /// Values have no source position information. For precise error locations,
+    /// use [`from_ron`](FromRon::from_ron) to parse from a string directly.
+    /// You can check if a span is synthetic using [`Span::is_synthetic()`](crate::error::Span::is_synthetic).
     fn from_ron_value(value: Value) -> Result<Self> {
         let expr = value_to_expr(value);
         Self::from_ast(&expr).map_err(|e| e.code)
@@ -166,28 +170,14 @@ impl Error {
 }
 
 /// Get a human-readable type name for a Value.
+///
+/// Returns generic category names (e.g., "number" not "i32") to match
+/// `expr_type_name` for consistent error messages across AST and Value paths.
 fn value_type_name(value: &Value) -> &'static str {
     match value {
         Value::Bool(_) => "bool",
         Value::Char(_) => "char",
-        Value::Number(n) => match n {
-            Number::I8(_) => "i8",
-            Number::I16(_) => "i16",
-            Number::I32(_) => "i32",
-            Number::I64(_) => "i64",
-            #[cfg(feature = "integer128")]
-            Number::I128(_) => "i128",
-            Number::U8(_) => "u8",
-            Number::U16(_) => "u16",
-            Number::U32(_) => "u32",
-            Number::U64(_) => "u64",
-            #[cfg(feature = "integer128")]
-            Number::U128(_) => "u128",
-            Number::F32(_) => "f32",
-            Number::F64(_) => "f64",
-            // Handle non-exhaustive variant
-            _ => "number",
-        },
+        Value::Number(_) => "number",
         Value::String(_) => "string",
         Value::Bytes(_) => "bytes",
         Value::Option(_) => "option",

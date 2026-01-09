@@ -97,9 +97,15 @@ fn error_label_and_help(err: &Error) -> (String, Option<String>) {
             "expected `}`".into(),
             Some("Did you forget to close the map?".into()),
         ),
-        Error::ExpectedMapColon => (
+        Error::ExpectedMapColon { context } => (
             "expected `:`".into(),
-            Some("Map entries use colons: key: value".into()),
+            context
+                .map(|ctx| match ctx {
+                    "struct field" => "Struct fields use colons: field: value".into(),
+                    "map entry" => "Map entries use colons: key: value".into(),
+                    _ => "Colons separate keys from values".into(),
+                })
+                .or(Some("Map entries use colons: key: value".into())),
         ),
         Error::ExpectedStructLike => (
             "expected `(`".into(),
@@ -109,9 +115,17 @@ fn error_label_and_help(err: &Error) -> (String, Option<String>) {
             "expected `)`".into(),
             Some("Did you forget to close the struct/tuple?".into()),
         ),
-        Error::ExpectedComma => (
+        Error::ExpectedComma { context } => (
             "expected `,`".into(),
-            Some("Separate elements with commas. Trailing commas are allowed.".into()),
+            context
+                .map(|ctx| match ctx {
+                    "array" => "Separate array elements with commas".into(),
+                    "map" => "Separate map entries with commas".into(),
+                    "tuple" => "Separate tuple elements with commas".into(),
+                    "struct" => "Separate struct fields with commas".into(),
+                    _ => "Separate elements with commas. Trailing commas are allowed.".into(),
+                })
+                .or(Some("Separate elements with commas. Trailing commas are allowed.".into())),
         ),
         Error::ExpectedIdentifier => (
             "expected an identifier".into(),

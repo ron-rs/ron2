@@ -31,7 +31,14 @@ pub enum Error {
     ExpectedAttribute,
     ExpectedAttributeEnd,
     ExpectedBoolean,
-    ExpectedComma,
+    /// Expected a comma separator.
+    ///
+    /// The optional context indicates where the comma was expected
+    /// (e.g., "array", "map", "tuple", "struct").
+    ExpectedComma {
+        /// Optional context about where the comma was expected.
+        context: Option<&'static str>,
+    },
     ExpectedChar,
     ExpectedByteLiteral,
     ExpectedFloat,
@@ -40,7 +47,14 @@ pub enum Error {
     ExpectedOption,
     ExpectedOptionEnd,
     ExpectedMap,
-    ExpectedMapColon,
+    /// Expected a colon separator.
+    ///
+    /// The optional context indicates where the colon was expected
+    /// (e.g., "map entry", "struct field").
+    ExpectedMapColon {
+        /// Optional context about where the colon was expected.
+        context: Option<&'static str>,
+    },
     ExpectedMapEnd,
     ExpectedDifferentStructName {
         expected: &'static str,
@@ -58,6 +72,13 @@ pub enum Error {
     InvalidEscape(&'static str),
 
     IntegerOutOfBounds,
+    /// Integer out of bounds with context about the value and target type.
+    IntegerOutOfBoundsFor {
+        /// The string representation of the integer that was out of bounds.
+        value: String,
+        /// The target type that couldn't hold the value.
+        target_type: &'static str,
+    },
     InvalidIntegerDigit {
         digit: char,
         base: u8,
@@ -157,7 +178,8 @@ impl fmt::Display for Error {
                 f.write_str("Expected closing `)]` after the enable attribute")
             }
             Error::ExpectedBoolean => f.write_str("Expected boolean"),
-            Error::ExpectedComma => f.write_str("Expected comma"),
+            Error::ExpectedComma { context: Some(ctx) } => write!(f, "Expected comma in {ctx}"),
+            Error::ExpectedComma { context: None } => f.write_str("Expected comma"),
             Error::ExpectedChar => f.write_str("Expected char"),
             Error::ExpectedByteLiteral => f.write_str("Expected byte literal"),
             Error::ExpectedFloat => f.write_str("Expected float"),
@@ -168,7 +190,8 @@ impl fmt::Display for Error {
                 f.write_str("Expected closing `)`")
             }
             Error::ExpectedMap => f.write_str("Expected opening `{`"),
-            Error::ExpectedMapColon => f.write_str("Expected colon"),
+            Error::ExpectedMapColon { context: Some(ctx) } => write!(f, "Expected colon in {ctx}"),
+            Error::ExpectedMapColon { context: None } => f.write_str("Expected colon"),
             Error::ExpectedMapEnd => f.write_str("Expected closing `}`"),
             Error::ExpectedDifferentStructName {
                 expected,
@@ -194,6 +217,9 @@ impl fmt::Display for Error {
             Error::ExpectedIdentifier => f.write_str("Expected identifier"),
             Error::InvalidEscape(s) => f.write_str(s),
             Error::IntegerOutOfBounds => f.write_str("Integer is out of bounds"),
+            Error::IntegerOutOfBoundsFor { ref value, target_type } => {
+                write!(f, "Integer {value} is out of bounds for {target_type}")
+            }
             Error::InvalidIntegerDigit { digit, base } => {
                 write!(f, "Invalid digit {digit:?} for base {base} integers")
             }
@@ -333,20 +359,37 @@ impl fmt::Display for Position {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 /// Spans select a range of text between two positions.
+///
 /// Spans are used in [`SpannedError`] to indicate the start and end positions
 /// of the parser cursor before and after it encountered an error in parsing.
-///
 /// Spans also include byte offsets for direct source text slicing.
+///
+/// ## Byte Offset Semantics
+///
+/// Byte offsets use **exclusive end** semantics (like Rust ranges):
+/// - `start_offset..end_offset` covers the half-open range `[start, end)`
+/// - Use `source[start_offset..end_offset]` to slice the spanned text
+///
+/// ## Position Semantics
+///
+/// Line and column positions are **1-indexed** (the first line is line 1,
+/// the first column is column 1). The end position points to the last
+/// character in the span (inclusive for display purposes).
+///
+/// ## Synthetic Spans
+///
+/// Spans created by [`Span::synthetic()`] have `line: 0` to distinguish them
+/// from real source positions. Use [`is_synthetic()`](Self::is_synthetic) to check.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Span {
     /// The start position (line and column, 1-indexed).
     pub start: Position,
     /// The end position (line and column, 1-indexed).
     pub end: Position,
-    /// The start byte offset in the source (0-indexed).
+    /// The start byte offset in the source (0-indexed, inclusive).
     pub start_offset: usize,
-    /// The end byte offset in the source (0-indexed).
+    /// The end byte offset in the source (0-indexed, exclusive).
     pub end_offset: usize,
 }
 
@@ -355,6 +398,7 @@ impl Span {
     ///
     /// Uses line 0 to distinguish from real spans (which are 1-indexed).
     /// This is useful when converting `Value` to `Expr` for deserialization.
+    /// Check with [`is_synthetic()`](Self::is_synthetic).
     #[must_use]
     pub fn synthetic() -> Self {
         Self {
@@ -363,6 +407,16 @@ impl Span {
             start_offset: 0,
             end_offset: 0,
         }
+    }
+
+    /// Returns `true` if this is a synthetic span (no source position).
+    ///
+    /// Synthetic spans are created by [`Span::synthetic()`] for values
+    /// converted from `Value` to AST without original source positions.
+    /// They use line 0 to distinguish from real spans (which are 1-indexed).
+    #[must_use]
+    pub fn is_synthetic(&self) -> bool {
+        self.start.line == 0
     }
 
     /// Slice the given source text using this span's byte offsets.
@@ -486,7 +540,16 @@ mod tests {
             "Expected closing `)]` after the enable attribute",
         );
         check_error_message(&Error::ExpectedBoolean, "Expected boolean");
-        check_error_message(&Error::ExpectedComma, "Expected comma");
+        check_error_message(
+            &Error::ExpectedComma { context: None },
+            "Expected comma",
+        );
+        check_error_message(
+            &Error::ExpectedComma {
+                context: Some("array"),
+            },
+            "Expected comma in array",
+        );
         check_error_message(&Error::ExpectedChar, "Expected char");
         check_error_message(&Error::ExpectedByteLiteral, "Expected byte literal");
         check_error_message(&Error::ExpectedFloat, "Expected float");
@@ -496,7 +559,16 @@ mod tests {
         check_error_message(&Error::ExpectedOptionEnd, "Expected closing `)`");
         check_error_message(&Error::ExpectedStructLikeEnd, "Expected closing `)`");
         check_error_message(&Error::ExpectedMap, "Expected opening `{`");
-        check_error_message(&Error::ExpectedMapColon, "Expected colon");
+        check_error_message(
+            &Error::ExpectedMapColon { context: None },
+            "Expected colon",
+        );
+        check_error_message(
+            &Error::ExpectedMapColon {
+                context: Some("struct field"),
+            },
+            "Expected colon in struct field",
+        );
         check_error_message(&Error::ExpectedMapEnd, "Expected closing `}`");
         check_error_message(&Error::ExpectedStructLike, "Expected opening `(`");
         check_error_message(&Error::ExpectedUnit, "Expected unit");
