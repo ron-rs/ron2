@@ -58,16 +58,18 @@ fn run_with_stdin_args(input: &str, args: &[&str]) -> (String, String, i32) {
 
 #[test]
 fn test_formats_stdin() {
+    // Root collections are always multiline
     let (stdout, stderr, code) = run_with_stdin("Config(x:1,y:2)");
     assert_eq!(code, 0, "stderr: {stderr}");
-    assert_eq!(stdout, "Config(x: 1, y: 2)\n");
+    assert_eq!(stdout, "Config(\n    x: 1,\n    y: 2,\n)\n");
 }
 
 #[test]
-fn test_formats_compact_array() {
+fn test_formats_root_array_multiline() {
+    // Root collections are always multiline
     let (stdout, _, code) = run_with_stdin("[1,2,3]");
     assert_eq!(code, 0);
-    assert_eq!(stdout, "[1, 2, 3]\n");
+    assert_eq!(stdout, "[\n    1,\n    2,\n    3,\n]\n");
 }
 
 #[test]
@@ -85,8 +87,8 @@ fn test_preserves_comments() {
 
 #[test]
 fn test_check_mode_formatted() {
-    // Already formatted input
-    let (stdout, stderr, code) = run_with_stdin_args("Config(x: 1, y: 2)\n", &["--check"]);
+    // Already formatted input (root collections are multiline)
+    let (stdout, stderr, code) = run_with_stdin_args("Config(\n    x: 1,\n    y: 2,\n)\n", &["--check"]);
     assert_eq!(code, 0, "Expected success for formatted input. stderr: {stderr}, stdout: {stdout}");
 }
 
@@ -118,11 +120,12 @@ fn test_custom_width() {
 }
 
 #[test]
-fn test_large_width() {
-    // Large width should keep compact
-    let (stdout, _, code) = run_with_stdin_args("[1, 2, 3, 4, 5]", &["--width", "100"]);
+fn test_large_width_nested() {
+    // Large width keeps nested collections compact
+    let (stdout, _, code) = run_with_stdin_args("Config(items: [1, 2, 3, 4, 5])", &["--width", "100"]);
     assert_eq!(code, 0);
-    assert_eq!(stdout, "[1, 2, 3, 4, 5]\n");
+    // Root is multiline, nested array stays compact
+    assert!(stdout.contains("[1, 2, 3, 4, 5]"), "Expected compact nested array in: {stdout}");
 }
 
 // ============================================================================

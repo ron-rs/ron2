@@ -58,6 +58,9 @@ impl FormatConfig {
 /// This preserves comments while applying consistent formatting.
 /// The output always ends with a newline.
 ///
+/// Root-level collections are always formatted multiline, while nested
+/// collections use compact format if they fit within the character limit.
+///
 /// # Example
 ///
 /// ```
@@ -66,7 +69,8 @@ impl FormatConfig {
 /// let source = "Config(x:1,y:2)";
 /// let doc = parse_document(source).unwrap();
 /// let formatted = format_document(&doc, &FormatConfig::default());
-/// assert_eq!(formatted, "Config(x: 1, y: 2)\n");
+/// // Root collections are always multiline
+/// assert_eq!(formatted, "Config(\n    x: 1,\n    y: 2,\n)\n");
 /// ```
 #[must_use]
 pub fn format_document(doc: &Document<'_>, config: &FormatConfig) -> String {
@@ -80,6 +84,8 @@ struct Formatter<'a> {
     config: &'a FormatConfig,
     output: String,
     indent_level: usize,
+    /// Whether we're formatting the root expression (compact mode disabled at root).
+    is_root: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -88,6 +94,7 @@ impl<'a> Formatter<'a> {
             config,
             output: String::new(),
             indent_level: 0,
+            is_root: true,
         }
     }
 
@@ -364,13 +371,23 @@ impl<'a> Formatter<'a> {
         F: Fn(&mut Self, &T),
         C: Fn(&T) -> bool,
     {
+        // Root collections with items are always multiline (compact only for nested)
+        let is_root = self.is_root;
+        if is_root {
+            self.is_root = false;
+        }
+
         // Check if any item has a line comment (forces multiline)
         let has_line_comments = items.iter().any(&has_line_comment_fn);
 
         // Check if leading/trailing trivia has line comments
         let trivia_has_line_comments = has_line_comment(leading) || has_line_comment(trailing);
 
-        if has_line_comments || trivia_has_line_comments {
+        // Force multiline for root collections with items, or when comments are present
+        if (is_root && !items.is_empty())
+            || has_line_comments
+            || trivia_has_line_comments
+        {
             self.format_collection_multiline(
                 open,
                 close,
@@ -382,7 +399,7 @@ impl<'a> Formatter<'a> {
             return;
         }
 
-        // Try compact format
+        // Try compact format (only for nested collections)
         let compact = self.try_format_compact(open, close, items, &format_item);
         if compact.len() <= self.config.char_limit {
             self.output.push_str(&compact);
@@ -591,10 +608,11 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_compact_seq() {
-        assert_eq!(format("[1, 2, 3]"), "[1, 2, 3]\n");
-        assert_eq!(format("[1,2,3]"), "[1, 2, 3]\n");
-        assert_eq!(format("[ 1 , 2 , 3 ]"), "[1, 2, 3]\n");
+    fn test_root_seq_multiline() {
+        // Root collections are always multiline
+        assert_eq!(format("[1, 2, 3]"), "[\n    1,\n    2,\n    3,\n]\n");
+        assert_eq!(format("[1,2,3]"), "[\n    1,\n    2,\n    3,\n]\n");
+        assert_eq!(format("[ 1 , 2 , 3 ]"), "[\n    1,\n    2,\n    3,\n]\n");
     }
 
     #[test]
@@ -626,10 +644,11 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_compact_struct() {
-        assert_eq!(format("Point(x:1,y:2)"), "Point(x: 1, y: 2)\n");
-        assert_eq!(format("Point(x: 1, y: 2)"), "Point(x: 1, y: 2)\n");
-        assert_eq!(format("Point( x : 1 , y : 2 )"), "Point(x: 1, y: 2)\n");
+    fn test_root_struct_multiline() {
+        // Root collections are always multiline
+        assert_eq!(format("Point(x:1,y:2)"), "Point(\n    x: 1,\n    y: 2,\n)\n");
+        assert_eq!(format("Point(x: 1, y: 2)"), "Point(\n    x: 1,\n    y: 2,\n)\n");
+        assert_eq!(format("Point( x : 1 , y : 2 )"), "Point(\n    x: 1,\n    y: 2,\n)\n");
     }
 
     #[test]
@@ -639,7 +658,8 @@ mod tests {
 
     #[test]
     fn test_tuple_struct() {
-        assert_eq!(format("Point(1, 2, 3)"), "Point(1, 2, 3)\n");
+        // Root tuple structs are multiline
+        assert_eq!(format("Point(1, 2, 3)"), "Point(\n    1,\n    2,\n    3,\n)\n");
     }
 
     #[test]
@@ -666,9 +686,10 @@ mod tests {
 
     #[test]
     fn test_nested_struct() {
+        // Root is multiline, nested stays compact
         let source = "Config(inner: Point(x: 1, y: 2))";
         let formatted = format(source);
-        assert_eq!(formatted, "Config(inner: Point(x: 1, y: 2))\n");
+        assert_eq!(formatted, "Config(\n    inner: Point(x: 1, y: 2),\n)\n");
     }
 
     #[test]
@@ -685,10 +706,11 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_compact_map() {
+    fn test_root_map_multiline() {
+        // Root collections are always multiline
         let source = "{\"a\": 1, \"b\": 2}";
         let formatted = format(source);
-        assert_eq!(formatted, "{\"a\": 1, \"b\": 2}\n");
+        assert_eq!(formatted, "{\n    \"a\": 1,\n    \"b\": 2,\n}\n");
     }
 
     #[test]
@@ -708,14 +730,16 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_compact_tuple() {
-        assert_eq!(format("(1, 2, 3)"), "(1, 2, 3)\n");
-        assert_eq!(format("(1,2,3)"), "(1, 2, 3)\n");
+    fn test_root_tuple_multiline() {
+        // Root collections are always multiline
+        assert_eq!(format("(1, 2, 3)"), "(\n    1,\n    2,\n    3,\n)\n");
+        assert_eq!(format("(1,2,3)"), "(\n    1,\n    2,\n    3,\n)\n");
     }
 
     #[test]
     fn test_single_element_tuple() {
-        assert_eq!(format("(42,)"), "(42)\n");
+        // Root collections are always multiline
+        assert_eq!(format("(42,)"), "(\n    42,\n)\n");
     }
 
     // =========================================================================
@@ -796,12 +820,15 @@ mod tests {
     }
 
     #[test]
-    fn test_large_char_limit() {
+    fn test_large_char_limit_nested() {
+        // Char limit only applies to nested collections, not root
         let config = FormatConfig::new().char_limit(1000);
-        let long_array: String = format!("[{}]", (1..50).map(|n| n.to_string()).collect::<Vec<_>>().join(", "));
-        let formatted = format_with(&long_array, &config);
-        // Should stay on one line since limit is large
-        assert!(!formatted.contains('\n') || formatted.ends_with('\n') && formatted.matches('\n').count() == 1);
+        // Test with nested array inside a struct
+        let long_array = (1..50).map(|n| n.to_string()).collect::<Vec<_>>().join(", ");
+        let source = format!("Config(items: [{long_array}])");
+        let formatted = format_with(&source, &config);
+        // Root should be multiline, but nested array stays compact
+        assert!(formatted.contains(&format!("[{long_array}]")));
     }
 
     // =========================================================================
@@ -831,17 +858,19 @@ mod tests {
     }
 
     #[test]
-    fn test_no_trailing_comma_compact() {
-        let formatted = format("[1, 2, 3]");
-        // Compact mode should not have trailing comma
-        assert_eq!(formatted, "[1, 2, 3]\n");
+    fn test_no_trailing_comma_compact_nested() {
+        // Test compact nested collection has no trailing comma
+        let formatted = format("Config(items: [1, 2, 3])");
+        // Root is multiline, nested is compact without trailing comma
+        assert!(formatted.contains("[1, 2, 3]"));
     }
 
     #[test]
     fn test_anonymous_struct() {
+        // Root collections are always multiline
         let source = "(x: 1, y: 2)";
         let formatted = format(source);
-        assert_eq!(formatted, "(x: 1, y: 2)\n");
+        assert_eq!(formatted, "(\n    x: 1,\n    y: 2,\n)\n");
     }
 
     #[test]
