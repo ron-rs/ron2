@@ -15,7 +15,6 @@
 //! use ron_derive::Ron;
 //!
 //! #[derive(Debug, PartialEq, Ron)]
-//! #[ron(output = "schemas/")]  // Optional: relative to crate root
 //! /// Application configuration
 //! struct AppConfig {
 //!     /// Server port
@@ -30,7 +29,6 @@
 //!
 //! - `#[ron(rename = "Name")]` - Rename the type in RON output
 //! - `#[ron(rename_all = "camelCase")]` - Rename all fields (camelCase, snake_case, PascalCase, etc.)
-//! - `#[ron(output = "path/")]` - Set schema output directory (RonSchema only)
 //! - `#[ron(deny_unknown_fields)]` - Error on unknown fields during deserialization
 //!
 //! # Field Attributes
@@ -73,7 +71,6 @@ use attr::{extract_doc_comment, ContainerAttrs, FieldAttrs};
 ///
 /// ## Container attributes
 ///
-/// - `#[ron(output = "path/")]` - Set custom output directory relative to crate root
 /// - `#[ron(rename = "Name")]` - Rename the type
 /// - `#[ron(rename_all = "camelCase")]` - Rename all fields
 ///
@@ -83,6 +80,12 @@ use attr::{extract_doc_comment, ContainerAttrs, FieldAttrs};
 /// - `#[ron(flatten)]` - Flatten nested struct fields into the parent
 /// - `#[ron(skip)]` - Skip this field in the schema
 /// - `#[ron(rename = "name")]` - Rename this field
+///
+/// # Schema Output
+///
+/// Schemas are written at compile time when either:
+/// - `RON_SCHEMA_DIR` environment variable is set (schemas written to that directory)
+/// - `RON_SCHEMA_GLOBAL=1` environment variable is set (schemas written to XDG data dir)
 #[proc_macro_derive(RonSchema, attributes(ron, ron_schema))]
 pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -209,18 +212,10 @@ fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .map(|v| v == "1")
         .unwrap_or(false);
 
-    let should_write_at_compile_time =
-        schema_dir.is_some() || schema_global || container_attrs.output.is_some();
-
-    if should_write_at_compile_time {
+    if schema_dir.is_some() || schema_global {
         if let Some(schema) = build_schema(input, &container_attrs) {
             // Ignore errors during compile-time schema writing - don't fail the build
-            let _ = write_schema_at_compile_time(
-                name,
-                &schema,
-                &container_attrs,
-                schema_dir.as_deref(),
-            );
+            let _ = write_schema_at_compile_time(name, &schema, schema_dir.as_deref());
         }
     }
 
@@ -852,18 +847,14 @@ fn rust_type_to_type_kind(ty: &Type) -> TypeKind {
 fn write_schema_at_compile_time(
     type_name: &Ident,
     schema: &Schema,
-    attrs: &ContainerAttrs,
     env_schema_dir: Option<&str>,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     use ron2::ser::PrettyConfig;
     use ron_schema::ToRon;
     use std::path::PathBuf;
 
-    // Resolve output directory (priority: attribute > env var > XDG default)
-    let output_dir: PathBuf = if let Some(ref output) = attrs.output {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")?;
-        PathBuf::from(manifest_dir).join(output)
-    } else if let Some(dir) = env_schema_dir {
+    // Resolve output directory (env var or XDG default)
+    let output_dir: PathBuf = if let Some(dir) = env_schema_dir {
         PathBuf::from(dir)
     } else {
         // RON_SCHEMA_GLOBAL=1 but no dir specified - use XDG default

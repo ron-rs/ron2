@@ -65,8 +65,6 @@ pub struct ContainerAttrs {
     pub rename: Option<String>,
     /// Rename all fields using this rule.
     pub rename_all: Option<RenameRule>,
-    /// Schema output directory (RonSchema only).
-    pub output: Option<String>,
     /// Error on unknown fields during deserialization.
     pub deny_unknown_fields: bool,
 }
@@ -108,8 +106,6 @@ impl ContainerAttrs {
                                     format!("unknown rename rule: {}", s),
                                 ));
                             }
-                        } else if nv.path.is_ident("output") {
-                            result.output = Some(get_lit_str(&nv.value)?);
                         }
                     }
                     _ => {}
