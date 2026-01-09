@@ -1,6 +1,7 @@
 //! Tests for the RonSchema derive macro.
 
-use ron_derive::RonSchema;
+use ron2::{FromRon, ToRon};
+use ron_derive::{Ron, RonSchema};
 use ron_schema::{RonSchema as RonSchemaTrait, TypeKind, VariantKind};
 
 /// A simple struct for testing.
@@ -69,7 +70,7 @@ fn test_optional_field() {
 }
 
 /// Test enum with different variant types.
-#[derive(RonSchema)]
+#[derive(Debug, Ron, PartialEq)]
 enum TestEnum {
     /// Unit variant.
     Unit,
@@ -85,10 +86,30 @@ enum TestEnum {
 }
 
 #[test]
+fn test_enum_tofrom() {
+    assert_eq!(
+        TestEnum::Struct { x: 1.0, y: 2.0 }.to_ron().unwrap(),
+        "Struct(x: 1.0,y: 2.0)"
+    );
+
+    let a: TestEnum = TestEnum::from_ron("Unit").unwrap();
+    assert_eq!(a, TestEnum::Unit);
+
+    let b: TestEnum = TestEnum::from_ron(r#"Tuple(1, "hello")"#).unwrap();
+    assert_eq!(b, TestEnum::Tuple(1, "hello".to_string()));
+
+    let c: TestEnum = TestEnum::from_ron(r#"Struct(x: 1.0, y: 2.0)"#).unwrap();
+    assert_eq!(c, TestEnum::Struct { x: 1.0, y: 2.0 });
+}
+
+#[test]
 fn test_enum() {
     let schema = TestEnum::schema();
 
-    assert_eq!(schema.doc, Some("Test enum with different variant types.".to_string()));
+    assert_eq!(
+        schema.doc,
+        Some("Test enum with different variant types.".to_string())
+    );
 
     match &schema.kind {
         TypeKind::Enum { variants } => {
@@ -217,14 +238,12 @@ fn test_type_ref() {
     let schema = WithTypeRef::schema();
 
     match &schema.kind {
-        TypeKind::Struct { fields } => {
-            match &fields[0].ty {
-                TypeKind::TypeRef(path) => {
-                    assert_eq!(path, "CustomType");
-                }
-                _ => panic!("Expected TypeRef for custom type"),
+        TypeKind::Struct { fields } => match &fields[0].ty {
+            TypeKind::TypeRef(path) => {
+                assert_eq!(path, "CustomType");
             }
-        }
+            _ => panic!("Expected TypeRef for custom type"),
+        },
         _ => panic!("Expected struct type kind"),
     }
 }
@@ -287,16 +306,14 @@ fn test_tuple_field() {
     let schema = WithTupleField::schema();
 
     match &schema.kind {
-        TypeKind::Struct { fields } => {
-            match &fields[0].ty {
-                TypeKind::Tuple(types) => {
-                    assert_eq!(types.len(), 2);
-                    assert_eq!(types[0], TypeKind::F32);
-                    assert_eq!(types[1], TypeKind::F32);
-                }
-                _ => panic!("Expected Tuple type"),
+        TypeKind::Struct { fields } => match &fields[0].ty {
+            TypeKind::Tuple(types) => {
+                assert_eq!(types.len(), 2);
+                assert_eq!(types[0], TypeKind::F32);
+                assert_eq!(types[1], TypeKind::F32);
             }
-        }
+            _ => panic!("Expected Tuple type"),
+        },
         _ => panic!("Expected struct type kind"),
     }
 }
@@ -414,7 +431,10 @@ fn test_multiple_attributes() {
             assert!(!fields[0].flattened);
 
             assert_eq!(fields[1].name, "optional_nested");
-            assert!(fields[1].optional, "Expected optional_nested to be optional");
+            assert!(
+                fields[1].optional,
+                "Expected optional_nested to be optional"
+            );
             assert!(
                 fields[1].flattened,
                 "Expected optional_nested to be flattened"

@@ -128,16 +128,13 @@ fn derive_enum_ser(
 
         let arm = match &variant.fields {
             Fields::Unit => {
-                // Unit variant: Variant -> "Variant"
+                // Unit variant: Variant -> Variant
                 quote! {
                     #name::#variant_ident => {
-                        // For unit variants, use a map with the variant name as key
-                        let mut map = ::ron2::value::Map::new();
-                        map.insert(
-                            ::ron2::Value::String(#variant_name.to_string()),
-                            ::ron2::Value::Unit
-                        );
-                        Ok(::ron2::Value::Map(map))
+                        Ok(::ron2::Value::Named {
+                            name: #variant_name.to_string(),
+                            content: ::ron2::NamedContent::Unit,
+                        })
                     }
                 }
             }
@@ -151,35 +148,18 @@ fn derive_enum_ser(
                     .map(|f| quote! { ::ron2::ToRon::to_ron_value(#f)? })
                     .collect();
 
-                if field_names.len() == 1 {
-                    // Newtype variant: Variant(val) -> { "Variant": val }
-                    let field = &field_names[0];
-                    quote! {
-                        #name::#variant_ident(#(#field_names),*) => {
-                            let mut map = ::ron2::value::Map::new();
-                            map.insert(
-                                ::ron2::Value::String(#variant_name.to_string()),
-                                ::ron2::ToRon::to_ron_value(#field)?
-                            );
-                            Ok(::ron2::Value::Map(map))
-                        }
-                    }
-                } else {
-                    // Tuple variant: Variant(a, b) -> { "Variant": [a, b] }
-                    quote! {
-                        #name::#variant_ident(#(#field_names),*) => {
-                            let mut map = ::ron2::value::Map::new();
-                            map.insert(
-                                ::ron2::Value::String(#variant_name.to_string()),
-                                ::ron2::Value::Seq(vec![#(#field_values),*])
-                            );
-                            Ok(::ron2::Value::Map(map))
-                        }
+                // Tuple variant: Variant(a, b) -> Variant(a, b)
+                quote! {
+                    #name::#variant_ident(#(#field_names),*) => {
+                        Ok(::ron2::Value::Named {
+                            name: #variant_name.to_string(),
+                            content: ::ron2::NamedContent::Tuple(vec![#(#field_values),*]),
+                        })
                     }
                 }
             }
             Fields::Named(named) => {
-                // Struct variant: Variant { field: val } -> { "Variant": { "field": val } }
+                // Struct variant: Variant { field: val } -> Variant(field: val)
                 let field_names: Vec<_> = named
                     .named
                     .iter()
@@ -197,23 +177,17 @@ fn derive_enum_ser(
                     let ron_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
                     field_serializations.push(quote! {
-                        inner_map.insert(
-                            ::ron2::Value::String(#ron_name.to_string()),
-                            ::ron2::ToRon::to_ron_value(#field_ident)?
-                        );
+                        (#ron_name.to_string(), ::ron2::ToRon::to_ron_value(#field_ident)?)
                     });
                 }
 
                 quote! {
                     #name::#variant_ident { #(#field_names),* } => {
-                        let mut inner_map = ::ron2::value::Map::new();
-                        #(#field_serializations)*
-                        let mut map = ::ron2::value::Map::new();
-                        map.insert(
-                            ::ron2::Value::String(#variant_name.to_string()),
-                            ::ron2::Value::Map(inner_map)
-                        );
-                        Ok(::ron2::Value::Map(map))
+                        let fields: ::ron2::StructFields = vec![#(#field_serializations),*];
+                        Ok(::ron2::Value::Named {
+                            name: #variant_name.to_string(),
+                            content: ::ron2::NamedContent::Struct(fields),
+                        })
                     }
                 }
             }

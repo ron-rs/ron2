@@ -190,7 +190,7 @@ fn derive_enum_de(
     data: &syn::DataEnum,
     container_attrs: &ContainerAttrs,
 ) -> syn::Result<TokenStream2> {
-    let mut map_variant_arms = Vec::new();
+    let mut named_variant_arms = Vec::new();
     let mut string_variant_arms = Vec::new();
 
     for variant in &data.variants {
@@ -205,64 +205,55 @@ fn derive_enum_de(
 
         let arm = match &variant.fields {
             Fields::Unit => {
-                // Unit variants can be parsed from both Map and String
+                // Unit variants can be parsed from Named(Unit) or bare String
                 string_variant_arms.push(quote! {
                     #variant_name => Ok(#name::#variant_ident),
                 });
                 quote! {
                     #variant_name => {
-                        match inner {
-                            ::ron2::Value::Unit => Ok(#name::#variant_ident),
-                            other => Err(::ron2::error::Error::type_mismatch("unit variant", &other)),
+                        match content {
+                            ::ron2::NamedContent::Unit => Ok(#name::#variant_ident),
+                            other => Err(::ron2::error::Error::invalid_value(
+                                format!("expected unit variant, got {:?}", other)
+                            )),
                         }
                     }
                 }
             }
             Fields::Unnamed(unnamed) => {
                 let field_count = unnamed.unnamed.len();
-
-                if field_count == 1 {
-                    // Newtype variant
-                    let field_ty = &unnamed.unnamed[0].ty;
-                    quote! {
-                        #variant_name => {
-                            let inner_val = <#field_ty as ::ron2::FromRon>::from_ron_value(inner)?;
-                            Ok(#name::#variant_ident(inner_val))
+                let field_types: Vec<_> = unnamed.unnamed.iter().map(|f| &f.ty).collect();
+                let field_extractions: Vec<_> = field_types
+                    .iter()
+                    .map(|ty| {
+                        quote! {
+                            {
+                                let v = elements.pop().ok_or_else(|| {
+                                    ::ron2::error::Error::invalid_value(
+                                        format!("expected {} elements", #field_count)
+                                    )
+                                })?;
+                                <#ty as ::ron2::FromRon>::from_ron_value(v)?
+                            }
                         }
-                    }
-                } else {
-                    // Tuple variant
-                    let field_types: Vec<_> = unnamed.unnamed.iter().map(|f| &f.ty).collect();
-                    let field_extractions: Vec<_> = field_types
-                        .iter()
-                        .map(|ty| {
-                            quote! {
-                                {
-                                    let v = seq.pop().ok_or_else(|| {
-                                        ::ron2::error::Error::invalid_value(
-                                            format!("expected {} elements", #field_count)
-                                        )
-                                    })?;
-                                    <#ty as ::ron2::FromRon>::from_ron_value(v)?
-                                }
-                            }
-                        })
-                        .collect();
+                    })
+                    .collect();
 
-                    quote! {
-                        #variant_name => {
-                            match inner {
-                                ::ron2::Value::Seq(mut seq) => {
-                                    if seq.len() != #field_count {
-                                        return Err(::ron2::error::Error::invalid_value(
-                                            format!("expected {} elements, got {}", #field_count, seq.len())
-                                        ));
-                                    }
-                                    seq.reverse();
-                                    Ok(#name::#variant_ident(#(#field_extractions),*))
+                quote! {
+                    #variant_name => {
+                        match content {
+                            ::ron2::NamedContent::Tuple(mut elements) => {
+                                if elements.len() != #field_count {
+                                    return Err(::ron2::error::Error::invalid_value(
+                                        format!("expected {} elements, got {}", #field_count, elements.len())
+                                    ));
                                 }
-                                other => Err(::ron2::error::Error::type_mismatch("tuple variant (Seq)", &other)),
+                                elements.reverse();
+                                Ok(#name::#variant_ident(#(#field_extractions),*))
                             }
+                            other => Err(::ron2::error::Error::invalid_value(
+                                format!("expected tuple variant, got {:?}", other)
+                            )),
                         }
                     }
                 }
@@ -315,38 +306,23 @@ fn derive_enum_de(
 
                 quote! {
                     #variant_name => {
-                        let map: ::std::collections::HashMap<String, ::ron2::Value> = match inner {
-                            // ron2 parses (name: val) as Value::Struct
-                            ::ron2::Value::Struct(fields) => {
-                                let mut result = ::std::collections::HashMap::new();
-                                for (name, v) in fields {
-                                    result.insert(name, v);
-                                }
-                                result
+                        match content {
+                            ::ron2::NamedContent::Struct(fields) => {
+                                let mut map: ::std::collections::HashMap<String, ::ron2::Value> =
+                                    fields.into_iter().collect();
+                                #(#field_extractions)*
+                                Ok(#name::#variant_ident { #(#field_names),* })
                             }
-                            // { "name": val } is parsed as Value::Map
-                            ::ron2::Value::Map(m) => {
-                                let mut result = ::std::collections::HashMap::new();
-                                for (k, v) in m {
-                                    if let ::ron2::Value::String(key) = k {
-                                        result.insert(key, v);
-                                    }
-                                }
-                                result
-                            }
-                            other => return Err(::ron2::error::Error::type_mismatch("struct variant", &other)),
-                        };
-
-                        let mut map = map;
-                        #(#field_extractions)*
-
-                        Ok(#name::#variant_ident { #(#field_names),* })
+                            other => Err(::ron2::error::Error::invalid_value(
+                                format!("expected struct variant, got {:?}", other)
+                            )),
+                        }
                     }
                 }
             }
         };
 
-        map_variant_arms.push(arm);
+        named_variant_arms.push(arm);
     }
 
     // Collect variant names for error message
@@ -361,26 +337,15 @@ fn derive_enum_de(
         .collect();
 
     Ok(quote! {
-        // Enum in RON is typically { "Variant": value } or just "Variant" for unit
+        // Enum in RON is Value::Named { name, content } or bare identifier for unit variants
         match value {
-            ::ron2::Value::Map(m) => {
-                if m.len() != 1 {
-                    return Err(::ron2::error::Error::invalid_value(
-                        format!("expected map with single variant, got {} entries", m.len())
-                    ));
-                }
-                let (variant_key, inner) = m.into_iter().next().unwrap();
-                let variant_name = match variant_key {
-                    ::ron2::Value::String(s) => s,
-                    other => return Err(::ron2::error::Error::type_mismatch("string (variant name)", &other)),
-                };
-
+            ::ron2::Value::Named { name: variant_name, content } => {
                 match variant_name.as_str() {
-                    #(#map_variant_arms)*
+                    #(#named_variant_arms)*
                     unknown => Err(::ron2::error::Error::invalid_value(format!("unknown variant: {}", unknown))),
                 }
             }
-            // Also try to parse as string for unit variants only
+            // Also try to parse as string for unit variants only (bare identifier)
             ::ron2::Value::String(s) => {
                 match s.as_str() {
                     #(#string_variant_arms)*
@@ -388,7 +353,7 @@ fn derive_enum_de(
                 }
             }
             other => Err(::ron2::error::Error::type_mismatch(
-                concat!("enum (Map or String with variants: ", #(#variant_names, " "),* , ")"),
+                concat!("enum (Named with variants: ", #(#variant_names, " "),* , ")"),
                 &other
             )),
         }
