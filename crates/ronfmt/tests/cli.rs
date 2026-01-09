@@ -1,7 +1,7 @@
 //! Integration tests for the ronfmt CLI.
 
-use std::process::{Command, Stdio};
 use std::io::Write;
+use std::process::{Command, Stdio};
 
 fn ronfmt() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ronfmt"))
@@ -88,8 +88,12 @@ fn test_preserves_comments() {
 #[test]
 fn test_check_mode_formatted() {
     // Already formatted input (root collections are multiline)
-    let (stdout, stderr, code) = run_with_stdin_args("Config(\n    x: 1,\n    y: 2,\n)\n", &["--check"]);
-    assert_eq!(code, 0, "Expected success for formatted input. stderr: {stderr}, stdout: {stdout}");
+    let (stdout, stderr, code) =
+        run_with_stdin_args("Config(\n    x: 1,\n    y: 2,\n)\n", &["--check"]);
+    assert_eq!(
+        code, 0,
+        "Expected success for formatted input. stderr: {stderr}, stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -106,9 +110,15 @@ fn test_check_mode_unformatted() {
 
 #[test]
 fn test_custom_indent() {
-    let (stdout, _, code) = run_with_stdin_args("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]", &["--width", "10", "--indent", "2"]);
+    let (stdout, _, code) = run_with_stdin_args(
+        "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]",
+        &["--width", "10", "--indent", "2"],
+    );
     assert_eq!(code, 0);
-    assert!(stdout.contains("  1,"), "Expected 2-space indent in: {stdout}");
+    assert!(
+        stdout.contains("  1,"),
+        "Expected 2-space indent in: {stdout}"
+    );
 }
 
 #[test]
@@ -122,10 +132,14 @@ fn test_custom_width() {
 #[test]
 fn test_large_width_nested() {
     // Large width keeps nested collections compact
-    let (stdout, _, code) = run_with_stdin_args("Config(items: [1, 2, 3, 4, 5])", &["--width", "100"]);
+    let (stdout, _, code) =
+        run_with_stdin_args("Config(items: [1, 2, 3, 4, 5])", &["--width", "100"]);
     assert_eq!(code, 0);
     // Root is multiline, nested array stays compact
-    assert!(stdout.contains("[1, 2, 3, 4, 5]"), "Expected compact nested array in: {stdout}");
+    assert!(
+        stdout.contains("[1, 2, 3, 4, 5]"),
+        "Expected compact nested array in: {stdout}"
+    );
 }
 
 // ============================================================================
@@ -136,7 +150,10 @@ fn test_large_width_nested() {
 fn test_invalid_ron() {
     let (_, stderr, code) = run_with_stdin("[1, 2, ");
     assert_eq!(code, 2, "Expected exit 2 for parse error");
-    assert!(stderr.contains("error"), "Expected error message in stderr: {stderr}");
+    assert!(
+        stderr.contains("error"),
+        "Expected error message in stderr: {stderr}"
+    );
 }
 
 // ============================================================================

@@ -757,7 +757,6 @@ fn path_to_string(path: &syn::Path) -> String {
     }
 }
 
-
 /// Get the crate name, normalized for Rust path syntax (hyphens replaced with underscores).
 fn get_crate_name() -> String {
     std::env::var("CARGO_CRATE_NAME")

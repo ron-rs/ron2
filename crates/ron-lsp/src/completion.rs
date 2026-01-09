@@ -326,4 +326,3 @@ fn extract_field_names_from_value(value: &Value) -> Vec<String> {
         _ => vec![],
     }
 }
-

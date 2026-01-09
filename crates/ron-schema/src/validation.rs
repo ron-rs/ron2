@@ -243,12 +243,7 @@ fn validate_type_internal<R: SchemaResolver>(
         TypeKind::List(inner) => match value {
             Value::Seq(items) => {
                 for (i, item) in items.iter().enumerate() {
-                    validate_type_internal(item, inner, ctx).map_err(|e| {
-                        SchemaError::ElementError {
-                            index: i,
-                            source: Box::new(e),
-                        }
-                    })?;
+                    validate_type_internal(item, inner, ctx).map_err(|e| e.in_element(i))?;
                 }
                 Ok(())
             }
@@ -257,17 +252,9 @@ fn validate_type_internal<R: SchemaResolver>(
         TypeKind::Map { key, value: val_ty } => match value {
             Value::Map(map) => {
                 for (k, v) in map.iter() {
-                    validate_type_internal(k, key, ctx).map_err(|e| {
-                        SchemaError::MapKeyError {
-                            source: Box::new(e),
-                        }
-                    })?;
-                    validate_type_internal(v, val_ty, ctx).map_err(|e| {
-                        SchemaError::MapValueError {
-                            key: format!("{:?}", k),
-                            source: Box::new(e),
-                        }
-                    })?;
+                    validate_type_internal(k, key, ctx).map_err(|e| e.in_map_key())?;
+                    validate_type_internal(v, val_ty, ctx)
+                        .map_err(|e| e.in_map_value(format!("{:?}", k)))?;
                 }
                 Ok(())
             }
@@ -276,18 +263,10 @@ fn validate_type_internal<R: SchemaResolver>(
         TypeKind::Tuple(types) => match value {
             Value::Tuple(items) | Value::Seq(items) => {
                 if items.len() != types.len() {
-                    return Err(SchemaError::TupleLengthMismatch {
-                        expected: types.len(),
-                        actual: items.len(),
-                    });
+                    return Err(SchemaError::tuple_length_mismatch(types.len(), items.len()));
                 }
                 for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
-                    validate_type_internal(item, ty, ctx).map_err(|e| {
-                        SchemaError::ElementError {
-                            index: i,
-                            source: Box::new(e),
-                        }
-                    })?;
+                    validate_type_internal(item, ty, ctx).map_err(|e| e.in_element(i))?;
                 }
                 Ok(())
             }
@@ -310,12 +289,8 @@ fn validate_type_internal<R: SchemaResolver>(
                     ctx.start_visiting(type_path);
 
                     // Validate against the resolved schema
-                    let result = validate_type_internal(value, &schema.kind, ctx).map_err(|e| {
-                        SchemaError::TypeRefError {
-                            type_path: type_path.clone(),
-                            source: Box::new(e),
-                        }
-                    });
+                    let result = validate_type_internal(value, &schema.kind, ctx)
+                        .map_err(|e| e.in_type_ref(type_path));
 
                     // Unmark after validation
                     ctx.stop_visiting(type_path);
@@ -348,20 +323,15 @@ fn validate_struct_internal<R: SchemaResolver>(
             let field = fields
                 .iter()
                 .find(|f| f.name == key_str)
-                .ok_or_else(|| SchemaError::UnknownField(key_str.to_string()))?;
+                .ok_or_else(|| SchemaError::unknown_field(key_str))?;
 
-            validate_type_internal(val, &field.ty, ctx).map_err(|e| {
-                SchemaError::FieldError {
-                    field: key_str.to_string(),
-                    source: Box::new(e),
-                }
-            })?;
+            validate_type_internal(val, &field.ty, ctx).map_err(|e| e.in_field(key_str))?;
         }
 
         // Check all required fields are present
         for field in fields {
             if !field.optional && !has_field(&field.name) {
-                return Err(SchemaError::MissingField(field.name.clone()));
+                return Err(SchemaError::missing_field(&field.name));
             }
         }
 
@@ -449,7 +419,7 @@ fn validate_enum_internal<R: SchemaResolver>(
     let variant = variants
         .iter()
         .find(|v| v.name == variant_name)
-        .ok_or_else(|| SchemaError::UnknownVariant(variant_name.to_string()))?;
+        .ok_or_else(|| SchemaError::unknown_variant(variant_name))?;
 
     // Helper to validate struct fields
     let validate_struct_fields = |fields: &[crate::Field],
@@ -457,60 +427,36 @@ fn validate_enum_internal<R: SchemaResolver>(
                                   ctx: &mut ValidationContext<R>|
      -> Result<()> {
         for (key, val) in struct_fields.iter() {
-            let field = fields.iter().find(|f| f.name == *key).ok_or_else(|| {
-                SchemaError::VariantError {
-                    variant: variant_name.to_string(),
-                    source: Box::new(SchemaError::UnknownField(key.clone())),
-                }
-            })?;
+            let field = fields
+                .iter()
+                .find(|f| f.name == *key)
+                .ok_or_else(|| SchemaError::unknown_field(key).in_variant(variant_name))?;
 
-            validate_type_internal(val, &field.ty, ctx).map_err(|e| {
-                SchemaError::VariantError {
-                    variant: variant_name.to_string(),
-                    source: Box::new(SchemaError::FieldError {
-                        field: key.clone(),
-                        source: Box::new(e),
-                    }),
-                }
-            })?;
+            validate_type_internal(val, &field.ty, ctx)
+                .map_err(|e| e.in_field(key).in_variant(variant_name))?;
         }
         // Check required fields
         for field in fields {
             if !field.optional && !struct_fields.iter().any(|(k, _)| k == &field.name) {
-                return Err(SchemaError::VariantError {
-                    variant: variant_name.to_string(),
-                    source: Box::new(SchemaError::MissingField(field.name.clone())),
-                });
+                return Err(SchemaError::missing_field(&field.name).in_variant(variant_name));
             }
         }
         Ok(())
     };
 
     // Helper to validate tuple elements
-    let validate_tuple_elements = |types: &[TypeKind],
-                                   items: &[Value],
-                                   ctx: &mut ValidationContext<R>|
-     -> Result<()> {
-        if items.len() != types.len() {
-            return Err(SchemaError::VariantError {
-                variant: variant_name.to_string(),
-                source: Box::new(SchemaError::TupleLengthMismatch {
-                    expected: types.len(),
-                    actual: items.len(),
-                }),
-            });
-        }
-        for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
-            validate_type_internal(item, ty, ctx).map_err(|e| SchemaError::VariantError {
-                variant: variant_name.to_string(),
-                source: Box::new(SchemaError::ElementError {
-                    index: i,
-                    source: Box::new(e),
-                }),
-            })?;
-        }
-        Ok(())
-    };
+    let validate_tuple_elements =
+        |types: &[TypeKind], items: &[Value], ctx: &mut ValidationContext<R>| -> Result<()> {
+            if items.len() != types.len() {
+                return Err(SchemaError::tuple_length_mismatch(types.len(), items.len())
+                    .in_variant(variant_name));
+            }
+            for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
+                validate_type_internal(item, ty, ctx)
+                    .map_err(|e| e.in_element(i).in_variant(variant_name))?;
+            }
+            Ok(())
+        };
 
     match (&variant.kind, content) {
         // Unit variants
@@ -541,27 +487,17 @@ fn validate_enum_internal<R: SchemaResolver>(
         }
 
         // Error cases
-        (VariantKind::Unit, _) => Err(SchemaError::VariantError {
-            variant: variant_name.to_string(),
-            source: Box::new(SchemaError::TypeMismatch {
-                expected: "Unit".to_string(),
-                actual: "non-unit content".to_string(),
-            }),
-        }),
-        (_, VariantContent::None) => Err(SchemaError::VariantError {
-            variant: variant_name.to_string(),
-            source: Box::new(SchemaError::TypeMismatch {
-                expected: "variant content".to_string(),
-                actual: "none".to_string(),
-            }),
-        }),
-        (_, _) => Err(SchemaError::VariantError {
-            variant: variant_name.to_string(),
-            source: Box::new(SchemaError::TypeMismatch {
-                expected: format!("{:?}", variant.kind),
-                actual: "mismatched content".to_string(),
-            }),
-        }),
+        (VariantKind::Unit, _) => {
+            Err(SchemaError::type_mismatch("Unit", "non-unit content").in_variant(variant_name))
+        }
+        (_, VariantContent::None) => {
+            Err(SchemaError::type_mismatch("variant content", "none").in_variant(variant_name))
+        }
+        (_, _) => Err(SchemaError::type_mismatch(
+            format!("{:?}", variant.kind),
+            "mismatched content",
+        )
+        .in_variant(variant_name)),
     }
 }
 
@@ -580,10 +516,7 @@ fn type_mismatch(expected: &str, value: &Value) -> SchemaError {
         Value::Struct(_) => "Struct",
         Value::Named { .. } => "Named",
     };
-    SchemaError::TypeMismatch {
-        expected: expected.to_string(),
-        actual: actual.to_string(),
-    }
+    SchemaError::type_mismatch(expected, actual)
 }
 
 #[cfg(test)]
@@ -655,5 +588,24 @@ mod tests {
         // Unknown variant
         let value: Value = ron2::from_str("\"Unknown\"").unwrap();
         assert!(validate(&value, &schema).is_err());
+    }
+
+    #[test]
+    fn test_error_path_context() {
+        let schema = Schema::new(TypeKind::Struct {
+            fields: vec![Field::new(
+                "items",
+                TypeKind::List(Box::new(TypeKind::String)),
+            )],
+        });
+
+        // Error in nested structure should have path context
+        let value: Value = ron2::from_str("(items: [\"ok\", 42])").unwrap();
+        let err = validate(&value, &schema).unwrap_err();
+
+        // Should contain path information
+        let msg = err.to_string();
+        assert!(msg.contains("field 'items'"), "Error: {}", msg);
+        assert!(msg.contains("element 1"), "Error: {}", msg);
     }
 }

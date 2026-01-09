@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use crate::error::{Result, SchemaError};
+use crate::error::{Result, SchemaError, SchemaErrorKind};
 use crate::Schema;
 use ron2::{FromRon, ToRon};
 
@@ -26,7 +26,7 @@ pub fn resolve_schema_dir() -> Result<PathBuf> {
     // Fall back to XDG data directory
     dirs::data_dir()
         .map(|d| d.join(DEFAULT_SCHEMA_DIR))
-        .ok_or(SchemaError::NoSchemaDir)
+        .ok_or_else(|| SchemaError::new(SchemaErrorKind::NoSchemaDir))
 }
 
 /// Convert a Rust type path to a schema file path.
@@ -94,7 +94,7 @@ pub fn find_schema(type_path: &str) -> Result<Schema> {
     let file_path = base_dir.join(type_path_to_file_path(type_path));
 
     if !file_path.exists() {
-        return Err(SchemaError::SchemaNotFound(type_path.to_string()));
+        return Err(SchemaError::schema_not_found(type_path));
     }
 
     read_schema(&file_path)

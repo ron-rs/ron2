@@ -24,6 +24,7 @@
 //! }
 //! ```
 
+use crate::error::SchemaErrorKind;
 use crate::{Schema, SchemaError, TypeKind};
 use std::path::PathBuf;
 
@@ -92,9 +93,8 @@ pub trait RonSchemaType {
     /// doesn't support schema storage (e.g., primitive types).
     fn write_schema(output_dir: Option<&std::path::Path>) -> Result<PathBuf, SchemaError> {
         let type_path = Self::type_path().ok_or_else(|| {
-            SchemaError::Io(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "type does not support schema storage",
+            SchemaError::new(SchemaErrorKind::Io(
+                "type does not support schema storage".to_string(),
             ))
         })?;
         let schema = Self::schema();

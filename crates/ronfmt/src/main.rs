@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use ron2::ast::{FormatConfig, format_document, parse_document};
+use ron2::ast::{format_document, parse_document, FormatConfig};
 
 /// A formatter for RON (Rusty Object Notation) files
 #[derive(Parser, Debug)]

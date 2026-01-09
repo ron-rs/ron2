@@ -384,18 +384,8 @@ impl<'a> Formatter<'a> {
         let trivia_has_line_comments = has_line_comment(leading) || has_line_comment(trailing);
 
         // Force multiline for root collections with items, or when comments are present
-        if (is_root && !items.is_empty())
-            || has_line_comments
-            || trivia_has_line_comments
-        {
-            self.format_collection_multiline(
-                open,
-                close,
-                leading,
-                trailing,
-                items,
-                format_item,
-            );
+        if (is_root && !items.is_empty()) || has_line_comments || trivia_has_line_comments {
+            self.format_collection_multiline(open, close, leading, trailing, items, format_item);
             return;
         }
 
@@ -404,18 +394,17 @@ impl<'a> Formatter<'a> {
         if compact.len() <= self.config.char_limit {
             self.output.push_str(&compact);
         } else {
-            self.format_collection_multiline(
-                open,
-                close,
-                leading,
-                trailing,
-                items,
-                format_item,
-            );
+            self.format_collection_multiline(open, close, leading, trailing, items, format_item);
         }
     }
 
-    fn try_format_compact<T, F>(&self, open: char, close: char, items: &[T], format_item: F) -> String
+    fn try_format_compact<T, F>(
+        &self,
+        open: char,
+        close: char,
+        items: &[T],
+        format_item: F,
+    ) -> String
     where
         F: Fn(&mut Self, &T),
     {
@@ -550,10 +539,7 @@ impl<'a> Formatter<'a> {
 
 /// Check if trivia contains any line comments.
 fn has_line_comment(trivia: &Trivia<'_>) -> bool {
-    trivia
-        .comments
-        .iter()
-        .any(|c| c.kind == CommentKind::Line)
+    trivia.comments.iter().any(|c| c.kind == CommentKind::Line)
 }
 
 #[cfg(test)]
@@ -625,10 +611,7 @@ mod tests {
     fn test_seq_exceeds_limit() {
         let config = FormatConfig::default().char_limit(10);
         let formatted = format_with("[1, 2, 3, 4, 5]", &config);
-        assert_eq!(
-            formatted,
-            "[\n    1,\n    2,\n    3,\n    4,\n    5,\n]\n"
-        );
+        assert_eq!(formatted, "[\n    1,\n    2,\n    3,\n    4,\n    5,\n]\n");
     }
 
     #[test]
@@ -646,9 +629,18 @@ mod tests {
     #[test]
     fn test_root_struct_multiline() {
         // Root collections are always multiline
-        assert_eq!(format("Point(x:1,y:2)"), "Point(\n    x: 1,\n    y: 2,\n)\n");
-        assert_eq!(format("Point(x: 1, y: 2)"), "Point(\n    x: 1,\n    y: 2,\n)\n");
-        assert_eq!(format("Point( x : 1 , y : 2 )"), "Point(\n    x: 1,\n    y: 2,\n)\n");
+        assert_eq!(
+            format("Point(x:1,y:2)"),
+            "Point(\n    x: 1,\n    y: 2,\n)\n"
+        );
+        assert_eq!(
+            format("Point(x: 1, y: 2)"),
+            "Point(\n    x: 1,\n    y: 2,\n)\n"
+        );
+        assert_eq!(
+            format("Point( x : 1 , y : 2 )"),
+            "Point(\n    x: 1,\n    y: 2,\n)\n"
+        );
     }
 
     #[test]
@@ -659,14 +651,20 @@ mod tests {
     #[test]
     fn test_tuple_struct() {
         // Root tuple structs are multiline
-        assert_eq!(format("Point(1, 2, 3)"), "Point(\n    1,\n    2,\n    3,\n)\n");
+        assert_eq!(
+            format("Point(1, 2, 3)"),
+            "Point(\n    1,\n    2,\n    3,\n)\n"
+        );
     }
 
     #[test]
     fn test_struct_exceeds_limit() {
         let config = FormatConfig::default().char_limit(20);
         let formatted = format_with("Config(name: \"test\", value: 42)", &config);
-        assert!(formatted.contains('\n'), "Expected multiline, got: {formatted:?}");
+        assert!(
+            formatted.contains('\n'),
+            "Expected multiline, got: {formatted:?}"
+        );
         assert!(formatted.contains("name: \"test\","));
         assert!(formatted.contains("value: 42,"));
     }
@@ -809,14 +807,20 @@ mod tests {
     fn test_custom_indent() {
         let config = FormatConfig::new().indent("  ").char_limit(5);
         let formatted = format_with("[1, 2, 3]", &config);
-        assert!(formatted.contains("  1,"), "Expected 2-space indent in: {formatted:?}");
+        assert!(
+            formatted.contains("  1,"),
+            "Expected 2-space indent in: {formatted:?}"
+        );
     }
 
     #[test]
     fn test_tab_indent() {
         let config = FormatConfig::new().indent("\t").char_limit(5);
         let formatted = format_with("[1, 2, 3]", &config);
-        assert!(formatted.contains("\t1,"), "Expected tab indent in: {formatted:?}");
+        assert!(
+            formatted.contains("\t1,"),
+            "Expected tab indent in: {formatted:?}"
+        );
     }
 
     #[test]
@@ -824,7 +828,10 @@ mod tests {
         // Char limit only applies to nested collections, not root
         let config = FormatConfig::new().char_limit(1000);
         // Test with nested array inside a struct
-        let long_array = (1..50).map(|n| n.to_string()).collect::<Vec<_>>().join(", ");
+        let long_array = (1..50)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         let source = format!("Config(items: [{long_array}])");
         let formatted = format_with(&source, &config);
         // Root should be multiline, but nested array stays compact

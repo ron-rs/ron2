@@ -3,7 +3,7 @@
 //! Validates RON files against their schemas and produces
 //! diagnostic messages for errors.
 
-use ron_schema::{validate_with_resolver, SchemaError};
+use ron_schema::{validate_with_resolver, PathSegment, SchemaError, SchemaErrorKind};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
@@ -90,10 +90,8 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
 fn validation_error_to_diagnostics(error: &SchemaError, doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
-    // For now, we report all errors at position 0,0 since we don't have
-    // position information from the RON parser for values.
-    // A more sophisticated implementation would track value positions.
-    let range = Range {
+    // Default range at position 0,0
+    let default_range = Range {
         start: Position {
             line: 0,
             character: 0,
@@ -104,11 +102,11 @@ fn validation_error_to_diagnostics(error: &SchemaError, doc: &Document) -> Vec<D
         },
     };
 
-    // Try to find a better position based on the error type
+    // Try to find a better position based on the error path and kind
     let (message, improved_range) = format_validation_error(error, doc);
 
     diagnostics.push(Diagnostic {
-        range: improved_range.unwrap_or(range),
+        range: improved_range.unwrap_or(default_range),
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("ron-schema".to_string()),
         message,
@@ -120,73 +118,95 @@ fn validation_error_to_diagnostics(error: &SchemaError, doc: &Document) -> Vec<D
 
 /// Format a validation error and try to find its position.
 fn format_validation_error(error: &SchemaError, doc: &Document) -> (String, Option<Range>) {
-    match error {
-        SchemaError::TypeMismatch { expected, actual } => (
-            format!("Type mismatch: expected {}, got {}", expected, actual),
-            None,
-        ),
-        SchemaError::MissingField(field) => {
-            // Try to find a good position for missing field error
-            let range = find_field_insert_position(doc, field);
-            (format!("Missing required field: {}", field), range)
-        }
-        SchemaError::UnknownField(field) => {
-            let range = find_field_position(doc, field);
-            (format!("Unknown field: {}", field), range)
-        }
-        SchemaError::UnknownVariant(variant) => {
-            let range = find_text_position(doc, variant);
-            (format!("Unknown enum variant: {}", variant), range)
-        }
-        SchemaError::TupleLengthMismatch { expected, actual } => (
+    // Build context prefix from path
+    let context_prefix = if error.path.is_empty() {
+        String::new()
+    } else {
+        let path_str: Vec<String> = error.path.iter().map(format_path_segment).collect();
+        format!("{}: ", path_str.join(" -> "))
+    };
+
+    // Try to find position based on innermost path segment
+    let range = find_position_from_path(&error.path, doc);
+
+    // Format the message based on error kind
+    let message = match &error.kind {
+        SchemaErrorKind::TypeMismatch { expected, actual } => {
             format!(
-                "Tuple length mismatch: expected {} elements, got {}",
-                expected, actual
-            ),
-            None,
-        ),
-        SchemaError::FieldError { field, source } => {
-            let range = find_field_position(doc, field);
-            let (inner_msg, _) = format_validation_error(source, doc);
-            (format!("Error in field '{}': {}", field, inner_msg), range)
-        }
-        SchemaError::ElementError { index, source } => {
-            let (inner_msg, _) = format_validation_error(source, doc);
-            (format!("Error in element {}: {}", index, inner_msg), None)
-        }
-        SchemaError::MapKeyError { source } => {
-            let (inner_msg, _) = format_validation_error(source, doc);
-            (format!("Error in map key: {}", inner_msg), None)
-        }
-        SchemaError::MapValueError { key, source } => {
-            let (inner_msg, _) = format_validation_error(source, doc);
-            (
-                format!("Error in map value for '{}': {}", key, inner_msg),
-                None,
+                "{}Type mismatch: expected {}, got {}",
+                context_prefix, expected, actual
             )
         }
-        SchemaError::VariantError { variant, source } => {
-            let range = find_text_position(doc, variant);
-            let (inner_msg, _) = format_validation_error(source, doc);
-            (
-                format!("Error in variant '{}': {}", variant, inner_msg),
-                range,
-            )
+        SchemaErrorKind::MissingField(field) => {
+            format!("{}Missing required field: {}", context_prefix, field)
         }
-        SchemaError::TypeRefError { type_path, source } => {
-            let (inner_msg, inner_range) = format_validation_error(source, doc);
-            (
-                format!("Error in type '{}': {}", type_path, inner_msg),
-                inner_range,
+        SchemaErrorKind::UnknownField(field) => {
+            format!("{}Unknown field: {}", context_prefix, field)
+        }
+        SchemaErrorKind::UnknownVariant(variant) => {
+            format!("{}Unknown enum variant: {}", context_prefix, variant)
+        }
+        SchemaErrorKind::TupleLengthMismatch { expected, actual } => {
+            format!(
+                "{}Tuple length mismatch: expected {} elements, got {}",
+                context_prefix, expected, actual
             )
         }
         // Storage errors shouldn't occur during validation, but handle gracefully
-        _ => (error.to_string(), None),
+        _ => format!("{}{}", context_prefix, error),
+    };
+
+    // Try to find better position for specific error kinds if path didn't help
+    let final_range = range.or_else(|| find_position_from_kind(&error.kind, doc));
+
+    (message, final_range)
+}
+
+/// Format a path segment for display.
+fn format_path_segment(segment: &PathSegment) -> String {
+    match segment {
+        PathSegment::Field(name) => format!("field '{}'", name),
+        PathSegment::Element(idx) => format!("element {}", idx),
+        PathSegment::MapKey => "map key".to_string(),
+        PathSegment::MapValue(key) => format!("value for '{}'", key),
+        PathSegment::Variant(name) => format!("variant '{}'", name),
+        PathSegment::TypeRef(path) => format!("type '{}'", path),
+    }
+}
+
+/// Try to find a position based on the error path.
+fn find_position_from_path(path: &[PathSegment], doc: &Document) -> Option<Range> {
+    // Try to find position from innermost segment first
+    for segment in path.iter().rev() {
+        match segment {
+            PathSegment::Field(name) => {
+                if let Some(range) = find_field_position(doc, name) {
+                    return Some(range);
+                }
+            }
+            PathSegment::Variant(name) => {
+                if let Some(range) = find_text_position(doc, name) {
+                    return Some(range);
+                }
+            }
+            _ => continue,
+        }
+    }
+    None
+}
+
+/// Try to find a position based on the error kind.
+fn find_position_from_kind(kind: &SchemaErrorKind, doc: &Document) -> Option<Range> {
+    match kind {
+        SchemaErrorKind::MissingField(_field) => find_field_insert_position(doc),
+        SchemaErrorKind::UnknownField(field) => find_field_position(doc, field),
+        SchemaErrorKind::UnknownVariant(variant) => find_text_position(doc, variant),
+        _ => None,
     }
 }
 
 /// Find a position where a missing field could be inserted.
-fn find_field_insert_position(doc: &Document, _field: &str) -> Option<Range> {
+fn find_field_insert_position(doc: &Document) -> Option<Range> {
     // If we have an AST, use the root expression span
     if let Some(ref ast) = doc.ast {
         if let Some(ref expr) = ast.value {
@@ -264,5 +284,19 @@ mod tests {
         let diagnostics = validate_document(&doc, &resolver);
         // No diagnostics because there's no schema to validate against
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_format_path_segment() {
+        assert_eq!(
+            format_path_segment(&PathSegment::Field("name".to_string())),
+            "field 'name'"
+        );
+        assert_eq!(format_path_segment(&PathSegment::Element(0)), "element 0");
+        assert_eq!(format_path_segment(&PathSegment::MapKey), "map key");
+        assert_eq!(
+            format_path_segment(&PathSegment::Variant("Some".to_string())),
+            "variant 'Some'"
+        );
     }
 }

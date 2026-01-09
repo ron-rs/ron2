@@ -84,7 +84,7 @@ pub mod validation;
 // Re-export conversion traits from ron2
 pub use ron2::{AstMapAccess, FromRon, PrettyConfig, ToRon};
 
-pub use error::{Result, SchemaError};
+pub use error::{PathSegment, Result, SchemaError, SchemaErrorKind};
 pub use storage::{
     find_schema, find_schema_in, read_schema, resolve_schema_dir, type_path_to_file_path,
     write_schema, SCHEMA_DIR_ENV,
