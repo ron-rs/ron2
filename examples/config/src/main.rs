@@ -1,16 +1,16 @@
 //! Complete example demonstrating ron-derive usage.
 //!
 //! This example shows:
-//! - Using `#[derive(RonSchema, SerRon, DeRon)]` on custom types
+//! - Using `#[derive(Ron)]` on custom types (implements ToRon, FromRon, RonSchema)
 //! - Serializing and deserializing RON data
 //! - Generating schema files
 //! - Using various `#[ron(...)]` attributes
 
-use ron_derive::{DeRon, RonSchema, SerRon};
-use ron_schema::{DeRon, RonSchema, SerRon};
+use ron_derive::Ron;
+use ron_schema::{FromRon, RonSchema, ToRon};
 
 /// Application configuration for a web server.
-#[derive(Debug, Clone, PartialEq, RonSchema, SerRon, DeRon)]
+#[derive(Debug, Clone, PartialEq, Ron)]
 #[ron(output = "schemas/")]
 pub struct AppConfig {
     /// Server port number.
@@ -28,7 +28,7 @@ pub struct AppConfig {
 }
 
 /// A feature that can be enabled.
-#[derive(Debug, Clone, PartialEq, RonSchema, SerRon, DeRon)]
+#[derive(Debug, Clone, PartialEq, Ron)]
 pub enum Feature {
     /// Enable logging.
     Logging,
@@ -47,7 +47,7 @@ pub enum Feature {
 }
 
 /// Database connection configuration.
-#[derive(Debug, Clone, PartialEq, RonSchema, SerRon, DeRon)]
+#[derive(Debug, Clone, PartialEq, Ron)]
 pub struct DatabaseConfig {
     /// Database URL.
     url: String,

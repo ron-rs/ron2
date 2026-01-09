@@ -1,19 +1,20 @@
 //! RON derive macros for serialization, deserialization, and schema generation.
 //!
-//! This crate provides three derive macros:
+//! This crate provides derive macros:
 //!
+//! - `#[derive(Ron)]` - Implements ToRon, FromRon, and RonSchema (all three)
+//! - `#[derive(ToRon)]` - Serialize to RON without serde
+//! - `#[derive(FromRon)]` - Deserialize from RON without serde
 //! - `#[derive(RonSchema)]` - Generate RON schema files at compile time
-//! - `#[derive(SerRon)]` - Serialize to RON without serde
-//! - `#[derive(DeRon)]` - Deserialize from RON without serde
 //!
-//! All three derives share the `#[ron(...)]` attribute namespace.
+//! All derives share the `#[ron(...)]` attribute namespace.
 //!
 //! # Example
 //!
 //! ```ignore
-//! use ron_derive::{RonSchema, SerRon, DeRon};
+//! use ron_derive::Ron;
 //!
-//! #[derive(Debug, PartialEq, RonSchema, SerRon, DeRon)]
+//! #[derive(Debug, PartialEq, Ron)]
 //! #[ron(output = "schemas/")]  // Optional: relative to crate root
 //! /// Application configuration
 //! struct AppConfig {
@@ -97,10 +98,10 @@ pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```ignore
-/// use ron_derive::SerRon;
-/// use ron_schema::SerRon;
+/// use ron_derive::ToRon;
+/// use ron2::ToRon;
 ///
-/// #[derive(SerRon)]
+/// #[derive(ToRon)]
 /// struct Point {
 ///     x: f32,
 ///     y: f32,
@@ -109,11 +110,11 @@ pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
 /// let point = Point { x: 1.0, y: 2.0 };
 /// let ron = point.to_ron().unwrap();
 /// ```
-#[proc_macro_derive(SerRon, attributes(ron, ron_schema))]
-pub fn derive_ser_ron(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(ToRon, attributes(ron, ron_schema))]
+pub fn derive_to_ron(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    match ser::derive_ser_ron(&input) {
+    match ser::derive_to_ron(&input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
@@ -124,10 +125,10 @@ pub fn derive_ser_ron(input: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```ignore
-/// use ron_derive::DeRon;
-/// use ron_schema::DeRon;
+/// use ron_derive::FromRon;
+/// use ron2::FromRon;
 ///
-/// #[derive(DeRon)]
+/// #[derive(FromRon)]
 /// struct Point {
 ///     x: f32,
 ///     y: f32,
@@ -135,13 +136,57 @@ pub fn derive_ser_ron(input: TokenStream) -> TokenStream {
 ///
 /// let point: Point = Point::from_ron("(x: 1.0, y: 2.0)").unwrap();
 /// ```
-#[proc_macro_derive(DeRon, attributes(ron, ron_schema))]
-pub fn derive_de_ron(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(FromRon, attributes(ron, ron_schema))]
+pub fn derive_from_ron(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    match de::derive_de_ron(&input) {
+    match de::derive_from_ron(&input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Derive macro that implements ToRon, FromRon, and RonSchema.
+///
+/// This is a convenience macro that combines all three derives.
+///
+/// # Example
+///
+/// ```ignore
+/// use ron_derive::Ron;
+///
+/// #[derive(Debug, PartialEq, Ron)]
+/// struct Point {
+///     x: f32,
+///     y: f32,
+/// }
+///
+/// let point = Point { x: 1.0, y: 2.0 };
+/// let ron = point.to_ron().unwrap();
+/// let parsed: Point = Point::from_ron(&ron).unwrap();
+/// let schema = Point::schema();
+/// ```
+#[proc_macro_derive(Ron, attributes(ron, ron_schema))]
+pub fn derive_ron(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    // Combine all three derives
+    let schema_result = impl_ron_schema(&input);
+    let to_ron_result = ser::derive_to_ron(&input);
+    let from_ron_result = de::derive_from_ron(&input);
+
+    match (schema_result, to_ron_result, from_ron_result) {
+        (Ok(schema), Ok(to_ron), Ok(from_ron)) => {
+            let combined = quote! {
+                #schema
+                #to_ron
+                #from_ron
+            };
+            combined.into()
+        }
+        (Err(e), _, _) => e.to_compile_error().into(),
+        (_, Err(e), _) => e.to_compile_error().into(),
+        (_, _, Err(e)) => e.to_compile_error().into(),
     }
 }
 

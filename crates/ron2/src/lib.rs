@@ -38,6 +38,7 @@ extern crate alloc;
 
 pub mod ast;
 pub mod chars;
+pub mod convert;
 pub mod error;
 pub mod extensions;
 pub mod lexer;
@@ -47,6 +48,9 @@ pub mod token;
 mod util;
 pub mod value;
 
+pub use crate::convert::{FromRon, ToRon};
+#[cfg(feature = "std")]
+pub use crate::convert::MapAccess;
 pub use crate::error::{Error, SpannedError, SpannedResult};
 pub use crate::extensions::Extensions;
 pub use crate::options::Options;

@@ -1,34 +1,40 @@
-(
-    doc: Some("Application configuration for a web server."),
+Schema(
+    doc: "Application configuration for a web server.",
     kind: Struct(
         fields: [
-            (
+            Field(
                 name: "port",
                 ty: U16,
-                doc: Some("Server port number."),
+                doc: "Server port number."
             ),
-            (
+            Field(
                 name: "host",
                 ty: String,
-                doc: Some("Server hostname."),
-                optional: true,
+                doc: "Server hostname.",
+                optional: true
             ),
-            (
+            Field(
                 name: "debug",
                 ty: Bool,
-                doc: Some("Whether debug mode is enabled."),
-                optional: true,
+                doc: "Whether debug mode is enabled.",
+                optional: true
             ),
-            (
+            Field(
                 name: "features",
-                ty: List(TypeRef("Feature")),
-                doc: Some("List of enabled features."),
+                ty: List(
+                    TypeRef(
+                        "Feature"
+                    )
+                ),
+                doc: "List of enabled features."
             ),
-            (
+            Field(
                 name: "database",
-                ty: TypeRef("DatabaseConfig"),
-                doc: Some("Database configuration."),
-            ),
-        ],
-    ),
+                ty: TypeRef(
+                    "DatabaseConfig"
+                ),
+                doc: "Database configuration."
+            )
+        ]
+    )
 )

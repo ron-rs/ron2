@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
-use crate::de::DeRon;
-use crate::ser::SerRon;
+use ron2::{FromRon, ToRon};
 use crate::Schema;
 
 /// Environment variable for schema directory override.
@@ -19,8 +18,10 @@ const SCHEMA_EXTENSION: &str = "schema.ron";
 pub enum StorageError {
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+    #[error("RON parse error: {0}")]
+    Parse(#[from] ron2::SpannedError),
     #[error("RON error: {0}")]
-    Ron(#[from] crate::error::RonError),
+    Ron(#[from] ron2::Error),
     #[error("Could not determine schema directory")]
     NoSchemaDir,
     #[error("Schema not found for type: {0}")]
@@ -87,8 +88,7 @@ pub fn write_schema(
     // Serialize with pretty printing
     let value = schema.to_ron_value()?;
     let config = ron2::ser::PrettyConfig::default();
-    let contents = ron2::ser::to_string_pretty(&value, config)
-        .map_err(|e| crate::error::RonError::from(e))?;
+    let contents = ron2::ser::to_string_pretty(&value, config)?;
 
     fs::write(&file_path, contents)?;
 
@@ -98,8 +98,7 @@ pub fn write_schema(
 /// Read a schema from a file path.
 pub fn read_schema(path: &Path) -> Result<Schema> {
     let contents = fs::read_to_string(path)?;
-    let value = ron2::from_str(&contents)
-        .map_err(|e| crate::error::RonError::from(e))?;
+    let value = ron2::from_str(&contents)?;
     let schema = Schema::from_ron_value(value)?;
     Ok(schema)
 }

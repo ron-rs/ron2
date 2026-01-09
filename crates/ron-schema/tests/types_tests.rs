@@ -6,7 +6,7 @@
 //! - Field and Variant builders
 //! - Nested types (Vec of Option of Struct, etc.)
 
-use ron_schema::{DeRon, Field, PrettyConfig, Schema, SerRon, TypeKind, Variant, VariantKind};
+use ron_schema::{Field, FromRon, PrettyConfig, Schema, ToRon, TypeKind, Variant, VariantKind};
 
 // ============================================================================
 // Schema tests

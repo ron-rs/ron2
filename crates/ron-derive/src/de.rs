@@ -1,4 +1,4 @@
-//! DeRon derive macro implementation.
+//! FromRon derive macro implementation.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -6,8 +6,8 @@ use syn::{Data, DeriveInput, Fields, Ident};
 
 use crate::attr::{ContainerAttrs, FieldAttrs, FieldDefault, VariantAttrs};
 
-/// Generate DeRon implementation for a type.
-pub fn derive_de_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
+/// Generate FromRon implementation for a type.
+pub fn derive_from_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let container_attrs = ContainerAttrs::from_ast(&input.attrs)?;
 
@@ -17,7 +17,7 @@ pub fn derive_de_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
         Data::Union(_) => {
             return Err(syn::Error::new_spanned(
                 input,
-                "DeRon cannot be derived for unions",
+                "FromRon cannot be derived for unions",
             ));
         }
     };
@@ -25,8 +25,8 @@ pub fn derive_de_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     Ok(quote! {
-        impl #impl_generics ::ron_schema::DeRon for #name #ty_generics #where_clause {
-            fn from_ron_value(value: ::ron2::Value) -> ::std::result::Result<Self, ::ron_schema::RonError> {
+        impl #impl_generics ::ron2::FromRon for #name #ty_generics #where_clause {
+            fn from_ron_value(value: ::ron2::Value) -> ::ron2::error::Result<Self> {
                 #body
             }
         }
@@ -64,13 +64,13 @@ fn derive_struct_de(
                 known_fields.push(ron_name.clone());
 
                 let deserialize_expr = quote! {
-                    ::ron_schema::DeRon::from_ron_value(field_value)?
+                    ::ron2::FromRon::from_ron_value(field_value)?
                 };
 
                 let default_expr = match &field_attrs.default {
                     FieldDefault::None => {
                         quote! {
-                            return Err(::ron_schema::RonError::MissingField(#ron_name.to_string()))
+                            return Err(::ron2::error::Error::missing_field(#ron_name))
                         }
                     }
                     FieldDefault::Default => {
@@ -96,7 +96,7 @@ fn derive_struct_de(
             let deny_unknown = if container_attrs.deny_unknown_fields {
                 quote! {
                     for key in map.keys() {
-                        return Err(::ron_schema::RonError::UnknownField(key.clone()));
+                        return Err(::ron2::error::Error::invalid_value(format!("unknown field: {:?}", key)));
                     }
                 }
             } else {
@@ -123,7 +123,7 @@ fn derive_struct_de(
                         }
                         result
                     }
-                    other => return Err(::ron_schema::RonError::type_mismatch("struct", other)),
+                    other => return Err(::ron2::error::Error::type_mismatch("struct", &other)),
                 };
 
                 #(#field_extractions)*
@@ -146,11 +146,11 @@ fn derive_struct_de(
                     quote! {
                         {
                             let v = seq.pop().ok_or_else(|| {
-                                ::ron_schema::RonError::InvalidValue(
+                                ::ron2::error::Error::invalid_value(
                                     format!("expected {} elements, got fewer", #field_count)
                                 )
                             })?;
-                            <#field_ty as ::ron_schema::DeRon>::from_ron_value(v)?
+                            <#field_ty as ::ron2::FromRon>::from_ron_value(v)?
                         }
                     }
                 })
@@ -160,14 +160,14 @@ fn derive_struct_de(
                 match value {
                     ::ron2::Value::Seq(mut seq) => {
                         if seq.len() != #field_count {
-                            return Err(::ron_schema::RonError::InvalidValue(
+                            return Err(::ron2::error::Error::invalid_value(
                                 format!("expected {} elements, got {}", #field_count, seq.len())
                             ));
                         }
                         seq.reverse();
                         Ok(#name(#(#field_extractions),*))
                     }
-                    other => Err(::ron_schema::RonError::type_mismatch("tuple struct (Seq)", other)),
+                    other => Err(::ron2::error::Error::type_mismatch("tuple struct (Seq)", &other)),
                 }
             })
         }
@@ -177,7 +177,7 @@ fn derive_struct_de(
                     ::ron2::Value::Unit => Ok(#name),
                     // Also accept empty map for compatibility
                     ::ron2::Value::Map(m) if m.is_empty() => Ok(#name),
-                    other => Err(::ron_schema::RonError::type_mismatch("unit struct", other)),
+                    other => Err(::ron2::error::Error::type_mismatch("unit struct", &other)),
                 }
             })
         }
@@ -213,7 +213,7 @@ fn derive_enum_de(
                     #variant_name => {
                         match inner {
                             ::ron2::Value::Unit => Ok(#name::#variant_ident),
-                            other => Err(::ron_schema::RonError::type_mismatch("unit variant", other)),
+                            other => Err(::ron2::error::Error::type_mismatch("unit variant", &other)),
                         }
                     }
                 }
@@ -226,7 +226,7 @@ fn derive_enum_de(
                     let field_ty = &unnamed.unnamed[0].ty;
                     quote! {
                         #variant_name => {
-                            let inner_val = <#field_ty as ::ron_schema::DeRon>::from_ron_value(inner)?;
+                            let inner_val = <#field_ty as ::ron2::FromRon>::from_ron_value(inner)?;
                             Ok(#name::#variant_ident(inner_val))
                         }
                     }
@@ -239,11 +239,11 @@ fn derive_enum_de(
                             quote! {
                                 {
                                     let v = seq.pop().ok_or_else(|| {
-                                        ::ron_schema::RonError::InvalidValue(
+                                        ::ron2::error::Error::invalid_value(
                                             format!("expected {} elements", #field_count)
                                         )
                                     })?;
-                                    <#ty as ::ron_schema::DeRon>::from_ron_value(v)?
+                                    <#ty as ::ron2::FromRon>::from_ron_value(v)?
                                 }
                             }
                         })
@@ -254,14 +254,14 @@ fn derive_enum_de(
                             match inner {
                                 ::ron2::Value::Seq(mut seq) => {
                                     if seq.len() != #field_count {
-                                        return Err(::ron_schema::RonError::InvalidValue(
+                                        return Err(::ron2::error::Error::invalid_value(
                                             format!("expected {} elements, got {}", #field_count, seq.len())
                                         ));
                                     }
                                     seq.reverse();
                                     Ok(#name::#variant_ident(#(#field_extractions),*))
                                 }
-                                other => Err(::ron_schema::RonError::type_mismatch("tuple variant (Seq)", other)),
+                                other => Err(::ron2::error::Error::type_mismatch("tuple variant (Seq)", &other)),
                             }
                         }
                     }
@@ -290,7 +290,7 @@ fn derive_enum_de(
                     let default_expr = match &field_attrs.default {
                         FieldDefault::None => {
                             quote! {
-                                return Err(::ron_schema::RonError::MissingField(#ron_name.to_string()))
+                                return Err(::ron2::error::Error::missing_field(#ron_name))
                             }
                         }
                         FieldDefault::Default => {
@@ -307,7 +307,7 @@ fn derive_enum_de(
 
                     field_extractions.push(quote! {
                         let #field_ident: #field_ty = match map.remove(#ron_name) {
-                            Some(field_value) => ::ron_schema::DeRon::from_ron_value(field_value)?,
+                            Some(field_value) => ::ron2::FromRon::from_ron_value(field_value)?,
                             None => #default_expr,
                         };
                     });
@@ -334,7 +334,7 @@ fn derive_enum_de(
                                 }
                                 result
                             }
-                            other => return Err(::ron_schema::RonError::type_mismatch("struct variant", other)),
+                            other => return Err(::ron2::error::Error::type_mismatch("struct variant", &other)),
                         };
 
                         let mut map = map;
@@ -365,31 +365,31 @@ fn derive_enum_de(
         match value {
             ::ron2::Value::Map(m) => {
                 if m.len() != 1 {
-                    return Err(::ron_schema::RonError::InvalidValue(
+                    return Err(::ron2::error::Error::invalid_value(
                         format!("expected map with single variant, got {} entries", m.len())
                     ));
                 }
                 let (variant_key, inner) = m.into_iter().next().unwrap();
                 let variant_name = match variant_key {
                     ::ron2::Value::String(s) => s,
-                    other => return Err(::ron_schema::RonError::type_mismatch("string (variant name)", other)),
+                    other => return Err(::ron2::error::Error::type_mismatch("string (variant name)", &other)),
                 };
 
                 match variant_name.as_str() {
                     #(#map_variant_arms)*
-                    unknown => Err(::ron_schema::RonError::UnknownVariant(unknown.to_string())),
+                    unknown => Err(::ron2::error::Error::invalid_value(format!("unknown variant: {}", unknown))),
                 }
             }
             // Also try to parse as string for unit variants only
             ::ron2::Value::String(s) => {
                 match s.as_str() {
                     #(#string_variant_arms)*
-                    unknown => Err(::ron_schema::RonError::UnknownVariant(unknown.to_string())),
+                    unknown => Err(::ron2::error::Error::invalid_value(format!("unknown variant: {}", unknown))),
                 }
             }
-            other => Err(::ron_schema::RonError::type_mismatch(
+            other => Err(::ron2::error::Error::type_mismatch(
                 concat!("enum (Map or String with variants: ", #(#variant_names, " "),* , ")"),
-                other
+                &other
             )),
         }
     })

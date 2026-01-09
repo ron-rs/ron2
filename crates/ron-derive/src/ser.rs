@@ -1,4 +1,4 @@
-//! SerRon derive macro implementation.
+//! ToRon derive macro implementation.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -6,8 +6,8 @@ use syn::{Data, DeriveInput, Fields, Ident};
 
 use crate::attr::{ContainerAttrs, FieldAttrs, VariantAttrs};
 
-/// Generate SerRon implementation for a type.
-pub fn derive_ser_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
+/// Generate ToRon implementation for a type.
+pub fn derive_to_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let container_attrs = ContainerAttrs::from_ast(&input.attrs)?;
 
@@ -17,7 +17,7 @@ pub fn derive_ser_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
         Data::Union(_) => {
             return Err(syn::Error::new_spanned(
                 input,
-                "SerRon cannot be derived for unions",
+                "ToRon cannot be derived for unions",
             ));
         }
     };
@@ -25,8 +25,8 @@ pub fn derive_ser_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     Ok(quote! {
-        impl #impl_generics ::ron_schema::SerRon for #name #ty_generics #where_clause {
-            fn to_ron_value(&self) -> ::std::result::Result<::ron2::Value, ::ron_schema::RonError> {
+        impl #impl_generics ::ron2::ToRon for #name #ty_generics #where_clause {
+            fn to_ron_value(&self) -> ::ron2::error::Result<::ron2::Value> {
                 #body
             }
         }
@@ -54,7 +54,7 @@ fn derive_struct_ser(
                 let field_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
                 let serialize_expr = quote! {
-                    ::ron_schema::SerRon::to_ron_value(&self.#field_ident)?
+                    ::ron2::ToRon::to_ron_value(&self.#field_ident)?
                 };
 
                 if let Some(ref predicate) = field_attrs.skip_serializing_if {
@@ -91,7 +91,7 @@ fn derive_struct_ser(
                 .map(|(i, _)| {
                     let index = syn::Index::from(i);
                     quote! {
-                        ::ron_schema::SerRon::to_ron_value(&self.#index)?
+                        ::ron2::ToRon::to_ron_value(&self.#index)?
                     }
                 })
                 .collect();
@@ -148,7 +148,7 @@ fn derive_enum_ser(
 
                 let field_values: Vec<_> = field_names
                     .iter()
-                    .map(|f| quote! { ::ron_schema::SerRon::to_ron_value(#f)? })
+                    .map(|f| quote! { ::ron2::ToRon::to_ron_value(#f)? })
                     .collect();
 
                 if field_names.len() == 1 {
@@ -159,7 +159,7 @@ fn derive_enum_ser(
                             let mut map = ::ron2::value::Map::new();
                             map.insert(
                                 ::ron2::Value::String(#variant_name.to_string()),
-                                ::ron_schema::SerRon::to_ron_value(#field)?
+                                ::ron2::ToRon::to_ron_value(#field)?
                             );
                             Ok(::ron2::Value::Map(map))
                         }
@@ -199,7 +199,7 @@ fn derive_enum_ser(
                     field_serializations.push(quote! {
                         inner_map.insert(
                             ::ron2::Value::String(#ron_name.to_string()),
-                            ::ron_schema::SerRon::to_ron_value(#field_ident)?
+                            ::ron2::ToRon::to_ron_value(#field_ident)?
                         );
                     });
                 }

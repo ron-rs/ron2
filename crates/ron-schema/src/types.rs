@@ -1,10 +1,7 @@
+use ron2::error::{Error, Result};
 use ron2::value::{NamedContent, StructFields};
-use ron2::Value;
+use ron2::{FromRon, ToRon, Value};
 use serde::{Deserialize, Serialize};
-
-use crate::de::DeRon;
-use crate::error::RonError;
-use crate::ser::SerRon;
 
 /// Root schema definition for a Rust type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -226,11 +223,11 @@ impl Variant {
 }
 
 // =============================================================================
-// SerRon implementations
+// ToRon implementations
 // =============================================================================
 
-impl SerRon for Schema {
-    fn to_ron_value(&self) -> Result<Value, RonError> {
+impl ToRon for Schema {
+    fn to_ron_value(&self) -> Result<Value> {
         let mut fields: StructFields = Vec::new();
         if let Some(ref doc) = self.doc {
             fields.push(("doc".to_string(), Value::String(doc.clone())));
@@ -243,8 +240,8 @@ impl SerRon for Schema {
     }
 }
 
-impl SerRon for TypeKind {
-    fn to_ron_value(&self) -> Result<Value, RonError> {
+impl ToRon for TypeKind {
+    fn to_ron_value(&self) -> Result<Value> {
         match self {
             TypeKind::Bool => Ok(Value::Named {
                 name: "Bool".to_string(),
@@ -364,8 +361,8 @@ impl SerRon for TypeKind {
     }
 }
 
-impl SerRon for Field {
-    fn to_ron_value(&self) -> Result<Value, RonError> {
+impl ToRon for Field {
+    fn to_ron_value(&self) -> Result<Value> {
         let mut fields: StructFields = Vec::new();
         fields.push(("name".to_string(), Value::String(self.name.clone())));
         fields.push(("ty".to_string(), self.ty.to_ron_value()?));
@@ -385,8 +382,8 @@ impl SerRon for Field {
     }
 }
 
-impl SerRon for Variant {
-    fn to_ron_value(&self) -> Result<Value, RonError> {
+impl ToRon for Variant {
+    fn to_ron_value(&self) -> Result<Value> {
         let mut fields: StructFields = Vec::new();
         fields.push(("name".to_string(), Value::String(self.name.clone())));
         if let Some(ref doc) = self.doc {
@@ -400,8 +397,8 @@ impl SerRon for Variant {
     }
 }
 
-impl SerRon for VariantKind {
-    fn to_ron_value(&self) -> Result<Value, RonError> {
+impl ToRon for VariantKind {
+    fn to_ron_value(&self) -> Result<Value> {
         match self {
             VariantKind::Unit => Ok(Value::Named {
                 name: "Unit".to_string(),
@@ -427,24 +424,24 @@ impl SerRon for VariantKind {
 }
 
 // =============================================================================
-// DeRon implementations
+// FromRon implementations
 // =============================================================================
 
-impl DeRon for Schema {
-    fn from_ron_value(value: Value) -> Result<Self, RonError> {
+impl FromRon for Schema {
+    fn from_ron_value(value: Value) -> Result<Self> {
         let (name, content) = match value {
             Value::Named { name, content } => (name, content),
             Value::Struct(fields) => ("Schema".to_string(), NamedContent::Struct(fields)),
-            other => return Err(RonError::type_mismatch("Schema", other)),
+            other => return Err(Error::type_mismatch("Schema", &other)),
         };
 
         if name != "Schema" {
-            return Err(RonError::type_mismatch("Schema", Value::String(name)));
+            return Err(Error::invalid_value(format!("expected Schema, got {name}")));
         }
 
         let fields = match content {
             NamedContent::Struct(f) => f,
-            _ => return Err(RonError::InvalidValue("expected struct content".to_string())),
+            _ => return Err(Error::invalid_value("expected struct content")),
         };
 
         let mut doc = None;
@@ -467,16 +464,16 @@ impl DeRon for Schema {
 
         Ok(Schema {
             doc,
-            kind: kind.ok_or_else(|| RonError::MissingField("kind".to_string()))?,
+            kind: kind.ok_or_else(|| Error::missing_field("kind"))?,
         })
     }
 }
 
-impl DeRon for TypeKind {
-    fn from_ron_value(value: Value) -> Result<Self, RonError> {
+impl FromRon for TypeKind {
+    fn from_ron_value(value: Value) -> Result<Self> {
         let (name, content) = match value {
             Value::Named { name, content } => (name, content),
-            other => return Err(RonError::type_mismatch("TypeKind", other)),
+            other => return Err(Error::type_mismatch("TypeKind", &other)),
         };
 
         match name.as_str() {
@@ -516,9 +513,9 @@ impl DeRon for TypeKind {
                     }
                 }
                 Ok(TypeKind::Map {
-                    key: Box::new(key.ok_or_else(|| RonError::MissingField("key".to_string()))?),
+                    key: Box::new(key.ok_or_else(|| Error::missing_field("key"))?),
                     value: Box::new(
-                        value.ok_or_else(|| RonError::MissingField("value".to_string()))?,
+                        value.ok_or_else(|| Error::missing_field("value"))?,
                     ),
                 })
             }
@@ -535,7 +532,7 @@ impl DeRon for TypeKind {
                         return Ok(TypeKind::Struct { fields: field_list });
                     }
                 }
-                Err(RonError::MissingField("fields".to_string()))
+                Err(Error::missing_field("fields"))
             }
             "Enum" => {
                 let fields = extract_struct_fields(content)?;
@@ -547,26 +544,26 @@ impl DeRon for TypeKind {
                         });
                     }
                 }
-                Err(RonError::MissingField("variants".to_string()))
+                Err(Error::missing_field("variants"))
             }
             "TypeRef" => {
                 let path = extract_tuple_arg(content)?;
                 Ok(TypeKind::TypeRef(String::from_ron_value(path)?))
             }
-            _ => Err(RonError::UnknownVariant(name)),
+            _ => Err(Error::invalid_value(format!("unknown variant: {name}"))),
         }
     }
 }
 
-impl DeRon for Field {
-    fn from_ron_value(value: Value) -> Result<Self, RonError> {
+impl FromRon for Field {
+    fn from_ron_value(value: Value) -> Result<Self> {
         let fields = match value {
             Value::Named {
                 content: NamedContent::Struct(f),
                 ..
             } => f,
             Value::Struct(f) => f,
-            other => return Err(RonError::type_mismatch("Field", other)),
+            other => return Err(Error::type_mismatch("Field", &other)),
         };
 
         let mut name = None;
@@ -587,8 +584,8 @@ impl DeRon for Field {
         }
 
         Ok(Field {
-            name: name.ok_or_else(|| RonError::MissingField("name".to_string()))?,
-            ty: ty.ok_or_else(|| RonError::MissingField("ty".to_string()))?,
+            name: name.ok_or_else(|| Error::missing_field("name"))?,
+            ty: ty.ok_or_else(|| Error::missing_field("ty"))?,
             doc,
             optional,
             flattened,
@@ -596,15 +593,15 @@ impl DeRon for Field {
     }
 }
 
-impl DeRon for Variant {
-    fn from_ron_value(value: Value) -> Result<Self, RonError> {
+impl FromRon for Variant {
+    fn from_ron_value(value: Value) -> Result<Self> {
         let fields = match value {
             Value::Named {
                 content: NamedContent::Struct(f),
                 ..
             } => f,
             Value::Struct(f) => f,
-            other => return Err(RonError::type_mismatch("Variant", other)),
+            other => return Err(Error::type_mismatch("Variant", &other)),
         };
 
         let mut name = None;
@@ -621,18 +618,18 @@ impl DeRon for Variant {
         }
 
         Ok(Variant {
-            name: name.ok_or_else(|| RonError::MissingField("name".to_string()))?,
+            name: name.ok_or_else(|| Error::missing_field("name"))?,
             doc,
-            kind: kind.ok_or_else(|| RonError::MissingField("kind".to_string()))?,
+            kind: kind.ok_or_else(|| Error::missing_field("kind"))?,
         })
     }
 }
 
-impl DeRon for VariantKind {
-    fn from_ron_value(value: Value) -> Result<Self, RonError> {
+impl FromRon for VariantKind {
+    fn from_ron_value(value: Value) -> Result<Self> {
         let (name, content) = match value {
             Value::Named { name, content } => (name, content),
-            other => return Err(RonError::type_mismatch("VariantKind", other)),
+            other => return Err(Error::type_mismatch("VariantKind", &other)),
         };
 
         match name.as_str() {
@@ -647,24 +644,22 @@ impl DeRon for VariantKind {
                 let fields = Vec::<Field>::from_ron_value(inner)?;
                 Ok(VariantKind::Struct(fields))
             }
-            _ => Err(RonError::UnknownVariant(name)),
+            _ => Err(Error::invalid_value(format!("unknown variant: {name}"))),
         }
     }
 }
 
 // Helper functions for deserializing
-fn extract_tuple_arg(content: NamedContent) -> Result<Value, RonError> {
+fn extract_tuple_arg(content: NamedContent) -> Result<Value> {
     match content {
         NamedContent::Tuple(mut args) if !args.is_empty() => Ok(args.remove(0)),
-        _ => Err(RonError::InvalidValue(
-            "expected tuple with one argument".to_string(),
-        )),
+        _ => Err(Error::invalid_value("expected tuple with one argument")),
     }
 }
 
-fn extract_struct_fields(content: NamedContent) -> Result<StructFields, RonError> {
+fn extract_struct_fields(content: NamedContent) -> Result<StructFields> {
     match content {
         NamedContent::Struct(fields) => Ok(fields),
-        _ => Err(RonError::InvalidValue("expected struct content".to_string())),
+        _ => Err(Error::invalid_value("expected struct content")),
     }
 }
