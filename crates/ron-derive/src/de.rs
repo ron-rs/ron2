@@ -131,13 +131,27 @@ fn derive_named_struct_de(
                     }),
                 }
             }
-            _ => Err(::ron2::error::SpannedError {
-                code: ::ron2::error::Error::InvalidValueForType {
-                    expected: concat!("struct ", #struct_name).to_string(),
-                    found: ::ron2::convert::expr_type_name(expr).to_string(),
-                },
-                span: expr.span().clone(),
-            }),
+            _ => {
+                let found_type = ::ron2::convert::expr_type_name(expr);
+                // Provide more helpful message when () is passed for a struct
+                let expected_msg = if found_type == "unit" {
+                    let fields: &[&str] = &[#(#known_fields),*];
+                    if fields.is_empty() {
+                        concat!("struct ", #struct_name).to_string()
+                    } else {
+                        format!("struct {} with fields: {}", #struct_name, fields.join(", "))
+                    }
+                } else {
+                    concat!("struct ", #struct_name).to_string()
+                };
+                Err(::ron2::error::SpannedError {
+                    code: ::ron2::error::Error::InvalidValueForType {
+                        expected: expected_msg,
+                        found: found_type.to_string(),
+                    },
+                    span: expr.span().clone(),
+                })
+            }
         }
     })
 }

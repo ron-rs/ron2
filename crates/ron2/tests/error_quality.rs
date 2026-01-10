@@ -3,7 +3,7 @@
 //! These tests ensure that errors provide precise location information
 //! and helpful messages that enable rustc-like diagnostics.
 
-use ron2::{SpannedResult, Value, ast::parse_document, error::Error, from_str};
+use ron2::{SpannedResult, Value, error::Error, from_str};
 
 // =============================================================================
 // Span Accuracy Tests - Parsing Errors
@@ -182,20 +182,6 @@ fn span_byte_offsets_enable_slicing() {
 // =============================================================================
 
 #[test]
-fn span_nested_struct_error_correct_line() {
-    let source = r#"Config(
-    name: "test",
-    settings: Settings(
-        timeout: "not_a_number",
-    ),
-)"#;
-    // This tests AST parsing, not deserialization
-    // The string "not_a_number" is valid RON, just wrong type
-    let doc = parse_document(source).expect("should parse");
-    assert!(doc.value.is_some());
-}
-
-#[test]
 fn span_deeply_nested_error() {
     use ron2::FromRon;
     use std::collections::HashMap;
@@ -283,14 +269,17 @@ fn error_message_eof_is_clear() {
 }
 
 #[test]
-fn error_code_integer_out_of_bounds_includes_value() {
-    // u8 max is 255
+fn type_bounds_checked_at_deserialization_not_parsing() {
+    // Type bounds like u8 are checked during deserialization, not parsing
+    // 256 is fine for i64 (default integer storage) but too big for u8
     let source = "256";
-    // We need to try to parse as u8 to get bounds error
-    // This happens during deserialization, not parsing
     let result: SpannedResult<Value> = from_str(source);
-    // This should succeed - 256 is a valid number
-    assert!(result.is_ok(), "256 is valid as a generic number");
+    assert!(result.is_ok(), "256 should parse as a generic number");
+
+    // i64::MAX is valid
+    let source = "9223372036854775807";
+    let result: SpannedResult<Value> = from_str(source);
+    assert!(result.is_ok(), "i64::MAX should parse successfully");
 }
 
 #[test]
@@ -323,7 +312,11 @@ fn error_code_for_unclosed_string() {
     let result: SpannedResult<Value> = from_str(source);
     let err = result.unwrap_err();
 
-    matches!(err.code, Error::ExpectedStringEnd | Error::Eof);
+    assert!(
+        matches!(err.code, Error::ExpectedStringEnd | Error::Eof),
+        "Expected ExpectedStringEnd or Eof error, got {:?}",
+        err.code
+    );
 }
 
 #[test]
@@ -332,7 +325,11 @@ fn error_code_for_invalid_escape() {
     let result: SpannedResult<Value> = from_str(source);
     let err = result.unwrap_err();
 
-    matches!(err.code, Error::InvalidEscape(_));
+    assert!(
+        matches!(err.code, Error::InvalidEscape(_)),
+        "Expected InvalidEscape error, got {:?}",
+        err.code
+    );
 }
 
 #[test]
