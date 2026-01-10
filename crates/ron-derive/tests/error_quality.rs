@@ -718,14 +718,8 @@ fn wrong_struct_name_error_is_helpful() {
 // =============================================================================
 
 #[test]
-#[ignore = "BUG: duplicate fields silently overwrite - AstMapAccess::from_anon uses HashMap::insert without checking"]
 fn duplicate_field_produces_error() {
-    // This test documents a bug: duplicate struct fields should produce an error,
-    // but currently the second value silently overwrites the first.
-    //
-    // Root cause: In crates/ron2/src/convert.rs, AstMapAccess::from_anon (line ~946)
-    // and from_fields (line ~961) use HashMap::insert without checking for duplicates.
-    // The DuplicateStructField error type exists but is never raised during field collection.
+    // Duplicate struct fields should produce an error.
     let input = r#"(name: "alice", name: "bob", port: 8080, enabled: true)"#;
     let err = SimpleConfig::from_ron(input).unwrap_err();
 
@@ -742,7 +736,6 @@ fn duplicate_field_produces_error() {
 }
 
 #[test]
-#[ignore = "BUG: duplicate fields silently overwrite - see duplicate_field_produces_error"]
 fn duplicate_field_span_points_to_second_occurrence() {
     // When duplicate fields are detected, the span should point to the second (duplicate) field,
     // not the first one, since that helps the user identify which one to remove.
@@ -763,31 +756,8 @@ fn duplicate_field_span_points_to_second_occurrence() {
 }
 
 #[test]
-fn duplicate_field_currently_uses_last_value() {
-    // This test documents the CURRENT (buggy) behavior:
-    // Duplicate fields are silently accepted and the last value wins.
-    //
-    // This is a data integrity issue - users may not realize their first value is ignored.
-    let input = r#"(name: "alice", name: "bob", port: 8080, enabled: true)"#;
-    let result = SimpleConfig::from_ron(input);
-
-    // Currently succeeds (this is the bug!)
-    let config = result.expect(
-        "BUG: duplicate fields should produce an error, but currently they silently overwrite",
-    );
-
-    // The last value wins
-    assert_eq!(
-        config.name, "bob",
-        "Last value should win in current buggy behavior"
-    );
-    assert_eq!(config.port, 8080);
-    assert!(config.enabled);
-}
-
-#[test]
-fn duplicate_field_in_nested_struct_currently_uses_last_value() {
-    // Same bug applies to nested structs
+fn duplicate_field_in_nested_struct_produces_error() {
+    // Duplicate fields in nested structs should also produce an error.
     let input = r#"(
     name: "test",
     inner: (
@@ -795,14 +765,15 @@ fn duplicate_field_in_nested_struct_currently_uses_last_value() {
         value: 2,
     ),
 )"#;
-    let result = Outer::from_ron(input);
+    let err = Outer::from_ron(input).unwrap_err();
 
-    // Currently succeeds (this is the bug!)
-    let outer = result.expect("BUG: duplicate fields should produce an error");
-    assert_eq!(
-        outer.inner.value, 2,
-        "Last value should win in current buggy behavior"
-    );
+    // Error should be DuplicateStructField
+    if let Error::DuplicateStructField { field, outer } = &err.code {
+        assert_eq!(field.as_ref(), "value");
+        assert!(outer.is_some());
+    } else {
+        panic!("Expected DuplicateStructField error, got {:?}", err.code);
+    }
 }
 
 // =============================================================================
@@ -825,7 +796,6 @@ struct FlattenOuter {
 }
 
 #[test]
-#[ignore = "flatten deserialization not yet implemented - field is treated as regular nested struct"]
 fn flatten_field_error_points_to_invalid_value() {
     // When a flattened struct has a field with an invalid type,
     // the error span should point directly to the invalid value.
@@ -845,7 +815,6 @@ fn flatten_field_error_points_to_invalid_value() {
 }
 
 #[test]
-#[ignore = "flatten deserialization not yet implemented - field is treated as regular nested struct"]
 fn flatten_field_error_includes_context() {
     // Error message should provide context about both the outer and inner struct
     // to help users understand the field hierarchy.
@@ -862,7 +831,6 @@ fn flatten_field_error_includes_context() {
 }
 
 #[test]
-#[ignore = "flatten deserialization not yet implemented - field is treated as regular nested struct"]
 fn flatten_missing_field_error_names_the_field() {
     // When a flattened struct is missing a required field,
     // the error should clearly name the missing field.
@@ -878,7 +846,6 @@ fn flatten_missing_field_error_names_the_field() {
 }
 
 #[test]
-#[ignore = "flatten deserialization not yet implemented - field is treated as regular nested struct"]
 fn flatten_multiline_error_has_correct_span() {
     // Multiline RON with error in flattened field
     let input = r#"(
@@ -919,7 +886,6 @@ struct FlattenTop {
 }
 
 #[test]
-#[ignore = "flatten deserialization not yet implemented - field is treated as regular nested struct"]
 fn deeply_flattened_error_preserves_span() {
     // With deeply nested flatten, all fields appear at top level:
     // (name: "test", id: 1, data: "wrong")
@@ -979,7 +945,6 @@ struct FlattenOuterWithOptional {
 }
 
 #[test]
-#[ignore = "flatten deserialization not yet implemented - field is treated as regular nested struct"]
 fn flatten_with_optional_field_error() {
     // When optional flattened field has wrong type
     let input = r#"(name: "test", required: 42, optional: 123)"#;
@@ -1013,7 +978,6 @@ struct ConflictOuter {
 }
 
 #[test]
-#[ignore = "flatten deserialization not yet implemented - field is treated as regular nested struct"]
 fn flatten_field_name_conflict() {
     // When outer and flattened inner have same field name,
     // behavior should be well-defined (typically outer wins or error).

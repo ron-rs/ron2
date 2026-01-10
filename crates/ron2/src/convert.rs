@@ -132,6 +132,43 @@ pub trait FromRon: Sized {
     }
 }
 
+/// Trait for types that can be deserialized from struct fields.
+///
+/// This trait is used by the `#[ron(flatten)]` attribute to allow a struct's
+/// fields to be merged into a parent struct. Types implementing this trait
+/// can consume fields from an [`AstMapAccess`] rather than requiring a
+/// separate struct expression.
+///
+/// This trait is automatically implemented by the `FromRon` derive macro
+/// for named structs.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(FromRon)]
+/// struct Inner {
+///     value: i32,
+/// }
+///
+/// #[derive(FromRon)]
+/// struct Outer {
+///     name: String,
+///     #[ron(flatten)]
+///     inner: Inner,  // Fields from Inner are merged into Outer
+/// }
+///
+/// // RON input: (name: "test", value: 42)
+/// // Not: (name: "test", inner: (value: 42))
+/// ```
+#[cfg(feature = "std")]
+pub trait FromRonFields: Sized {
+    /// Consume fields from an existing map access to construct this type.
+    ///
+    /// This is used for `#[ron(flatten)]` fields where the inner struct's
+    /// fields appear directly in the parent struct.
+    fn from_fields(access: &mut AstMapAccess<'_>) -> SpannedResult<Self>;
+}
+
 // =============================================================================
 // Error helpers
 // =============================================================================
@@ -942,37 +979,66 @@ pub struct AstMapAccess<'a> {
 #[cfg(feature = "std")]
 impl<'a> AstMapAccess<'a> {
     /// Create from an anonymous struct expression: `(field: value, ...)`
-    #[must_use]
-    pub fn from_anon(s: &'a AnonStructExpr<'a>, struct_name: Option<&'a str>) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if duplicate field names are found.
+    pub fn from_anon(
+        s: &'a AnonStructExpr<'a>,
+        struct_name: Option<&'a str>,
+    ) -> SpannedResult<Self> {
         let mut fields = HashMap::with_capacity(s.fields.len());
         for field in &s.fields {
-            fields.insert(field.name.name.as_ref(), field);
+            let name = field.name.name.as_ref();
+            if fields.contains_key(name) {
+                return Err(SpannedError {
+                    code: Error::DuplicateStructField {
+                        field: Cow::Owned(name.to_string()),
+                        outer: struct_name.map(|s| Cow::Owned(s.to_string())),
+                    },
+                    span: field.name.span.clone(),
+                });
+            }
+            fields.insert(name, field);
         }
-        Self {
+        Ok(Self {
             fields,
             consumed: HashSet::new(),
             struct_span: s.span.clone(),
             struct_name,
-        }
+        })
     }
 
     /// Create from named struct fields: `Name { field: value, ... }`
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if duplicate field names are found.
     pub fn from_fields(
         fields_body: &'a FieldsBody<'a>,
         struct_name: Option<&'a str>,
         struct_span: Span,
-    ) -> Self {
+    ) -> SpannedResult<Self> {
         let mut fields = HashMap::with_capacity(fields_body.fields.len());
         for field in &fields_body.fields {
-            fields.insert(field.name.name.as_ref(), field);
+            let name = field.name.name.as_ref();
+            if fields.contains_key(name) {
+                return Err(SpannedError {
+                    code: Error::DuplicateStructField {
+                        field: Cow::Owned(name.to_string()),
+                        outer: struct_name.map(|s| Cow::Owned(s.to_string())),
+                    },
+                    span: field.name.span.clone(),
+                });
+            }
+            fields.insert(name, field);
         }
-        Self {
+        Ok(Self {
             fields,
             consumed: HashSet::new(),
             struct_span,
             struct_name,
-        }
+        })
     }
 
     /// Get a required field.
@@ -1129,6 +1195,17 @@ impl<'a> AstMapAccess<'a> {
             None => Ok(None),
         }
     }
+
+    /// Consume fields for a flattened struct.
+    ///
+    /// This is used for `#[ron(flatten)]` fields where the inner struct's
+    /// fields appear directly in the parent struct rather than nested.
+    ///
+    /// The inner type must implement [`FromRonFields`] to consume fields
+    /// from this access.
+    pub fn flatten<T: FromRonFields>(&mut self) -> SpannedResult<T> {
+        T::from_fields(self)
+    }
 }
 
 #[cfg(test)]
@@ -1238,7 +1315,7 @@ mod tests {
 
         // Get the anonymous struct from the document
         if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s, Some("TestStruct"));
+            let mut access = AstMapAccess::from_anon(s, Some("TestStruct")).unwrap();
 
             assert_eq!(access.required::<String>("name").unwrap(), "test");
             assert_eq!(access.required::<i32>("value").unwrap(), 42);

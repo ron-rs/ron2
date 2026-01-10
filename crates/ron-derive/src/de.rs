@@ -27,12 +27,74 @@ pub fn derive_from_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
+    // Generate FromRonFields impl for named structs (needed for #[ron(flatten)])
+    let from_ron_fields_impl = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(named) => Some(derive_from_ron_fields(
+                name,
+                named,
+                &container_attrs,
+                &impl_generics,
+                &ty_generics,
+                where_clause,
+            )?),
+            _ => None,
+        },
+        _ => None,
+    };
+
     // Generate only from_ast - from_ron_value uses the default trait implementation
     // which converts Value to Expr and calls from_ast
     Ok(quote! {
         impl #impl_generics ::ron2::FromRon for #name #ty_generics #where_clause {
             fn from_ast(expr: &::ron2::ast::Expr<'_>) -> ::ron2::error::SpannedResult<Self> {
                 #from_ast_body
+            }
+        }
+
+        #from_ron_fields_impl
+    })
+}
+
+/// Generate FromRonFields implementation for named structs.
+///
+/// This allows the struct to be used with `#[ron(flatten)]` in parent structs.
+fn derive_from_ron_fields(
+    name: &Ident,
+    named: &syn::FieldsNamed,
+    container_attrs: &ContainerAttrs,
+    impl_generics: &syn::ImplGenerics<'_>,
+    ty_generics: &syn::TypeGenerics<'_>,
+    where_clause: Option<&syn::WhereClause>,
+) -> syn::Result<TokenStream2> {
+    let mut field_extractions = Vec::new();
+    let mut field_names = Vec::new();
+
+    for field in &named.named {
+        let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
+        let field_ident = field.ident.as_ref().unwrap();
+        let field_ty = &field.ty;
+
+        field_names.push(field_ident.clone());
+
+        if field_attrs.should_skip_deserializing() {
+            field_extractions.push(quote! {
+                let #field_ident: #field_ty = ::std::default::Default::default();
+            });
+            continue;
+        }
+
+        let ron_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
+        let extraction =
+            generate_field_extraction(field_ident, field_ty, &ron_name, &field_attrs, field)?;
+        field_extractions.push(extraction);
+    }
+
+    Ok(quote! {
+        impl #impl_generics ::ron2::FromRonFields for #name #ty_generics #where_clause {
+            fn from_fields(access: &mut ::ron2::AstMapAccess<'_>) -> ::ron2::error::SpannedResult<Self> {
+                #(#field_extractions)*
+                Ok(#name { #(#field_names),* })
             }
         }
     })
@@ -83,7 +145,11 @@ fn derive_named_struct_de(
         }
 
         let ron_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
-        known_fields.push(ron_name.clone());
+
+        // Flatten fields don't have a field name in the RON - they consume from parent access
+        if !field_attrs.flatten {
+            known_fields.push(ron_name.clone());
+        }
 
         // Generate field extraction using the shared helper
         let extraction =
@@ -104,7 +170,7 @@ fn derive_named_struct_de(
         match expr {
             // Anonymous struct: (field: val, ...)
             ::ron2::ast::Expr::AnonStruct(s) => {
-                let mut access = ::ron2::AstMapAccess::from_anon(s, Some(stringify!(#name)));
+                let mut access = ::ron2::AstMapAccess::from_anon(s, Some(stringify!(#name)))?;
                 #(#field_extractions)*
                 #deny_unknown
                 Ok(#name { #(#field_names),* })
@@ -117,7 +183,7 @@ fn derive_named_struct_de(
                             fields,
                             Some(s.name.name.as_ref()),
                             s.span.clone(),
-                        );
+                        )?;
                         #(#field_extractions)*
                         #deny_unknown
                         Ok(#name { #(#field_names),* })
@@ -466,7 +532,7 @@ fn derive_enum_de(
                                     fields,
                                     Some(#variant_name),
                                     s.span.clone(),
-                                );
+                                )?;
                                 #(#field_extractions)*
                                 #deny_unknown
                                 Ok(#name::#variant_ident { #(#field_names),* })
@@ -575,6 +641,13 @@ fn generate_field_extraction(
     field_attrs: &FieldAttrs,
     field: &syn::Field,
 ) -> syn::Result<TokenStream2> {
+    // Handle flatten fields - consume from the same access
+    if field_attrs.flatten {
+        return Ok(quote! {
+            let #field_ident: #field_ty = access.flatten()?;
+        });
+    }
+
     if field_attrs.explicit {
         // Explicit mode: require Some(...) or None syntax for Option fields
         let inner_ty = extract_option_inner(field_ty).ok_or_else(|| {

@@ -63,7 +63,7 @@ mod util;
 pub mod value;
 
 #[cfg(feature = "std")]
-pub use crate::convert::AstMapAccess;
+pub use crate::convert::{AstMapAccess, FromRonFields};
 pub use crate::convert::{FromRon, ParsedInt, ToRon, parse_int_raw};
 pub use crate::error::{Error, SpannedError, SpannedResult};
 pub use crate::extensions::Extensions;
