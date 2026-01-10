@@ -4,12 +4,13 @@
 //! based on the schema.
 
 use ron2::Value;
-use ron_schema::{Field, Schema, TypeKind, Variant, VariantKind};
+use ron_schema::{Field, Schema, TypeKind, Variant};
 use tower_lsp::lsp_types::*;
 
 use crate::document::{CompletionContext, Document};
 use crate::lsp_utils::find_field_at_cursor;
 use crate::schema_resolver::SchemaResolver;
+use crate::schema_utils::VariantParts;
 
 /// Provide completions for a document at a given position.
 pub fn provide_completions(
@@ -147,43 +148,19 @@ fn completions_for_enum_variants(variants: &[Variant]) -> Vec<CompletionItem> {
 
 /// Generate a completion item for an enum variant.
 fn completion_for_variant(variant: &Variant) -> CompletionItem {
-    let (insert_text, detail) = match &variant.kind {
-        VariantKind::Unit => (variant.name.clone(), "Unit variant".to_string()),
-        VariantKind::Tuple(types) => {
-            let type_list = types
-                .iter()
-                .map(|t| t.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            (
-                format!("{}()", variant.name),
-                format!("Tuple variant({})", type_list),
-            )
-        }
-        VariantKind::Struct(fields) => {
-            let field_list = fields
-                .iter()
-                .map(|f| format!("{}: {}", f.name, f.ty))
-                .collect::<Vec<_>>()
-                .join(", ");
-            (
-                format!("{}()", variant.name),
-                format!("Struct variant {{ {} }}", field_list),
-            )
-        }
-    };
+    let parts = VariantParts::from_variant(variant);
 
     CompletionItem {
         label: variant.name.clone(),
         kind: Some(CompletionItemKind::ENUM_MEMBER),
-        detail: Some(detail),
+        detail: Some(parts.detail()),
         documentation: variant.doc.as_ref().map(|d| {
             Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: d.clone(),
             })
         }),
-        insert_text: Some(insert_text),
+        insert_text: Some(parts.insert_text()),
         insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
         ..Default::default()
     }

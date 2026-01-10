@@ -9,6 +9,7 @@ use tower_lsp::lsp_types::*;
 use crate::document::Document;
 use crate::lsp_utils::find_word_range_from_ast;
 use crate::schema_resolver::SchemaResolver;
+use crate::schema_utils::VariantParts;
 
 /// Provide hover information for a position in the document.
 pub fn provide_hover(
@@ -172,52 +173,30 @@ fn format_field_hover(field: &Field) -> String {
 
 /// Format hover information for a variant.
 fn format_variant_hover(variant: &Variant) -> String {
-    let mut parts = Vec::new();
-
-    // Variant signature
-    let sig = match &variant.kind {
-        VariantKind::Unit => format!("**{}**", variant.name),
-        VariantKind::Tuple(types) => {
-            let type_list = types
-                .iter()
-                .map(|t| t.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("**{}**({})", variant.name, type_list)
-        }
-        VariantKind::Struct(fields) => {
-            let field_list = fields
-                .iter()
-                .map(|f| format!("{}: {}", f.name, f.ty))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("**{}** {{ {} }}", variant.name, field_list)
-        }
-    };
-    parts.push(sig);
+    let parts = VariantParts::from_variant(variant);
+    let mut output = vec![parts.markdown_signature()];
 
     // Documentation
     if let Some(ref doc) = variant.doc {
-        parts.push(String::new()); // Empty line
-        parts.push(doc.clone());
+        output.push(String::new()); // Empty line
+        output.push(doc.clone());
     }
 
     // For struct variants, also show field docs
     if let VariantKind::Struct(fields) = &variant.kind {
         let field_docs: Vec<String> = fields
             .iter()
-            .filter(|f| f.doc.is_some())
-            .map(|f| format!("- **{}**: {}", f.name, f.doc.as_ref().unwrap()))
+            .filter_map(|f| f.doc.as_ref().map(|d| format!("- **{}**: {}", f.name, d)))
             .collect();
 
         if !field_docs.is_empty() {
-            parts.push(String::new());
-            parts.push("**Fields:**".to_string());
-            parts.extend(field_docs);
+            output.push(String::new());
+            output.push("**Fields:**".to_string());
+            output.extend(field_docs);
         }
     }
 
-    parts.join("\n")
+    output.join("\n")
 }
 
 #[cfg(test)]
