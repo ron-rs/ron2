@@ -3,7 +3,7 @@
 //! These tests ensure that errors provide precise location information
 //! and helpful messages that enable rustc-like diagnostics.
 
-use ron2::{ast::parse_document, error::Error, from_str, SpannedResult, Value};
+use ron2::{SpannedResult, Value, ast::parse_document, error::Error, from_str};
 
 // =============================================================================
 // Span Accuracy Tests - Parsing Errors
@@ -71,15 +71,24 @@ fn span_points_to_unclosed_bracket_content() {
 }
 
 #[test]
-#[ignore = "bare identifiers are valid RON (unit-like values) - not an error"]
 fn span_multiline_points_to_correct_line() {
+    use ron2::FromRon;
+
+    // Bare identifiers are valid RON at the parsing level (they become unit-like values).
+    // The error occurs during deserialization when we try to convert to Vec<i32>.
     let source = r#"[
     1,
     2,
     invalid_ident
 ]"#;
+
+    // Parsing succeeds - bare identifiers are valid RON
     let result: SpannedResult<Value> = from_str(source);
-    let err = result.unwrap_err();
+    assert!(result.is_ok(), "Parsing should succeed: {:?}", result);
+
+    // Deserialization to Vec<i32> should fail with correct span
+    let result = Vec::<i32>::from_ron(source);
+    let err = result.expect_err("deserialization to Vec<i32> should fail");
 
     // Error should be on line 4 where invalid_ident is
     assert_eq!(
@@ -187,8 +196,12 @@ fn span_nested_struct_error_correct_line() {
 }
 
 #[test]
-#[ignore = "bare identifiers are valid RON (unit-like values) - not an error"]
 fn span_deeply_nested_error() {
+    use ron2::FromRon;
+    use std::collections::HashMap;
+
+    // Bare identifiers are valid RON at the parsing level.
+    // The error occurs during deserialization when we try to convert to the target type.
     let source = r#"{
     "level1": {
         "level2": {
@@ -200,8 +213,15 @@ fn span_deeply_nested_error() {
         }
     }
 }"#;
+
+    // Parsing succeeds - bare identifiers are valid RON
     let result: SpannedResult<Value> = from_str(source);
-    let err = result.unwrap_err();
+    assert!(result.is_ok(), "Parsing should succeed: {:?}", result);
+
+    // Deserialization should fail with correct span
+    type NestedMap = HashMap<String, HashMap<String, HashMap<String, Vec<i32>>>>;
+    let result = NestedMap::from_ron(source);
+    let err = result.expect_err("deserialization should fail");
 
     // Error should be on line 7 where "invalid" appears
     assert_eq!(
@@ -333,7 +353,6 @@ fn error_code_for_trailing_characters() {
 // =============================================================================
 
 #[test]
-#[ignore = "empty input parses as Unit - intentional RON behavior"]
 fn empty_input_has_sensible_error() {
     let source = "";
     let result: SpannedResult<Value> = from_str(source);
@@ -342,17 +361,17 @@ fn empty_input_has_sensible_error() {
     // Should report EOF at position 1:1
     assert_eq!(err.span.start.line, 1);
     assert_eq!(err.span.start.col, 1);
+    assert!(matches!(err.code, Error::Eof));
 }
 
 #[test]
-#[ignore = "whitespace-only input parses as Unit - intentional RON behavior"]
 fn whitespace_only_has_sensible_error() {
     let source = "   \n\n   ";
     let result: SpannedResult<Value> = from_str(source);
     let err = result.unwrap_err();
 
     // Should report EOF
-    matches!(err.code, Error::Eof);
+    assert!(matches!(err.code, Error::Eof));
 }
 
 #[test]

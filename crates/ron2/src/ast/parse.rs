@@ -1343,8 +1343,7 @@ impl<'a> AstParser<'a> {
         } else {
             // Regular string - need to process escapes
             let content = &raw[1..raw.len() - 1]; // Strip quotes
-            let value = Self::unescape_string(content)
-                .map_err(|(e, offset)| (e, offset + 1))?; // +1 for opening quote
+            let value = Self::unescape_string(content).map_err(|(e, offset)| (e, offset + 1))?; // +1 for opening quote
             Ok((value, StringKind::Regular))
         }
     }
@@ -1394,8 +1393,9 @@ impl<'a> AstParser<'a> {
                         byte_offset += 1;
                         let hex: String = chars.by_ref().take(2).collect();
                         byte_offset += hex.len();
-                        let val = u8::from_str_radix(&hex, 16)
-                            .map_err(|_| (Error::InvalidEscape("invalid hex escape"), char_start))?;
+                        let val = u8::from_str_radix(&hex, 16).map_err(|_| {
+                            (Error::InvalidEscape("invalid hex escape"), char_start)
+                        })?;
                         result.push(val as char);
                     }
                     Some('u') => {
@@ -1406,10 +1406,13 @@ impl<'a> AstParser<'a> {
                         byte_offset += 1;
                         let hex: String = chars.by_ref().take_while(|&c| c != '}').collect();
                         byte_offset += hex.len() + 1; // +1 for closing }
-                        let val = u32::from_str_radix(&hex, 16)
-                            .map_err(|_| (Error::InvalidEscape("invalid unicode escape"), char_start))?;
-                        let c = char::from_u32(val)
-                            .ok_or((Error::InvalidEscape("invalid unicode codepoint"), char_start))?;
+                        let val = u32::from_str_radix(&hex, 16).map_err(|_| {
+                            (Error::InvalidEscape("invalid unicode escape"), char_start)
+                        })?;
+                        let c = char::from_u32(val).ok_or((
+                            Error::InvalidEscape("invalid unicode codepoint"),
+                            char_start,
+                        ))?;
                         result.push(c);
                     }
                     Some(_) => {

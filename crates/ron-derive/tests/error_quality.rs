@@ -373,7 +373,10 @@ fn tuple_wrong_length_error() {
 
     // Should mention expected vs actual count
     assert!(
-        msg.contains('2') || msg.contains('3') || msg.contains("length") || msg.contains("elements"),
+        msg.contains('2')
+            || msg.contains('3')
+            || msg.contains("length")
+            || msg.contains("elements"),
         "Error should mention tuple length: {}",
         msg
     );
@@ -453,7 +456,10 @@ fn negative_unsigned_error() {
 
     // Should indicate the problem
     assert!(
-        msg.contains("-1") || msg.contains("u8") || msg.contains("unsigned") || msg.contains("bounds"),
+        msg.contains("-1")
+            || msg.contains("u8")
+            || msg.contains("unsigned")
+            || msg.contains("bounds"),
         "Error should mention negative value issue: {}",
         msg
     );

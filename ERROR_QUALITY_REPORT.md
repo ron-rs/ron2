@@ -97,37 +97,7 @@ Example messages:
 
 All fixable span accuracy issues have been resolved. The remaining ignored tests are for intentional RON behavior.
 
-#### Issue 1: Bare Identifiers Are Valid RON (By Design)
-
-```
-IGNORED: span_multiline_points_to_correct_line
-  - Input: [1, 2, invalid_ident]
-  - Expected: Error
-  - Got: Ok(Named { name: "invalid_ident", content: Unit })
-
-IGNORED: span_deeply_nested_error
-  - Input: { "level3": [1, 2, invalid] }
-  - Expected: Error
-  - Got: Ok(Named { name: "invalid", content: Unit })
-```
-
-**Note**: This is intentional RON behavior - bare identifiers are valid unit-like values. Typos in enum variants are caught during deserialization, not parsing.
-
-#### Issue 2: Empty/Whitespace Input Parses as Unit (By Design)
-
-```
-IGNORED: empty_input_has_sensible_error
-  - Input: ""
-  - Got: Ok(Unit)
-
-IGNORED: whitespace_only_has_sensible_error
-  - Input: "   \n\n   "
-  - Got: Ok(Unit)
-```
-
-**Note**: This is intentional. Unit `()` can be represented as empty input in RON.
-
-#### Issue 3: Empty Struct Parses as Unit (By Design)
+#### Issue 1: Empty Struct Parses as Unit (By Design)
 
 ```
 IGNORED: empty_struct_error_is_helpful
@@ -138,7 +108,7 @@ IGNORED: empty_struct_error_is_helpful
 
 **Note**: `()` is parsed as Unit type, not as an empty struct with missing fields.
 
-#### Issue 4: RON Ignores Struct Names (By Design)
+#### Issue 2: RON Ignores Struct Names (By Design)
 
 ```
 IGNORED: wrong_struct_name_error_is_helpful
@@ -149,7 +119,7 @@ IGNORED: wrong_struct_name_error_is_helpful
 
 **Note**: RON intentionally ignores struct names during deserialization. The struct name is cosmetic.
 
-#### Issue 5: Schema Validation Loses Source Spans
+#### Issue 3: Schema Validation Loses Source Spans
 
 The validation module works on `Value` (semantic data) not AST, so source positions are lost. Errors use logical paths instead:
 
@@ -225,12 +195,7 @@ To get spans in schema validation, would need to:
 ## Test Coverage Summary
 
 ### ron2 (parsing)
-- **21/25 tests pass (84%)**
-- 4 tests ignored (intentional RON behavior):
-  - `span_multiline_points_to_correct_line` - bare identifiers are valid
-  - `span_deeply_nested_error` - bare identifiers are valid
-  - `empty_input_has_sensible_error` - empty input parses as Unit
-  - `whitespace_only_has_sensible_error` - whitespace parses as Unit
+- **25/25 tests pass (100%)**
 
 ### ron-derive (deserialization)
 - **27/29 tests pass (93%)**

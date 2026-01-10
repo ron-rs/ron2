@@ -1101,21 +1101,23 @@ fn roundtrip_raw_identifier() {
 
 #[test]
 fn roundtrip_empty_document() {
-    // Empty input parses to Unit
-    let value = from_str("").unwrap();
-    assert_eq!(value, Value::Unit);
+    // Empty input is an error (not silently Unit)
+    let result = from_str("");
+    assert!(result.is_err(), "Empty input should be an error");
 }
 
 #[test]
 fn roundtrip_whitespace_only() {
-    let value = from_str("   \n   \t   ").unwrap();
-    assert_eq!(value, Value::Unit);
+    // Whitespace-only input is an error (not silently Unit)
+    let result = from_str("   \n   \t   ");
+    assert!(result.is_err(), "Whitespace-only input should be an error");
 }
 
 #[test]
 fn roundtrip_comment_only() {
-    let value = from_str("// just a comment\n").unwrap();
-    assert_eq!(value, Value::Unit);
+    // Comment-only input is an error (not silently Unit)
+    let result = from_str("// just a comment\n");
+    assert!(result.is_err(), "Comment-only input should be an error");
 }
 
 // =============================================================================

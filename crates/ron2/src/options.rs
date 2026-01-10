@@ -109,8 +109,8 @@ impl Options {
                 Err(e)
             }
             None => {
-                // Empty document - return Unit
-                Ok(Value::Unit)
+                // Empty document - return EOF error (consistent with FromRon::from_ron)
+                Err(SpannedError::at_start(Error::Eof))
             }
         }
     }
