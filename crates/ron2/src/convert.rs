@@ -282,7 +282,7 @@ pub struct ParsedInt {
 }
 
 /// Determine base and strip prefix from a numeric string.
-/// Returns (base, digits_str).
+/// Returns `(base, digits_str)`.
 fn determine_base_and_digits(s: &str) -> (u32, &str) {
     if let Some(d) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         (16, d)
@@ -306,14 +306,14 @@ pub fn parse_int_raw(raw: &str) -> Result<ParsedInt> {
         None => (false, raw),
     };
 
-    // Fast path: no underscores (common case)
-    let magnitude = if !unsigned_raw.contains('_') {
-        let (base, digits) = determine_base_and_digits(unsigned_raw);
-        u128::from_str_radix(digits, base)
-    } else {
+    let magnitude = if unsigned_raw.contains('_') {
         // Slow path: filter underscores
         let cleaned: String = unsigned_raw.chars().filter(|&c| c != '_').collect();
         let (base, digits) = determine_base_and_digits(&cleaned);
+        u128::from_str_radix(digits, base)
+    } else {
+        // Fast path: no underscores (common case)
+        let (base, digits) = determine_base_and_digits(unsigned_raw);
         u128::from_str_radix(digits, base)
     }
     .map_err(|_| Error::IntegerOutOfBounds {
@@ -369,13 +369,13 @@ fn parse_float_from_raw(raw: &str, kind: &NumberKind) -> Result<f64> {
             _ => Err(Error::ExpectedFloat),
         },
         NumberKind::Float | NumberKind::Integer | NumberKind::NegativeInteger => {
-            // Fast path: no underscores (common case)
-            if !raw.contains('_') {
-                raw.parse().map_err(|_| Error::ExpectedFloat)
-            } else {
+            if raw.contains('_') {
                 // Slow path: filter underscores
                 let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
                 cleaned.parse().map_err(|_| Error::ExpectedFloat)
+            } else {
+                // Fast path: no underscores (common case)
+                raw.parse().map_err(|_| Error::ExpectedFloat)
             }
         }
     }
@@ -630,6 +630,25 @@ impl<K: ToRon + Ord, V: ToRon> ToRon for BTreeMap<K, V> {
     }
 }
 
+impl<K: ToRon + Eq + Hash, V: ToRon, S: core::hash::BuildHasher> ToRon
+    for indexmap::IndexMap<K, V, S>
+{
+    fn to_ron_value(&self) -> Result<Value> {
+        let mut map = Map::new();
+        for (k, v) in self {
+            map.insert(k.to_ron_value()?, v.to_ron_value()?);
+        }
+        Ok(Value::Map(map))
+    }
+}
+
+impl<T: ToRon + Eq + Hash, S: core::hash::BuildHasher> ToRon for indexmap::IndexSet<T, S> {
+    fn to_ron_value(&self) -> Result<Value> {
+        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
+        Ok(Value::Seq(values?))
+    }
+}
+
 // =============================================================================
 // Collection implementations - FromRon
 // =============================================================================
@@ -754,6 +773,40 @@ impl<K: FromRon + Ord, V: FromRon> FromRon for BTreeMap<K, V> {
                 Ok(result)
             }
             _ => Err(spanned_type_mismatch("map", expr)),
+        }
+    }
+}
+
+impl<K: FromRon + Eq + Hash, V: FromRon, S: core::hash::BuildHasher + Default> FromRon
+    for indexmap::IndexMap<K, V, S>
+{
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match expr {
+            Expr::Map(map) => {
+                let mut result =
+                    indexmap::IndexMap::with_capacity_and_hasher(map.entries.len(), S::default());
+                for entry in &map.entries {
+                    let k = K::from_ast(&entry.key)?;
+                    let v = V::from_ast(&entry.value)?;
+                    result.insert(k, v);
+                }
+                Ok(result)
+            }
+            _ => Err(spanned_type_mismatch("map", expr)),
+        }
+    }
+}
+
+impl<T: FromRon + Eq + Hash, S: core::hash::BuildHasher + Default> FromRon
+    for indexmap::IndexSet<T, S>
+{
+    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+        match extract_seq_elements(expr) {
+            Some(elements) => elements
+                .into_iter()
+                .map(T::from_ast)
+                .collect::<SpannedResult<_>>(),
+            None => Err(spanned_type_mismatch("sequence", expr)),
         }
     }
 }
@@ -950,7 +1003,7 @@ impl_from_ron_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 ///     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
 ///         match expr {
 ///             Expr::AnonStruct(s) => {
-///                 let mut access = AstMapAccess::from_anon(s, Some("Point"));
+///                 let mut access = AstMapAccess::from_anon(s, Some("Point"))?;
 ///                 let x = access.required("x")?;
 ///                 let y = access.required("y")?;
 ///                 access.deny_unknown_fields(&["x", "y"])?;
@@ -1392,5 +1445,50 @@ mod tests {
             err,
             crate::error::Error::InvalidValueForType { .. }
         ));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_indexmap() {
+        use indexmap::IndexMap;
+
+        // ToRon
+        let mut map: IndexMap<String, i32> = IndexMap::default();
+        map.insert("first".to_string(), 1);
+        map.insert("second".to_string(), 2);
+        let ron = map.to_ron().unwrap();
+        assert!(ron.contains("\"first\""));
+        assert!(ron.contains("\"second\""));
+
+        // FromRon - order should be preserved
+        let ron = r#"{"a": 1, "b": 2, "c": 3}"#;
+        let parsed: IndexMap<String, i32> = IndexMap::from_ron(ron).unwrap();
+        let keys: Vec<_> = parsed.keys().collect();
+        assert_eq!(keys, vec!["a", "b", "c"]);
+        assert_eq!(parsed.get("a"), Some(&1));
+        assert_eq!(parsed.get("b"), Some(&2));
+        assert_eq!(parsed.get("c"), Some(&3));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_indexset() {
+        use indexmap::IndexSet;
+
+        // ToRon
+        let mut set: IndexSet<i32> = IndexSet::default();
+        set.insert(3);
+        set.insert(1);
+        set.insert(2);
+        let ron = set.to_ron().unwrap();
+        assert!(ron.contains('3'));
+        assert!(ron.contains('1'));
+        assert!(ron.contains('2'));
+
+        // FromRon - order should be preserved
+        let ron = "[3, 1, 2]";
+        let parsed: IndexSet<i32> = IndexSet::from_ron(ron).unwrap();
+        let values: Vec<_> = parsed.iter().copied().collect();
+        assert_eq!(values, vec![3, 1, 2]);
     }
 }

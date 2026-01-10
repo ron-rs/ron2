@@ -10,7 +10,6 @@ See [README.md](README.md) for project overview, APIs, syntax reference, and fea
 cargo build                              # Build
 cargo test                               # Run all tests
 cargo test --features integer128         # Test with i128/u128 support
-cargo test --features indexmap           # Test with order-preserving maps
 cargo clippy --all-targets               # Lint
 cargo fmt --check                        # Check formatting
 ```

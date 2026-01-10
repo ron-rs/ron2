@@ -97,9 +97,10 @@ GameConfig( // optional struct name
 
 | Feature | Effect |
 |---------|--------|
-| `std` (default) | Enable I/O operations |
+| `std` (default) | Enable I/O operations, order-preserving maps via `IndexMap` |
 | `integer128` | Enable `i128`/`u128` support |
-| `indexmap` | Order-preserving maps |
+
+Note: `IndexMap` is always available as a dependency. With `std` enabled, the internal `Map` type uses `IndexMap` to preserve insertion order. Without `std`, it falls back to `BTreeMap` (sorted order).
 
 ## Configuration
 
