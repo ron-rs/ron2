@@ -154,18 +154,7 @@ struct Outer {
 - `flatten_multiline_error_has_correct_span` (ignored)
 - `deeply_flattened_error_preserves_span` (ignored)
 
-#### Missing 2: RON Ignores Struct Names (By Design)
-
-```
-IGNORED: wrong_struct_name_error_is_helpful
-  - Input: "WrongName(value: 42)"
-  - Expected: Error about wrong struct name
-  - Got: Ok(Named { value: 42 })
-```
-
-**Note**: RON intentionally ignores struct names during deserialization. The struct name is cosmetic.
-
-#### Missing 3: Schema Validation Loses Source Spans
+#### Missing 2: Schema Validation Loses Source Spans
 
 The validation module works on `Value` (semantic data) not AST, so source positions are lost. Errors use logical paths instead:
 
@@ -225,9 +214,8 @@ To get spans in schema validation, would need to:
 - All parsing errors have accurate spans
 
 ### ron-derive (deserialization)
-- **60/70 tests pass (86%)**
-- 10 tests skipped:
-  - 1 intentional RON behavior (`wrong_struct_name_error_is_helpful`)
+- **61/70 tests pass (87%)**
+- 9 tests skipped:
   - 2 duplicate field bug (`duplicate_field_produces_error`, `duplicate_field_span_points_to_second_occurrence`)
   - 7 flatten not implemented
 

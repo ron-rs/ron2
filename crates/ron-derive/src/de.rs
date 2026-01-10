@@ -177,6 +177,18 @@ fn derive_named_struct_de(
             }
             // Named struct: StructName(field: val) or StructName { field: val }
             ::ron2::ast::Expr::Struct(s) => {
+                // Validate struct name matches
+                let expected_name = #struct_name;
+                let found_name = s.name.name.as_ref();
+                if found_name != expected_name {
+                    return Err(::ron2::error::SpannedError {
+                        code: ::ron2::error::Error::InvalidValueForType {
+                            expected: format!("struct {}", expected_name),
+                            found: format!("struct {}", found_name),
+                        },
+                        span: s.name.span.clone(),
+                    });
+                }
                 match &s.body {
                     Some(::ron2::ast::StructBody::Fields(fields)) => {
                         let mut access = ::ron2::AstMapAccess::from_fields(
@@ -261,6 +273,18 @@ fn derive_tuple_struct_de(name: &Ident, unnamed: &syn::FieldsUnnamed) -> syn::Re
             }
             // Named tuple: TupleStruct(a, b, c)
             ::ron2::ast::Expr::Struct(s) => {
+                // Validate struct name matches
+                let expected_name = #struct_name;
+                let found_name = s.name.name.as_ref();
+                if found_name != expected_name {
+                    return Err(::ron2::error::SpannedError {
+                        code: ::ron2::error::Error::InvalidValueForType {
+                            expected: format!("struct {}", expected_name),
+                            found: format!("struct {}", found_name),
+                        },
+                        span: s.name.span.clone(),
+                    });
+                }
                 match &s.body {
                     Some(::ron2::ast::StructBody::Tuple(t)) => {
                         t.elements.iter().map(|e| &e.expr).collect()
@@ -307,7 +331,21 @@ fn derive_unit_struct_de(name: &Ident) -> syn::Result<TokenStream2> {
             // Unit: ()
             ::ron2::ast::Expr::Unit(_) => Ok(#name),
             // Named unit: UnitStruct
-            ::ron2::ast::Expr::Struct(s) if s.body.is_none() => Ok(#name),
+            ::ron2::ast::Expr::Struct(s) if s.body.is_none() => {
+                // Validate struct name matches
+                let expected_name = #struct_name;
+                let found_name = s.name.name.as_ref();
+                if found_name != expected_name {
+                    return Err(::ron2::error::SpannedError {
+                        code: ::ron2::error::Error::InvalidValueForType {
+                            expected: format!("struct {}", expected_name),
+                            found: format!("struct {}", found_name),
+                        },
+                        span: s.name.span.clone(),
+                    });
+                }
+                Ok(#name)
+            }
             _ => Err(::ron2::error::SpannedError {
                 code: ::ron2::error::Error::InvalidValueForType {
                     expected: concat!("unit struct ", #struct_name).to_string(),

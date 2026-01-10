@@ -694,7 +694,6 @@ fn empty_struct_error_is_helpful() {
 }
 
 #[test]
-#[ignore = "wrong struct name deserializes successfully - RON ignores struct names by default"]
 fn wrong_struct_name_error_is_helpful() {
     #[derive(Debug, Ron, PartialEq)]
     struct Named {
