@@ -469,7 +469,7 @@ impl<'a> AstParser<'a> {
         };
 
         if self.peek_kind() != TokenKind::RParen {
-            return Err(Self::error(open_paren.span, Error::ExpectedStructLikeEnd));
+            return Err(Self::error(self.eof_span(), Error::ExpectedStructLikeEnd));
         }
         let close_paren = self.next_token();
 
@@ -628,7 +628,7 @@ impl<'a> AstParser<'a> {
         };
 
         if self.peek_kind() != TokenKind::RBracket {
-            return Err(Self::error(open_bracket.span, Error::ExpectedArrayEnd));
+            return Err(Self::error(self.eof_span(), Error::ExpectedArrayEnd));
         }
         let close_bracket = self.next_token();
 
@@ -710,7 +710,7 @@ impl<'a> AstParser<'a> {
         };
 
         if self.peek_kind() != TokenKind::RBrace {
-            return Err(Self::error(open_brace.span, Error::ExpectedMapEnd));
+            return Err(Self::error(self.eof_span(), Error::ExpectedMapEnd));
         }
         let close_brace = self.next_token();
 
@@ -770,7 +770,7 @@ impl<'a> AstParser<'a> {
         let trailing = self.collect_leading_trivia();
 
         if self.peek_kind() != TokenKind::RParen {
-            return Err(Self::error(open_paren.span, Error::ExpectedOptionEnd));
+            return Err(Self::error(self.eof_span(), Error::ExpectedOptionEnd));
         }
         let close_paren = self.next_token();
 
