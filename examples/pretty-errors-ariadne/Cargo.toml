@@ -1,8 +1,0 @@
-[package]
-name = "pretty-errors-ariadne"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-ron2 = { path = "../../crates/ron2" }
-ariadne = "0.4"

@@ -1,9 +1,0 @@
-[package]
-name = "pretty-errors-miette"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-ron2 = { path = "../../crates/ron2" }
-miette = { version = "7", features = ["fancy"] }
-thiserror = "2"

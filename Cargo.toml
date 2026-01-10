@@ -7,8 +7,6 @@ members = [
     "crates/ron-lsp",
     "crates/ronfmt",
     "examples/showcase",
-    "examples/pretty-errors-miette",
-    "examples/pretty-errors-ariadne",
 ]
 
 [workspace.package]
