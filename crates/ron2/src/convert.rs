@@ -1061,6 +1061,74 @@ impl<'a> AstMapAccess<'a> {
             .filter(|k| !self.consumed.contains(*k))
             .copied()
     }
+
+    /// Get a required Option field that requires explicit `Some(...)` or `None` syntax.
+    ///
+    /// Unlike the default `Option<T>` handling which accepts bare values as `Some`,
+    /// this method rejects bare values and requires explicit option syntax.
+    ///
+    /// Use this for fields marked with `#[ron(explicit)]`.
+    pub fn required_explicit<T: FromRon>(
+        &mut self,
+        name: &'static str,
+    ) -> SpannedResult<Option<T>> {
+        match self.fields.get(name) {
+            Some(field) => {
+                self.consumed.insert(name);
+                match &field.value {
+                    Expr::Option(opt) => match &opt.value {
+                        None => Ok(None),
+                        Some(inner) => Ok(Some(T::from_ast(&inner.expr)?)),
+                    },
+                    other => Err(SpannedError {
+                        code: Error::InvalidValueForType {
+                            expected: "Some(...) or None".to_string(),
+                            found: expr_type_name(other).to_string(),
+                        },
+                        span: other.span().clone(),
+                    }),
+                }
+            }
+            None => Err(SpannedError {
+                code: Error::MissingStructField {
+                    field: Cow::Borrowed(name),
+                    outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
+                },
+                span: self.struct_span.clone(),
+            }),
+        }
+    }
+
+    /// Get an Option field with explicit syntax, using `None` as default if missing.
+    ///
+    /// Unlike the default `Option<T>` handling which accepts bare values as `Some`,
+    /// this method rejects bare values and requires explicit option syntax.
+    ///
+    /// Use this for fields marked with `#[ron(explicit, default)]`.
+    pub fn with_default_explicit<T: FromRon>(
+        &mut self,
+        name: &'static str,
+    ) -> SpannedResult<Option<T>> {
+        match self.fields.get(name) {
+            Some(field) => {
+                self.consumed.insert(name);
+                match &field.value {
+                    Expr::Option(opt) => match &opt.value {
+                        None => Ok(None),
+                        Some(inner) => Ok(Some(T::from_ast(&inner.expr)?)),
+                    },
+                    other => Err(SpannedError {
+                        code: Error::InvalidValueForType {
+                            expected: "Some(...) or None".to_string(),
+                            found: expr_type_name(other).to_string(),
+                        },
+                        span: other.span().clone(),
+                    }),
+                }
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]

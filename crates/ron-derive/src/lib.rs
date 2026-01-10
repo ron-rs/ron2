@@ -30,6 +30,7 @@
 //! - `#[ron(rename = "Name")]` - Rename the type in RON output
 //! - `#[ron(rename_all = "camelCase")]` - Rename all fields (camelCase, snake_case, PascalCase, etc.)
 //! - `#[ron(deny_unknown_fields)]` - Error on unknown fields during deserialization
+//! - `#[ron(transparent)]` - Serialize/deserialize as the single inner field
 //!
 //! # Field Attributes
 //!
@@ -41,11 +42,52 @@
 //! - `#[ron(default = "path::to::fn")]` - Use custom default function
 //! - `#[ron(flatten)]` - Flatten nested struct fields into parent
 //! - `#[ron(skip_serializing_if = "path::to::fn")]` - Skip if predicate returns true
+//! - `#[ron(explicit)]` - Require explicit `Some(...)` or `None` for Option fields
 //!
 //! # Variant Attributes
 //!
 //! - `#[ron(rename = "Name")]` - Rename this variant
 //! - `#[ron(skip)]` - Skip this variant
+//!
+//! # Extension Behavior
+//!
+//! ## Implicit Some (Default)
+//!
+//! `Option<T>` fields accept bare values without `Some(...)`:
+//!
+//! ```ignore
+//! #[derive(FromRon)]
+//! struct Config {
+//!     name: Option<String>,
+//! }
+//! // Accepts: (name: "Alice") or (name: Some("Alice")) or (name: None)
+//! ```
+//!
+//! ## Explicit Option (`#[ron(explicit)]`)
+//!
+//! Require `Some(...)` or `None` syntax for disambiguation:
+//!
+//! ```ignore
+//! #[derive(FromRon)]
+//! struct Config {
+//!     #[ron(explicit)]
+//!     value: Option<Option<bool>>,
+//! }
+//! // Requires: (value: Some(Some(true))) or (value: Some(None)) or (value: None)
+//! ```
+//!
+//! ## Transparent Newtypes (`#[ron(transparent)]`)
+//!
+//! Single-field structs serialize as their inner type:
+//!
+//! ```ignore
+//! #[derive(FromRon, ToRon)]
+//! #[ron(transparent)]
+//! struct UserId(u64);
+//!
+//! // Serializes as: 42
+//! // Not as: UserId(42)
+//! ```
 //!
 //! # Legacy Support
 //!

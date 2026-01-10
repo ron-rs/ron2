@@ -5,6 +5,7 @@
 //! - Loading configuration from a `.ron` file
 //! - Pretty-printing with customizable formatting
 //! - Schema generation for editor support
+//! - Extension attributes: `transparent`, `explicit`, implicit Some
 
 use ron_derive::Ron;
 use ron_schema::{FromRon, PrettyConfig, ToRon};
@@ -83,6 +84,38 @@ pub enum ShipType {
     Cruiser { cargo_capacity: u32 },
 }
 
+// =============================================================================
+// Extension Attribute Examples
+// =============================================================================
+
+/// Transparent newtype - serializes as just the inner value.
+/// Instead of `PlayerId(42)`, this serializes as just `42`.
+#[derive(Debug, Clone, PartialEq, Ron)]
+#[ron(transparent)]
+pub struct PlayerId(u64);
+
+/// Score newtype - demonstrates transparent with named field.
+#[derive(Debug, Clone, PartialEq, Ron)]
+#[ron(transparent)]
+pub struct Score {
+    value: u32,
+}
+
+/// Settings with various Option handling.
+#[derive(Debug, Clone, PartialEq, Ron)]
+pub struct NotificationSettings {
+    /// Accepts: "email", Some("email"), or None (implicit Some is default)
+    email: Option<String>,
+
+    /// Requires explicit Some(...) or None - useful for nested Options
+    #[ron(explicit)]
+    push_enabled: Option<Option<bool>>,
+
+    /// Optional with default - missing = None
+    #[ron(default)]
+    slack_webhook: Option<String>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RON2 Showcase ===\n");
 
@@ -108,6 +141,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let output = config.to_ron_pretty(&pretty)?;
     println!("{}", output);
+
+    // Demonstrate extension attributes
+    println!("\n3. Extension Attributes Demo:");
+    println!("{}", "─".repeat(50));
+
+    // Transparent newtypes
+    let player_id: PlayerId = PlayerId::from_ron("42")?;
+    println!("   PlayerId from '42': {:?}", player_id);
+    println!("   Serialized: {}", player_id.to_ron()?);
+
+    let score: Score = Score::from_ron("1000")?;
+    println!("   Score from '1000': {:?}", score);
+
+    // Implicit Some (default behavior)
+    let settings: NotificationSettings = NotificationSettings::from_ron(
+        r#"(email: "user@example.com", push_enabled: Some(Some(true)))"#,
+    )?;
+    println!("\n   NotificationSettings with implicit Some:");
+    println!("   - email: {:?}", settings.email);
+    println!("   - push_enabled: {:?}", settings.push_enabled);
+    println!("   - slack_webhook: {:?}", settings.slack_webhook);
+
+    // Explicit Option - nested Options
+    let settings2: NotificationSettings =
+        NotificationSettings::from_ron(r#"(email: None, push_enabled: Some(None))"#)?;
+    println!("\n   With Some(None) for push_enabled:");
+    println!("   - push_enabled: {:?}", settings2.push_enabled);
 
     Ok(())
 }

@@ -44,6 +44,11 @@ fn derive_struct_de(
     fields: &Fields,
     container_attrs: &ContainerAttrs,
 ) -> syn::Result<TokenStream2> {
+    // Handle transparent structs
+    if container_attrs.transparent {
+        return derive_transparent_struct_de(name, fields);
+    }
+
     match fields {
         Fields::Named(named) => derive_named_struct_de(name, named, container_attrs),
         Fields::Unnamed(unnamed) => derive_tuple_struct_de(name, unnamed),
@@ -81,20 +86,45 @@ fn derive_named_struct_de(
         known_fields.push(ron_name.clone());
 
         // Generate field extraction using AstMapAccess methods
-        let extraction = match &field_attrs.default {
-            FieldDefault::None => {
-                quote! {
-                    let #field_ident: #field_ty = access.required(#ron_name)?;
+        let extraction = if field_attrs.explicit {
+            // Explicit mode: require Some(...) or None syntax for Option fields
+            let inner_ty = extract_option_inner(field_ty).ok_or_else(|| {
+                syn::Error::new_spanned(
+                    field,
+                    "#[ron(explicit)] can only be used on Option<T> fields",
+                )
+            })?;
+
+            match &field_attrs.default {
+                FieldDefault::None => {
+                    quote! {
+                        let #field_ident: #field_ty = access.required_explicit::<#inner_ty>(#ron_name)?;
+                    }
+                }
+                FieldDefault::Default | FieldDefault::Path(_) => {
+                    // For explicit Option fields with default, missing = None
+                    quote! {
+                        let #field_ident: #field_ty = access.with_default_explicit::<#inner_ty>(#ron_name)?;
+                    }
                 }
             }
-            FieldDefault::Default => {
-                quote! {
-                    let #field_ident: #field_ty = access.with_default(#ron_name)?;
+        } else {
+            // Standard mode: uses implicit Some via Option<T>::from_ast
+            match &field_attrs.default {
+                FieldDefault::None => {
+                    quote! {
+                        let #field_ident: #field_ty = access.required(#ron_name)?;
+                    }
                 }
-            }
-            FieldDefault::Path(path) => {
-                quote! {
-                    let #field_ident: #field_ty = access.with_default_fn(#ron_name, #path)?;
+                FieldDefault::Default => {
+                    quote! {
+                        let #field_ident: #field_ty = access.with_default(#ron_name)?;
+                    }
+                }
+                FieldDefault::Path(path) => {
+                    quote! {
+                        let #field_ident: #field_ty = access.with_default_fn(#ron_name, #path)?;
+                    }
                 }
             }
         };
@@ -250,6 +280,75 @@ fn derive_unit_struct_de(name: &Ident) -> syn::Result<TokenStream2> {
     })
 }
 
+/// Generate deserialization for a transparent struct.
+///
+/// Transparent structs deserialize as their single inner field directly.
+fn derive_transparent_struct_de(name: &Ident, fields: &Fields) -> syn::Result<TokenStream2> {
+    match fields {
+        Fields::Named(named) => {
+            // Find the single non-skipped field
+            let mut active_fields = Vec::new();
+            for field in &named.named {
+                let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
+                if !field_attrs.should_skip_deserializing() {
+                    active_fields.push(field);
+                }
+            }
+
+            if active_fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    name,
+                    "#[ron(transparent)] requires exactly one non-skipped field",
+                ));
+            }
+
+            let field = active_fields[0];
+            let field_ident = field.ident.as_ref().unwrap();
+            let field_ty = &field.ty;
+
+            // Generate default values for skipped fields
+            let mut skipped_fields = Vec::new();
+            for f in &named.named {
+                let attrs = FieldAttrs::from_ast(&f.attrs)?;
+                if attrs.should_skip_deserializing() {
+                    let ident = f.ident.as_ref().unwrap();
+                    let ty = &f.ty;
+                    skipped_fields.push(quote! {
+                        #ident: <#ty as ::std::default::Default>::default()
+                    });
+                }
+            }
+
+            Ok(quote! {
+                let inner = <#field_ty as ::ron2::FromRon>::from_ast(expr)?;
+                Ok(#name {
+                    #field_ident: inner,
+                    #(#skipped_fields,)*
+                })
+            })
+        }
+        Fields::Unnamed(unnamed) => {
+            // For tuple structs, must have exactly one field
+            if unnamed.unnamed.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    name,
+                    "#[ron(transparent)] requires exactly one field for tuple structs",
+                ));
+            }
+
+            let field_ty = &unnamed.unnamed[0].ty;
+            Ok(quote! {
+                let inner = <#field_ty as ::ron2::FromRon>::from_ast(expr)?;
+                Ok(#name(inner))
+            })
+        }
+        Fields::Unit => Err(syn::Error::new_spanned(
+            name,
+            "#[ron(transparent)] cannot be used on unit structs",
+        )),
+    }
+}
+
 /// Generate deserialization for an enum.
 fn derive_enum_de(
     name: &Ident,
@@ -365,20 +464,43 @@ fn derive_enum_de(
                         field_attrs.effective_name(&field_ident.to_string(), container_attrs);
                     known_fields.push(ron_name.clone());
 
-                    let extraction = match &field_attrs.default {
-                        FieldDefault::None => {
-                            quote! {
-                                let #field_ident: #field_ty = access.required(#ron_name)?;
+                    let extraction = if field_attrs.explicit {
+                        // Explicit mode for enum variant fields
+                        let inner_ty = extract_option_inner(field_ty).ok_or_else(|| {
+                            syn::Error::new_spanned(
+                                field,
+                                "#[ron(explicit)] can only be used on Option<T> fields",
+                            )
+                        })?;
+
+                        match &field_attrs.default {
+                            FieldDefault::None => {
+                                quote! {
+                                    let #field_ident: #field_ty = access.required_explicit::<#inner_ty>(#ron_name)?;
+                                }
+                            }
+                            FieldDefault::Default | FieldDefault::Path(_) => {
+                                quote! {
+                                    let #field_ident: #field_ty = access.with_default_explicit::<#inner_ty>(#ron_name)?;
+                                }
                             }
                         }
-                        FieldDefault::Default => {
-                            quote! {
-                                let #field_ident: #field_ty = access.with_default(#ron_name)?;
+                    } else {
+                        match &field_attrs.default {
+                            FieldDefault::None => {
+                                quote! {
+                                    let #field_ident: #field_ty = access.required(#ron_name)?;
+                                }
                             }
-                        }
-                        FieldDefault::Path(path) => {
-                            quote! {
-                                let #field_ident: #field_ty = access.with_default_fn(#ron_name, #path)?;
+                            FieldDefault::Default => {
+                                quote! {
+                                    let #field_ident: #field_ty = access.with_default(#ron_name)?;
+                                }
+                            }
+                            FieldDefault::Path(path) => {
+                                quote! {
+                                    let #field_ident: #field_ty = access.with_default_fn(#ron_name, #path)?;
+                                }
                             }
                         }
                     };
@@ -468,4 +590,21 @@ fn derive_enum_de(
             }),
         }
     })
+}
+
+/// Check if a type is `Option<T>` and return the inner type.
+///
+/// Returns `Some(&inner_type)` if the type is `Option<T>`, `None` otherwise.
+fn extract_option_inner(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(type_path) = ty {
+        let seg = type_path.path.segments.last()?;
+        if seg.ident == "Option" {
+            if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                    return Some(inner);
+                }
+            }
+        }
+    }
+    None
 }

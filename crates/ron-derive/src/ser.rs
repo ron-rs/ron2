@@ -39,6 +39,11 @@ fn derive_struct_ser(
     fields: &Fields,
     container_attrs: &ContainerAttrs,
 ) -> syn::Result<TokenStream2> {
+    // Handle transparent structs
+    if container_attrs.transparent {
+        return derive_transparent_struct_ser(name, fields);
+    }
+
     let struct_name = container_attrs
         .rename
         .clone()
@@ -214,4 +219,51 @@ fn derive_enum_ser(
             #(#arms)*
         }
     })
+}
+
+/// Generate serialization for a transparent struct.
+///
+/// Transparent structs serialize as their single inner field directly.
+fn derive_transparent_struct_ser(name: &Ident, fields: &Fields) -> syn::Result<TokenStream2> {
+    match fields {
+        Fields::Named(named) => {
+            // Find the single non-skipped field
+            let mut active_fields = Vec::new();
+            for field in &named.named {
+                let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
+                if !field_attrs.should_skip_serializing() {
+                    active_fields.push(field);
+                }
+            }
+
+            if active_fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    name,
+                    "#[ron(transparent)] requires exactly one non-skipped field",
+                ));
+            }
+
+            let field_ident = active_fields[0].ident.as_ref().unwrap();
+            Ok(quote! {
+                ::ron2::ToRon::to_ron_value(&self.#field_ident)
+            })
+        }
+        Fields::Unnamed(unnamed) => {
+            // For tuple structs, must have exactly one field
+            if unnamed.unnamed.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    name,
+                    "#[ron(transparent)] requires exactly one field for tuple structs",
+                ));
+            }
+
+            Ok(quote! {
+                ::ron2::ToRon::to_ron_value(&self.0)
+            })
+        }
+        Fields::Unit => Err(syn::Error::new_spanned(
+            name,
+            "#[ron(transparent)] cannot be used on unit structs",
+        )),
+    }
 }

@@ -59,6 +59,21 @@ impl RenameRule {
 }
 
 /// Container-level attributes parsed from `#[ron(...)]`.
+///
+/// # Attributes
+///
+/// - `rename = "..."` - Use a different name in RON
+/// - `rename_all = "..."` - Apply rename rule to all fields/variants
+/// - `deny_unknown_fields` - Error on unknown fields during deserialization
+/// - `transparent` - Serialize/deserialize as the single inner field
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(FromRon, ToRon)]
+/// #[ron(transparent)]
+/// struct UserId(u64);
+/// ```
 #[derive(Debug, Default)]
 pub struct ContainerAttrs {
     /// Rename the type in RON output.
@@ -67,6 +82,8 @@ pub struct ContainerAttrs {
     pub rename_all: Option<RenameRule>,
     /// Error on unknown fields during deserialization.
     pub deny_unknown_fields: bool,
+    /// Serialize/deserialize as the single inner field (for newtypes).
+    pub transparent: bool,
 }
 
 impl ContainerAttrs {
@@ -92,6 +109,8 @@ impl ContainerAttrs {
                     Meta::Path(path) => {
                         if path.is_ident("deny_unknown_fields") {
                             result.deny_unknown_fields = true;
+                        } else if path.is_ident("transparent") {
+                            result.transparent = true;
                         }
                     }
                     Meta::NameValue(nv) => {
@@ -139,6 +158,31 @@ pub enum FieldDefault {
 }
 
 /// Field-level attributes parsed from `#[ron(...)]`.
+///
+/// # Attributes
+///
+/// - `rename = "..."` - Use a different name in RON
+/// - `skip` - Skip this field entirely
+/// - `skip_serializing` - Skip during serialization only
+/// - `skip_deserializing` - Skip during deserialization only
+/// - `skip_serializing_if = "path"` - Skip if predicate returns true
+/// - `default` - Use `Default::default()` if missing
+/// - `default = "path"` - Use custom function if missing
+/// - `flatten` - Flatten nested struct fields into parent
+/// - `explicit` - Require explicit `Some(...)` or `None` for Option fields
+///
+/// # Implicit Some (Default Behavior)
+///
+/// By default, `Option<T>` fields accept bare values:
+/// ```ron
+/// (name: "Alice")  // name: Option<String> becomes Some("Alice")
+/// ```
+///
+/// Use `#[ron(explicit)]` to require explicit syntax:
+/// ```ignore
+/// #[ron(explicit)]
+/// flags: Option<bool>,  // Must be Some(true), Some(false), or None
+/// ```
 #[derive(Debug, Default)]
 pub struct FieldAttrs {
     /// Rename this field in RON.
@@ -155,6 +199,8 @@ pub struct FieldAttrs {
     pub default: FieldDefault,
     /// Flatten nested struct fields into parent.
     pub flatten: bool,
+    /// Require explicit `Some(...)` or `None` syntax for Option fields.
+    pub explicit: bool,
 }
 
 impl FieldAttrs {
@@ -188,6 +234,8 @@ impl FieldAttrs {
                             result.default = FieldDefault::Default;
                         } else if path.is_ident("flatten") {
                             result.flatten = true;
+                        } else if path.is_ident("explicit") {
+                            result.explicit = true;
                         }
                     }
                     Meta::NameValue(nv) => {
