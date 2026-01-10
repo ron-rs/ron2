@@ -603,6 +603,11 @@ fn generate_struct_kind(
     fields: &Fields,
     container_attrs: &ContainerAttrs,
 ) -> syn::Result<TokenStream2> {
+    // Handle transparent structs - return the inner type's TypeKind
+    if container_attrs.transparent {
+        return generate_transparent_struct_kind(fields);
+    }
+
     match fields {
         Fields::Named(named) => {
             let mut field_tokens: Vec<TokenStream2> = Vec::new();
@@ -642,6 +647,47 @@ fn generate_struct_kind(
                 ::ron_schema::TypeKind::Unit
             })
         }
+    }
+}
+
+/// Generate TypeKind tokens for a transparent struct.
+///
+/// Returns the inner type's TypeKind directly.
+fn generate_transparent_struct_kind(fields: &Fields) -> syn::Result<TokenStream2> {
+    match fields {
+        Fields::Named(named) => {
+            // Find the single non-skipped field
+            let mut active_fields = Vec::new();
+            for f in &named.named {
+                let attrs = FieldAttrs::from_ast(&f.attrs)?;
+                if !attrs.skip {
+                    active_fields.push(f);
+                }
+            }
+
+            if active_fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    &named.named,
+                    "#[ron(transparent)] requires exactly one non-skipped field",
+                ));
+            }
+
+            Ok(type_to_type_kind(&active_fields[0].ty))
+        }
+        Fields::Unnamed(unnamed) => {
+            if unnamed.unnamed.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    unnamed,
+                    "#[ron(transparent)] requires exactly one field for tuple structs",
+                ));
+            }
+
+            Ok(type_to_type_kind(&unnamed.unnamed[0].ty))
+        }
+        Fields::Unit => Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "#[ron(transparent)] cannot be used on unit structs",
+        )),
     }
 }
 
@@ -836,6 +882,11 @@ fn build_schema(input: &DeriveInput, container_attrs: &ContainerAttrs) -> Option
 
 /// Build TypeKind for a struct's fields.
 fn build_struct_kind(fields: &Fields, container_attrs: &ContainerAttrs) -> syn::Result<TypeKind> {
+    // Handle transparent structs - return the inner type's TypeKind
+    if container_attrs.transparent {
+        return build_transparent_struct_kind(fields);
+    }
+
     match fields {
         Fields::Named(named) => {
             let mut field_values: Vec<Field> = Vec::new();
@@ -862,6 +913,47 @@ fn build_struct_kind(fields: &Fields, container_attrs: &ContainerAttrs) -> syn::
             Ok(TypeKind::Tuple(type_kinds))
         }
         Fields::Unit => Ok(TypeKind::Unit),
+    }
+}
+
+/// Build TypeKind for a transparent struct.
+///
+/// Returns the inner type's TypeKind directly.
+fn build_transparent_struct_kind(fields: &Fields) -> syn::Result<TypeKind> {
+    match fields {
+        Fields::Named(named) => {
+            // Find the single non-skipped field
+            let mut active_fields = Vec::new();
+            for f in &named.named {
+                let attrs = FieldAttrs::from_ast(&f.attrs)?;
+                if !attrs.skip {
+                    active_fields.push(f);
+                }
+            }
+
+            if active_fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    &named.named,
+                    "#[ron(transparent)] requires exactly one non-skipped field",
+                ));
+            }
+
+            Ok(rust_type_to_type_kind(&active_fields[0].ty))
+        }
+        Fields::Unnamed(unnamed) => {
+            if unnamed.unnamed.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    unnamed,
+                    "#[ron(transparent)] requires exactly one field for tuple structs",
+                ));
+            }
+
+            Ok(rust_type_to_type_kind(&unnamed.unnamed[0].ty))
+        }
+        Fields::Unit => Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "#[ron(transparent)] cannot be used on unit structs",
+        )),
     }
 }
 

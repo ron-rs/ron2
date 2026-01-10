@@ -53,7 +53,11 @@ fn small_config() -> Config {
         version: (1, 2, 3),
         debug: true,
         timeout: 30,
-        tags: vec!["web".to_string(), "api".to_string(), "production".to_string()],
+        tags: vec![
+            "web".to_string(),
+            "api".to_string(),
+            "production".to_string(),
+        ],
         metadata: Some(Metadata {
             author: "test".to_string(),
             license: "MIT".to_string(),

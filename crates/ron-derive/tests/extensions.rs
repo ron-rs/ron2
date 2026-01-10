@@ -112,6 +112,47 @@ mod transparent {
         let val: MaybeValue = MaybeValue::from_ron(r#""world""#).unwrap();
         assert_eq!(val.0, Some("world".to_string()));
     }
+
+    // Schema tests for transparent types
+    use ron_schema::{RonSchemaType, TypeKind};
+
+    #[test]
+    fn transparent_newtype_schema_is_inner_type() {
+        // UserId(u64) should have schema U64, not Tuple([U64])
+        let type_kind = UserId::type_kind();
+        assert!(
+            matches!(type_kind, TypeKind::U64),
+            "Expected U64, got {:?}",
+            type_kind
+        );
+    }
+
+    #[test]
+    fn transparent_named_struct_schema_is_inner_type() {
+        // Email { address: String } should have schema String, not Struct
+        let type_kind = Email::type_kind();
+        assert!(
+            matches!(type_kind, TypeKind::String),
+            "Expected String, got {:?}",
+            type_kind
+        );
+    }
+
+    #[test]
+    fn transparent_option_schema_is_inner_type() {
+        // MaybeValue(Option<String>) should have schema Option(String)
+        let type_kind = MaybeValue::type_kind();
+        match type_kind {
+            TypeKind::Option(inner) => {
+                assert!(
+                    matches!(*inner, TypeKind::String),
+                    "Expected Option(String), got Option({:?})",
+                    inner
+                );
+            }
+            _ => panic!("Expected Option, got {:?}", type_kind),
+        }
+    }
 }
 
 // =============================================================================
@@ -323,8 +364,7 @@ mod combinations {
 
     #[test]
     fn transparent_with_option_some() {
-        let t: TransparentWithOption =
-            TransparentWithOption::from_ron(r#"Some("world")"#).unwrap();
+        let t: TransparentWithOption = TransparentWithOption::from_ron(r#"Some("world")"#).unwrap();
         assert_eq!(t.value, Some("world".to_string()));
     }
 
@@ -514,10 +554,7 @@ mod edge_cases {
     fn complex_explicit_some_vec() {
         // Outer Option is explicit, inner Options in Vec are implicit
         let c: Complex = Complex::from_ron("(outer: Some([1, 2, None, 4]))").unwrap();
-        assert_eq!(
-            c.outer,
-            Some(vec![Some(1), Some(2), None, Some(4)])
-        );
+        assert_eq!(c.outer, Some(vec![Some(1), Some(2), None, Some(4)]));
     }
 
     #[test]

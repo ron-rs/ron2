@@ -85,50 +85,9 @@ fn derive_named_struct_de(
         let ron_name = field_attrs.effective_name(&field_ident.to_string(), container_attrs);
         known_fields.push(ron_name.clone());
 
-        // Generate field extraction using AstMapAccess methods
-        let extraction = if field_attrs.explicit {
-            // Explicit mode: require Some(...) or None syntax for Option fields
-            let inner_ty = extract_option_inner(field_ty).ok_or_else(|| {
-                syn::Error::new_spanned(
-                    field,
-                    "#[ron(explicit)] can only be used on Option<T> fields",
-                )
-            })?;
-
-            match &field_attrs.default {
-                FieldDefault::None => {
-                    quote! {
-                        let #field_ident: #field_ty = access.required_explicit::<#inner_ty>(#ron_name)?;
-                    }
-                }
-                FieldDefault::Default | FieldDefault::Path(_) => {
-                    // For explicit Option fields with default, missing = None
-                    quote! {
-                        let #field_ident: #field_ty = access.with_default_explicit::<#inner_ty>(#ron_name)?;
-                    }
-                }
-            }
-        } else {
-            // Standard mode: uses implicit Some via Option<T>::from_ast
-            match &field_attrs.default {
-                FieldDefault::None => {
-                    quote! {
-                        let #field_ident: #field_ty = access.required(#ron_name)?;
-                    }
-                }
-                FieldDefault::Default => {
-                    quote! {
-                        let #field_ident: #field_ty = access.with_default(#ron_name)?;
-                    }
-                }
-                FieldDefault::Path(path) => {
-                    quote! {
-                        let #field_ident: #field_ty = access.with_default_fn(#ron_name, #path)?;
-                    }
-                }
-            }
-        };
-
+        // Generate field extraction using the shared helper
+        let extraction =
+            generate_field_extraction(field_ident, field_ty, &ron_name, &field_attrs, field)?;
         field_extractions.push(extraction);
     }
 
@@ -464,47 +423,14 @@ fn derive_enum_de(
                         field_attrs.effective_name(&field_ident.to_string(), container_attrs);
                     known_fields.push(ron_name.clone());
 
-                    let extraction = if field_attrs.explicit {
-                        // Explicit mode for enum variant fields
-                        let inner_ty = extract_option_inner(field_ty).ok_or_else(|| {
-                            syn::Error::new_spanned(
-                                field,
-                                "#[ron(explicit)] can only be used on Option<T> fields",
-                            )
-                        })?;
-
-                        match &field_attrs.default {
-                            FieldDefault::None => {
-                                quote! {
-                                    let #field_ident: #field_ty = access.required_explicit::<#inner_ty>(#ron_name)?;
-                                }
-                            }
-                            FieldDefault::Default | FieldDefault::Path(_) => {
-                                quote! {
-                                    let #field_ident: #field_ty = access.with_default_explicit::<#inner_ty>(#ron_name)?;
-                                }
-                            }
-                        }
-                    } else {
-                        match &field_attrs.default {
-                            FieldDefault::None => {
-                                quote! {
-                                    let #field_ident: #field_ty = access.required(#ron_name)?;
-                                }
-                            }
-                            FieldDefault::Default => {
-                                quote! {
-                                    let #field_ident: #field_ty = access.with_default(#ron_name)?;
-                                }
-                            }
-                            FieldDefault::Path(path) => {
-                                quote! {
-                                    let #field_ident: #field_ty = access.with_default_fn(#ron_name, #path)?;
-                                }
-                            }
-                        }
-                    };
-
+                    // Generate field extraction using the shared helper
+                    let extraction = generate_field_extraction(
+                        field_ident,
+                        field_ty,
+                        &ron_name,
+                        &field_attrs,
+                        field,
+                    )?;
                     field_extractions.push(extraction);
                 }
 
@@ -594,11 +520,27 @@ fn derive_enum_de(
 
 /// Check if a type is `Option<T>` and return the inner type.
 ///
+/// Recognizes `Option<T>`, `std::option::Option<T>`, and `core::option::Option<T>`.
 /// Returns `Some(&inner_type)` if the type is `Option<T>`, `None` otherwise.
 fn extract_option_inner(ty: &syn::Type) -> Option<&syn::Type> {
     if let syn::Type::Path(type_path) = ty {
-        let seg = type_path.path.segments.last()?;
-        if seg.ident == "Option" {
+        let path = &type_path.path;
+
+        // Check if the path ends with Option
+        let is_option = match path.segments.len() {
+            1 => path.segments[0].ident == "Option",
+            3 => {
+                // std::option::Option or core::option::Option
+                let first = &path.segments[0].ident;
+                let second = &path.segments[1].ident;
+                let third = &path.segments[2].ident;
+                (first == "std" || first == "core") && second == "option" && third == "Option"
+            }
+            _ => false,
+        };
+
+        if is_option {
+            let seg = path.segments.last()?;
             if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
                 if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
                     return Some(inner);
@@ -607,4 +549,58 @@ fn extract_option_inner(ty: &syn::Type) -> Option<&syn::Type> {
         }
     }
     None
+}
+
+/// Generate the field extraction code for a named struct field.
+///
+/// This is shared between struct deserialization and enum variant field deserialization.
+fn generate_field_extraction(
+    field_ident: &Ident,
+    field_ty: &syn::Type,
+    ron_name: &str,
+    field_attrs: &FieldAttrs,
+    field: &syn::Field,
+) -> syn::Result<TokenStream2> {
+    if field_attrs.explicit {
+        // Explicit mode: require Some(...) or None syntax for Option fields
+        let inner_ty = extract_option_inner(field_ty).ok_or_else(|| {
+            syn::Error::new_spanned(
+                field,
+                "#[ron(explicit)] can only be used on Option<T> fields",
+            )
+        })?;
+
+        Ok(match &field_attrs.default {
+            FieldDefault::None => {
+                quote! {
+                    let #field_ident: #field_ty = access.required_explicit::<#inner_ty>(#ron_name)?;
+                }
+            }
+            FieldDefault::Default | FieldDefault::Path(_) => {
+                // For explicit Option fields with default, missing = None
+                quote! {
+                    let #field_ident: #field_ty = access.with_default_explicit::<#inner_ty>(#ron_name)?;
+                }
+            }
+        })
+    } else {
+        // Standard mode: uses implicit Some via Option<T>::from_ast
+        Ok(match &field_attrs.default {
+            FieldDefault::None => {
+                quote! {
+                    let #field_ident: #field_ty = access.required(#ron_name)?;
+                }
+            }
+            FieldDefault::Default => {
+                quote! {
+                    let #field_ident: #field_ty = access.with_default(#ron_name)?;
+                }
+            }
+            FieldDefault::Path(path) => {
+                quote! {
+                    let #field_ident: #field_ty = access.with_default_fn(#ron_name, #path)?;
+                }
+            }
+        })
+    }
 }

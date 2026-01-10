@@ -34,7 +34,9 @@ fn bench_value_pretty(c: &mut Criterion) {
 
     for (name, input) in common::test_inputs() {
         let value = ron2::from_str(&input).unwrap();
-        let output_size = ron2::to_string_pretty(&value, config.clone()).unwrap().len();
+        let output_size = ron2::to_string_pretty(&value, config.clone())
+            .unwrap()
+            .len();
         group.throughput(Throughput::Bytes(output_size as u64));
 
         group.bench_with_input(BenchmarkId::from_parameter(name), &value, |b, value| {
