@@ -47,81 +47,83 @@ fn find_hover_info(word: &str, schema: &Schema) -> Option<String> {
 
 /// Generate hover info if the word matches something at this type level.
 fn hover_for_type_kind(word: &str, kind: &TypeKind, doc: Option<&str>) -> Option<String> {
-    match kind {
-        TypeKind::Struct { fields } => {
-            // Check if word matches a field name
-            for field in fields {
-                if field.name == word {
-                    return Some(format_field_hover(field));
-                }
+    // Check if word matches a struct field
+    if let Some(fields) = kind.struct_fields() {
+        for field in fields {
+            if field.name == word {
+                return Some(format_field_hover(field));
             }
-            None
         }
-        TypeKind::Enum { variants } => {
-            // Check if word matches a variant name
-            for variant in variants {
-                if variant.name == word {
-                    return Some(format_variant_hover(variant));
-                }
-            }
-            None
-        }
-        TypeKind::TypeRef(path) => {
-            // If the word matches the type name, show the doc
-            let type_name = path.rsplit("::").next().unwrap_or(path);
-            if type_name == word {
-                return doc.map(|d| format!("**{}**\n\n{}", type_name, d));
-            }
-            None
-        }
-        _ => None,
+        return None;
     }
+
+    // Check if word matches an enum variant
+    if let Some(variants) = kind.enum_variants() {
+        for variant in variants {
+            if variant.name == word {
+                return Some(format_variant_hover(variant));
+            }
+        }
+        return None;
+    }
+
+    // Check if word matches a TypeRef type name
+    if let Some(path) = kind.type_ref_path() {
+        let type_name = path.rsplit("::").next().unwrap_or(path);
+        if type_name == word {
+            return doc.map(|d| format!("**{}**\n\n{}", type_name, d));
+        }
+    }
+
+    None
 }
 
 /// Recursively search for hover info in nested types.
 fn search_in_type_kind(word: &str, kind: &TypeKind) -> Option<String> {
-    match kind {
-        TypeKind::Struct { fields } => {
-            // First check direct fields
-            for field in fields {
-                if field.name == word {
-                    return Some(format_field_hover(field));
-                }
-                // Then check nested types
-                if let Some(info) = search_in_type_kind(word, &field.ty) {
-                    return Some(info);
-                }
+    // Check struct fields
+    if let Some(fields) = kind.struct_fields() {
+        for field in fields {
+            if field.name == word {
+                return Some(format_field_hover(field));
             }
-            None
-        }
-        TypeKind::Enum { variants } => {
-            // First check variant names
-            for variant in variants {
-                if variant.name == word {
-                    return Some(format_variant_hover(variant));
-                }
-                // Then check variant contents
-                if let Some(info) = search_in_variant(word, variant) {
-                    return Some(info);
-                }
+            if let Some(info) = search_in_type_kind(word, &field.ty) {
+                return Some(info);
             }
-            None
         }
-        TypeKind::Option(inner) => search_in_type_kind(word, inner),
-        TypeKind::List(inner) => search_in_type_kind(word, inner),
-        TypeKind::Map { key, value } => {
-            search_in_type_kind(word, key).or_else(|| search_in_type_kind(word, value))
-        }
-        TypeKind::Tuple(types) => {
-            for ty in types {
-                if let Some(info) = search_in_type_kind(word, ty) {
-                    return Some(info);
-                }
-            }
-            None
-        }
-        _ => None,
+        return None;
     }
+
+    // Check enum variants
+    if let Some(variants) = kind.enum_variants() {
+        for variant in variants {
+            if variant.name == word {
+                return Some(format_variant_hover(variant));
+            }
+            if let Some(info) = search_in_variant(word, variant) {
+                return Some(info);
+            }
+        }
+        return None;
+    }
+
+    // Recurse into container types
+    if let Some(inner) = kind.inner_type() {
+        return search_in_type_kind(word, inner);
+    }
+
+    if let Some((key, value)) = kind.map_types() {
+        return search_in_type_kind(word, key).or_else(|| search_in_type_kind(word, value));
+    }
+
+    if let Some(types) = kind.tuple_types() {
+        for ty in types {
+            if let Some(info) = search_in_type_kind(word, ty) {
+                return Some(info);
+            }
+        }
+    }
+
+    None
 }
 
 /// Search for hover info within an enum variant.

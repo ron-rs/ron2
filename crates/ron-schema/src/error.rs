@@ -84,92 +84,6 @@ impl SchemaError {
         SchemaError::Storage(StorageError::NoSchemaDir)
     }
 
-    // =========================================================================
-    // Convenience constructors delegating to ValidationError
-    // =========================================================================
-
-    /// Create a type mismatch error.
-    pub fn type_mismatch(expected: impl Into<String>, actual: impl Into<String>) -> Self {
-        SchemaError::Validation(ValidationError::type_mismatch(expected, actual))
-    }
-
-    /// Create a missing field error.
-    pub fn missing_field(field: impl Into<String>) -> Self {
-        SchemaError::Validation(ValidationError::missing_field(field.into()))
-    }
-
-    /// Create an unknown field error.
-    pub fn unknown_field(field: impl Into<String>) -> Self {
-        SchemaError::Validation(ValidationError::unknown_field(field.into(), &[]))
-    }
-
-    /// Create an unknown variant error.
-    pub fn unknown_variant(variant: impl Into<String>) -> Self {
-        SchemaError::Validation(ValidationError::unknown_variant(variant.into(), &[]))
-    }
-
-    /// Create a tuple length mismatch error.
-    pub fn tuple_length_mismatch(expected: usize, actual: usize) -> Self {
-        SchemaError::Validation(ValidationError::length_mismatch(expected, actual))
-    }
-
-    // =========================================================================
-    // Context builders - delegate to inner ValidationError
-    // =========================================================================
-
-    /// Add a field context to this error's path.
-    #[must_use]
-    pub fn in_field(self, name: impl Into<String>) -> Self {
-        match self {
-            SchemaError::Validation(e) => SchemaError::Validation(e.in_field(name)),
-            other => other,
-        }
-    }
-
-    /// Add an element context to this error's path.
-    #[must_use]
-    pub fn in_element(self, index: usize) -> Self {
-        match self {
-            SchemaError::Validation(e) => SchemaError::Validation(e.in_element(index)),
-            other => other,
-        }
-    }
-
-    /// Add a map key context to this error's path.
-    #[must_use]
-    pub fn in_map_key(self) -> Self {
-        match self {
-            SchemaError::Validation(e) => SchemaError::Validation(e.in_map_key()),
-            other => other,
-        }
-    }
-
-    /// Add a map value context to this error's path.
-    #[must_use]
-    pub fn in_map_value(self, key: impl Into<String>) -> Self {
-        match self {
-            SchemaError::Validation(e) => SchemaError::Validation(e.in_map_value(key)),
-            other => other,
-        }
-    }
-
-    /// Add a variant context to this error's path.
-    #[must_use]
-    pub fn in_variant(self, name: impl Into<String>) -> Self {
-        match self {
-            SchemaError::Validation(e) => SchemaError::Validation(e.in_variant(name)),
-            other => other,
-        }
-    }
-
-    /// Add a type ref context to this error's path.
-    #[must_use]
-    pub fn in_type_ref(self, type_path: impl Into<String>) -> Self {
-        match self {
-            SchemaError::Validation(e) => SchemaError::Validation(e.in_type_ref(type_path)),
-            other => other,
-        }
-    }
 }
 
 impl fmt::Display for SchemaError {
@@ -225,13 +139,13 @@ mod tests {
 
     #[test]
     fn test_error_display_no_path() {
-        let err = SchemaError::type_mismatch("String", "Bool");
+        let err = ValidationError::type_mismatch("String", "Bool");
         assert_eq!(err.to_string(), "expected String but found Bool");
     }
 
     #[test]
     fn test_error_display_with_path() {
-        let err = SchemaError::type_mismatch("i32", "String")
+        let err = ValidationError::type_mismatch("i32", "String")
             .in_element(0)
             .in_field("items");
         assert_eq!(
@@ -242,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_error_display_nested_path() {
-        let err = SchemaError::missing_field("name")
+        let err = ValidationError::missing_field("name")
             .in_variant("Some")
             .in_field("data")
             .in_type_ref("my::Type");
@@ -254,9 +168,10 @@ mod tests {
 
     #[test]
     fn test_context_methods() {
-        let err = SchemaError::unknown_field("bad_field")
+        let err: SchemaError = ValidationError::unknown_field("bad_field", &[])
             .in_map_value("key1")
-            .in_field("config");
+            .in_field("config")
+            .into();
 
         // Verify it's a validation error
         assert!(err.is_validation_error());
@@ -267,7 +182,11 @@ mod tests {
     fn test_error_categories() {
         assert!(SchemaError::no_schema_dir().is_storage_error());
         assert!(SchemaError::schema_not_found("Foo").is_storage_error());
-        assert!(SchemaError::type_mismatch("a", "b").is_validation_error());
-        assert!(SchemaError::missing_field("x").is_validation_error());
+
+        let val_err: SchemaError = ValidationError::type_mismatch("a", "b").into();
+        assert!(val_err.is_validation_error());
+
+        let missing_err: SchemaError = ValidationError::missing_field("x").into();
+        assert!(missing_err.is_validation_error());
     }
 }

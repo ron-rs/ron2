@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use ron2::Value;
 
-use crate::error::{Result, SchemaError};
+use crate::error::{Result, SchemaError, ValidationError, ValidationResult};
 use crate::{Field, Schema, TypeKind, VariantKind};
 
 // =============================================================================
@@ -179,7 +179,7 @@ pub fn validate_with_resolver<R: SchemaResolver>(
     resolver: &R,
 ) -> Result<()> {
     let mut ctx = ValidationContext::new(resolver);
-    validate_type_internal(value, &schema.kind, &mut ctx)
+    validate_type_internal(value, &schema.kind, &mut ctx).map_err(SchemaError::Validation)
 }
 
 /// Validate a RON value against a type kind with TypeRef resolution.
@@ -189,7 +189,7 @@ pub fn validate_type_with_resolver<R: SchemaResolver>(
     resolver: &R,
 ) -> Result<()> {
     let mut ctx = ValidationContext::new(resolver);
-    validate_type_internal(value, kind, &mut ctx)
+    validate_type_internal(value, kind, &mut ctx).map_err(SchemaError::Validation)
 }
 
 // =============================================================================
@@ -200,7 +200,7 @@ fn validate_type_internal<R: SchemaResolver>(
     value: &Value,
     kind: &TypeKind,
     ctx: &mut ValidationContext<R>,
-) -> Result<()> {
+) -> ValidationResult<()> {
     match kind {
         TypeKind::Bool => match value {
             Value::Bool(_) => Ok(()),
@@ -263,7 +263,7 @@ fn validate_type_internal<R: SchemaResolver>(
         TypeKind::Tuple(types) => match value {
             Value::Tuple(items) | Value::Seq(items) => {
                 if items.len() != types.len() {
-                    return Err(SchemaError::tuple_length_mismatch(types.len(), items.len()));
+                    return Err(ValidationError::length_mismatch(types.len(), items.len()));
                 }
                 for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
                     validate_type_internal(item, ty, ctx).map_err(|e| e.in_element(i))?;
@@ -310,20 +310,20 @@ fn validate_struct_internal<R: SchemaResolver>(
     value: &Value,
     fields: &[Field],
     ctx: &mut ValidationContext<R>,
-) -> Result<()> {
+) -> ValidationResult<()> {
     // Helper to validate struct fields from an iterator of (name, value) pairs
     fn validate_struct_fields_inner<'a, R: SchemaResolver>(
         field_iter: impl Iterator<Item = (&'a str, &'a Value)>,
         fields: &[Field],
         has_field: impl Fn(&str) -> bool,
         ctx: &mut ValidationContext<R>,
-    ) -> Result<()> {
+    ) -> ValidationResult<()> {
         // Check all provided fields are valid
         for (key_str, val) in field_iter {
             let field = fields
                 .iter()
                 .find(|f| f.name == key_str)
-                .ok_or_else(|| SchemaError::unknown_field(key_str))?;
+                .ok_or_else(|| ValidationError::unknown_field(key_str.to_owned(), &[] as &[&str]))?;
 
             validate_type_internal(val, &field.ty, ctx).map_err(|e| e.in_field(key_str))?;
         }
@@ -331,7 +331,7 @@ fn validate_struct_internal<R: SchemaResolver>(
         // Check all required fields are present
         for field in fields {
             if !field.optional && !has_field(&field.name) {
-                return Err(SchemaError::missing_field(&field.name));
+                return Err(ValidationError::missing_field(field.name.clone()));
             }
         }
 
@@ -388,7 +388,7 @@ fn validate_enum_internal<R: SchemaResolver>(
     value: &Value,
     variants: &[crate::Variant],
     ctx: &mut ValidationContext<R>,
-) -> Result<()> {
+) -> ValidationResult<()> {
     use ron2::value::NamedContent;
 
     // Variant content can come from either NamedContent (for Named values)
@@ -419,18 +419,20 @@ fn validate_enum_internal<R: SchemaResolver>(
     let variant = variants
         .iter()
         .find(|v| v.name == variant_name)
-        .ok_or_else(|| SchemaError::unknown_variant(variant_name))?;
+        .ok_or_else(|| ValidationError::unknown_variant(variant_name.to_owned(), &[] as &[&str]))?;
 
     // Helper to validate struct fields
     let validate_struct_fields = |fields: &[crate::Field],
                                   struct_fields: &[(String, Value)],
                                   ctx: &mut ValidationContext<R>|
-     -> Result<()> {
+     -> ValidationResult<()> {
         for (key, val) in struct_fields.iter() {
             let field = fields
                 .iter()
                 .find(|f| f.name == *key)
-                .ok_or_else(|| SchemaError::unknown_field(key).in_variant(variant_name))?;
+                .ok_or_else(|| {
+                    ValidationError::unknown_field(key.clone(), &[] as &[&str]).in_variant(variant_name)
+                })?;
 
             validate_type_internal(val, &field.ty, ctx)
                 .map_err(|e| e.in_field(key).in_variant(variant_name))?;
@@ -438,7 +440,7 @@ fn validate_enum_internal<R: SchemaResolver>(
         // Check required fields
         for field in fields {
             if !field.optional && !struct_fields.iter().any(|(k, _)| k == &field.name) {
-                return Err(SchemaError::missing_field(&field.name).in_variant(variant_name));
+                return Err(ValidationError::missing_field(field.name.clone()).in_variant(variant_name));
             }
         }
         Ok(())
@@ -446,9 +448,9 @@ fn validate_enum_internal<R: SchemaResolver>(
 
     // Helper to validate tuple elements
     let validate_tuple_elements =
-        |types: &[TypeKind], items: &[Value], ctx: &mut ValidationContext<R>| -> Result<()> {
+        |types: &[TypeKind], items: &[Value], ctx: &mut ValidationContext<R>| -> ValidationResult<()> {
             if items.len() != types.len() {
-                return Err(SchemaError::tuple_length_mismatch(types.len(), items.len())
+                return Err(ValidationError::length_mismatch(types.len(), items.len())
                     .in_variant(variant_name));
             }
             for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
@@ -488,12 +490,12 @@ fn validate_enum_internal<R: SchemaResolver>(
 
         // Error cases
         (VariantKind::Unit, _) => {
-            Err(SchemaError::type_mismatch("Unit", "non-unit content").in_variant(variant_name))
+            Err(ValidationError::type_mismatch("Unit", "non-unit content").in_variant(variant_name))
         }
         (_, VariantContent::None) => {
-            Err(SchemaError::type_mismatch("variant content", "none").in_variant(variant_name))
+            Err(ValidationError::type_mismatch("variant content", "none").in_variant(variant_name))
         }
-        (_, _) => Err(SchemaError::type_mismatch(
+        (_, _) => Err(ValidationError::type_mismatch(
             format!("{:?}", variant.kind),
             "mismatched content",
         )
@@ -501,7 +503,7 @@ fn validate_enum_internal<R: SchemaResolver>(
     }
 }
 
-fn type_mismatch(expected: &str, value: &Value) -> SchemaError {
+fn type_mismatch(expected: &str, value: &Value) -> ValidationError {
     let actual = match value {
         Value::Bool(_) => "Bool",
         Value::Char(_) => "Char",
@@ -516,7 +518,7 @@ fn type_mismatch(expected: &str, value: &Value) -> SchemaError {
         Value::Struct(_) => "Struct",
         Value::Named { .. } => "Named",
     };
-    SchemaError::type_mismatch(expected, actual)
+    ValidationError::type_mismatch(expected, actual)
 }
 
 #[cfg(test)]

@@ -12,20 +12,9 @@
 use ron2::{NamedContent, Number, PrettyConfig, Value, from_str, to_string, to_string_pretty};
 
 // =============================================================================
-// Unit Named Types
+// Unit Named Types - Edge Cases
+// (Basic cases covered in roundtrip.rs)
 // =============================================================================
-
-#[test]
-fn named_unit_simple() {
-    let value = from_str("MyType").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("MyType"),
-            content: NamedContent::Unit,
-        }
-    );
-}
 
 #[test]
 fn named_unit_single_char() {
@@ -101,67 +90,9 @@ fn named_unit_raw_identifier_match() {
 }
 
 // =============================================================================
-// Tuple Named Types
+// Tuple Named Types - Edge Cases
+// (Basic cases covered in roundtrip.rs)
 // =============================================================================
-
-#[test]
-fn named_tuple_single_element() {
-    let value = from_str("Newtype(42)").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Newtype"),
-            content: NamedContent::Tuple(vec![Value::Number(Number::U8(42))]),
-        }
-    );
-}
-
-#[test]
-fn named_tuple_two_elements() {
-    let value = from_str("Pair(1, 2)").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Pair"),
-            content: NamedContent::Tuple(vec![
-                Value::Number(Number::U8(1)),
-                Value::Number(Number::U8(2)),
-            ]),
-        }
-    );
-}
-
-#[test]
-fn named_tuple_three_elements() {
-    let value = from_str("Triple(1, 2, 3)").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Triple"),
-            content: NamedContent::Tuple(vec![
-                Value::Number(Number::U8(1)),
-                Value::Number(Number::U8(2)),
-                Value::Number(Number::U8(3)),
-            ]),
-        }
-    );
-}
-
-#[test]
-fn named_tuple_mixed_types() {
-    let value = from_str(r#"Mixed("hello", 42, true)"#).unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Mixed"),
-            content: NamedContent::Tuple(vec![
-                Value::String(String::from("hello")),
-                Value::Number(Number::U8(42)),
-                Value::Bool(true),
-            ]),
-        }
-    );
-}
 
 #[test]
 fn named_tuple_empty() {
@@ -172,21 +103,6 @@ fn named_tuple_empty() {
         Value::Named {
             name: String::from("Empty"),
             content: NamedContent::Tuple(vec![]),
-        }
-    );
-}
-
-#[test]
-fn named_tuple_nested() {
-    let value = from_str("Outer(Inner(1))").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Outer"),
-            content: NamedContent::Tuple(vec![Value::Named {
-                name: String::from("Inner"),
-                content: NamedContent::Tuple(vec![Value::Number(Number::U8(1))]),
-            }]),
         }
     );
 }
@@ -221,141 +137,10 @@ fn named_tuple_with_option() {
     );
 }
 
-#[test]
-fn named_tuple_trailing_comma() {
-    let value = from_str("Point(1, 2,)").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Point"),
-            content: NamedContent::Tuple(vec![
-                Value::Number(Number::U8(1)),
-                Value::Number(Number::U8(2)),
-            ]),
-        }
-    );
-}
-
 // =============================================================================
-// Struct Named Types
+// Struct Named Types - Edge Cases
+// (Basic cases covered in roundtrip.rs)
 // =============================================================================
-
-#[test]
-fn named_struct_single_field() {
-    // Named structs use parentheses for fields: Name(field: value)
-    let value = from_str("Wrapper(value: 42)").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Wrapper"),
-            content: NamedContent::Struct(vec![(
-                String::from("value"),
-                Value::Number(Number::U8(42))
-            )]),
-        }
-    );
-}
-
-#[test]
-fn named_struct_two_fields() {
-    let value = from_str("Point(x: 1, y: 2)").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Point"),
-            content: NamedContent::Struct(vec![
-                (String::from("x"), Value::Number(Number::U8(1))),
-                (String::from("y"), Value::Number(Number::U8(2))),
-            ]),
-        }
-    );
-}
-
-#[test]
-fn named_struct_three_fields() {
-    let value = from_str("Point3D(x: 1, y: 2, z: 3)").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Point3D"),
-            content: NamedContent::Struct(vec![
-                (String::from("x"), Value::Number(Number::U8(1))),
-                (String::from("y"), Value::Number(Number::U8(2))),
-                (String::from("z"), Value::Number(Number::U8(3))),
-            ]),
-        }
-    );
-}
-
-#[test]
-fn named_struct_mixed_types() {
-    let value = from_str(r#"Person(name: "Alice", age: 30)"#).unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Person"),
-            content: NamedContent::Struct(vec![
-                (String::from("name"), Value::String(String::from("Alice"))),
-                (String::from("age"), Value::Number(Number::U8(30))),
-            ]),
-        }
-    );
-}
-
-#[test]
-fn named_struct_nested_struct() {
-    let value = from_str("Outer(inner: Inner(value: 1))").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Outer"),
-            content: NamedContent::Struct(vec![(
-                String::from("inner"),
-                Value::Named {
-                    name: String::from("Inner"),
-                    content: NamedContent::Struct(vec![(
-                        String::from("value"),
-                        Value::Number(Number::U8(1))
-                    )]),
-                }
-            )]),
-        }
-    );
-}
-
-#[test]
-fn named_struct_with_seq_field() {
-    let value = from_str("Container(items: [1, 2, 3])").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Container"),
-            content: NamedContent::Struct(vec![(
-                String::from("items"),
-                Value::Seq(vec![
-                    Value::Number(Number::U8(1)),
-                    Value::Number(Number::U8(2)),
-                    Value::Number(Number::U8(3)),
-                ])
-            )]),
-        }
-    );
-}
-
-#[test]
-fn named_struct_with_option_field() {
-    let value = from_str("Config(value: Some(42))").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Config"),
-            content: NamedContent::Struct(vec![(
-                String::from("value"),
-                Value::Option(Some(Box::new(Value::Number(Number::U8(42)))))
-            )]),
-        }
-    );
-}
 
 #[test]
 fn named_struct_with_none_field() {
@@ -365,21 +150,6 @@ fn named_struct_with_none_field() {
         Value::Named {
             name: String::from("Config"),
             content: NamedContent::Struct(vec![(String::from("value"), Value::Option(None))]),
-        }
-    );
-}
-
-#[test]
-fn named_struct_trailing_comma() {
-    let value = from_str("Point(x: 1, y: 2,)").unwrap();
-    assert_eq!(
-        value,
-        Value::Named {
-            name: String::from("Point"),
-            content: NamedContent::Struct(vec![
-                (String::from("x"), Value::Number(Number::U8(1))),
-                (String::from("y"), Value::Number(Number::U8(2))),
-            ]),
         }
     );
 }
@@ -458,44 +228,6 @@ fn serialize_named_struct_pretty() {
     assert!(pretty.contains("x: 1"));
     assert!(pretty.contains("y: 2"));
     assert!(pretty.contains('\n'));
-}
-
-// =============================================================================
-// Roundtrip Named Types
-// =============================================================================
-
-fn roundtrip(input: &str) -> Value {
-    let value = from_str(input).unwrap();
-    let serialized = to_string(&value).unwrap();
-    let reparsed = from_str(&serialized).unwrap();
-    assert_eq!(value, reparsed);
-    value
-}
-
-#[test]
-fn roundtrip_named_unit() {
-    roundtrip("MyType");
-}
-
-#[test]
-fn roundtrip_named_tuple() {
-    roundtrip("Point(1, 2)");
-}
-
-#[test]
-fn roundtrip_named_struct() {
-    roundtrip("Point(x: 1, y: 2)");
-}
-
-#[test]
-fn roundtrip_named_complex() {
-    roundtrip(
-        r#"Config(
-        server: Server(host: "localhost", port: 8080),
-        items: [1, 2, 3],
-        enabled: true
-    )"#,
-    );
 }
 
 // =============================================================================

@@ -85,6 +85,79 @@ pub enum TypeKind {
     TypeRef(String),
 }
 
+impl TypeKind {
+    /// Get inner type for Option or List.
+    pub fn inner_type(&self) -> Option<&TypeKind> {
+        match self {
+            TypeKind::Option(inner) | TypeKind::List(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Get key/value types for Map.
+    pub fn map_types(&self) -> Option<(&TypeKind, &TypeKind)> {
+        match self {
+            TypeKind::Map { key, value } => Some((key, value)),
+            _ => None,
+        }
+    }
+
+    /// Get tuple element types.
+    pub fn tuple_types(&self) -> Option<&[TypeKind]> {
+        match self {
+            TypeKind::Tuple(types) => Some(types),
+            _ => None,
+        }
+    }
+
+    /// Get struct fields.
+    pub fn struct_fields(&self) -> Option<&[Field]> {
+        match self {
+            TypeKind::Struct { fields } => Some(fields),
+            _ => None,
+        }
+    }
+
+    /// Get enum variants.
+    pub fn enum_variants(&self) -> Option<&[Variant]> {
+        match self {
+            TypeKind::Enum { variants } => Some(variants),
+            _ => None,
+        }
+    }
+
+    /// Get TypeRef path.
+    pub fn type_ref_path(&self) -> Option<&str> {
+        match self {
+            TypeKind::TypeRef(path) => Some(path),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a primitive type (no nested types).
+    pub fn is_primitive(&self) -> bool {
+        matches!(
+            self,
+            TypeKind::Bool
+                | TypeKind::I8
+                | TypeKind::I16
+                | TypeKind::I32
+                | TypeKind::I64
+                | TypeKind::I128
+                | TypeKind::U8
+                | TypeKind::U16
+                | TypeKind::U32
+                | TypeKind::U64
+                | TypeKind::U128
+                | TypeKind::F32
+                | TypeKind::F64
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+        )
+    }
+}
+
 impl fmt::Display for TypeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

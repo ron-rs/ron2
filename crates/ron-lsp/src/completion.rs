@@ -46,11 +46,10 @@ pub fn provide_completions(
 
 /// Get the type of a field from a struct schema.
 fn get_field_type<'a>(kind: &'a TypeKind, field_name: &str) -> Option<&'a TypeKind> {
-    let TypeKind::Struct { fields } = kind else {
-        return None;
-    };
-
-    fields.iter().find(|f| f.name == field_name).map(|f| &f.ty)
+    kind.struct_fields()?
+        .iter()
+        .find(|f| f.name == field_name)
+        .map(|f| &f.ty)
 }
 
 /// Generate completions for a type at root level.
@@ -109,7 +108,7 @@ fn completions_for_type(
 
 /// Generate completions for struct fields.
 fn completions_for_fields(kind: &TypeKind, used_fields: &[String]) -> Vec<CompletionItem> {
-    let TypeKind::Struct { fields } = kind else {
+    let Some(fields) = kind.struct_fields() else {
         return vec![];
     };
 
