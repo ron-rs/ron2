@@ -46,7 +46,7 @@ pub enum SchemaError {
     /// Storage-related error (file I/O, parsing schema files).
     Storage(StorageError),
     /// Validation error (type mismatches, missing fields, etc.).
-    Validation(ValidationError),
+    Validation(Box<ValidationError>),
 }
 
 impl SchemaError {
@@ -57,7 +57,7 @@ impl SchemaError {
 
     /// Create a new validation error.
     pub fn validation(err: ValidationError) -> Self {
-        SchemaError::Validation(err)
+        SchemaError::Validation(Box::new(err))
     }
 
     /// Check if this is a storage-related error.
@@ -117,7 +117,7 @@ impl From<ron2::Error> for SchemaError {
 
 impl From<ValidationError> for SchemaError {
     fn from(e: ValidationError) -> Self {
-        SchemaError::Validation(e)
+        SchemaError::Validation(Box::new(e))
     }
 }
 

@@ -179,7 +179,7 @@ pub fn validate_with_resolver<R: SchemaResolver>(
     resolver: &R,
 ) -> Result<()> {
     let mut ctx = ValidationContext::new(resolver);
-    validate_type_internal(value, &schema.kind, &mut ctx).map_err(SchemaError::Validation)
+    validate_type_internal(value, &schema.kind, &mut ctx).map_err(|e| SchemaError::Validation(Box::new(e)))
 }
 
 /// Validate a RON value against a type kind with TypeRef resolution.
@@ -189,13 +189,16 @@ pub fn validate_type_with_resolver<R: SchemaResolver>(
     resolver: &R,
 ) -> Result<()> {
     let mut ctx = ValidationContext::new(resolver);
-    validate_type_internal(value, kind, &mut ctx).map_err(SchemaError::Validation)
+    validate_type_internal(value, kind, &mut ctx).map_err(|e| SchemaError::Validation(Box::new(e)))
 }
 
 // =============================================================================
 // Internal Validation Implementation
 // =============================================================================
 
+// Internal functions return ValidationResult<()> which contains a large error type.
+// This is acceptable for internal use since errors are boxed at the public API boundary.
+#[allow(clippy::result_large_err)]
 fn validate_type_internal<R: SchemaResolver>(
     value: &Value,
     kind: &TypeKind,
@@ -306,12 +309,14 @@ fn validate_type_internal<R: SchemaResolver>(
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn validate_struct_internal<R: SchemaResolver>(
     value: &Value,
     fields: &[Field],
     ctx: &mut ValidationContext<R>,
 ) -> ValidationResult<()> {
     // Helper to validate struct fields from an iterator of (name, value) pairs
+    #[allow(clippy::result_large_err)]
     fn validate_struct_fields_inner<'a, R: SchemaResolver>(
         field_iter: impl Iterator<Item = (&'a str, &'a Value)>,
         fields: &[Field],
@@ -384,6 +389,7 @@ fn validate_struct_internal<R: SchemaResolver>(
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn validate_enum_internal<R: SchemaResolver>(
     value: &Value,
     variants: &[crate::Variant],

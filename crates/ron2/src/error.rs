@@ -586,11 +586,13 @@ mod tests {
     #[test]
     fn test_ron_error_reexports() {
         // Verify all types from ron-error are accessible
-        let _pos = Position { line: 1, col: 1 };
+        let pos = Position { line: 1, col: 1 };
+        assert_eq!(pos.line, 1);
         let span = Span::synthetic();
         assert!(span.is_synthetic());
 
-        let _seg = PathSegment::Field("test".into());
+        let seg = PathSegment::Field("test".into());
+        assert!(matches!(seg, PathSegment::Field(_)));
 
         let kind = ValidationErrorKind::TypeMismatch {
             expected: "String".into(),
@@ -625,7 +627,7 @@ mod tests {
         match spanned.code {
             Error::MissingStructField { field, outer } => {
                 assert_eq!(field.as_ref(), "name");
-                assert_eq!(outer.as_ref().map(|s| s.as_ref()), Some("Config"));
+                assert_eq!(outer.as_deref(), Some("Config"));
             }
             _ => panic!("Expected MissingStructField error"),
         }
