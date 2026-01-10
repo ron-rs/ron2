@@ -81,7 +81,6 @@ fn missing_field_error_names_the_field() {
 }
 
 #[test]
-#[ignore = "MissingStructField.outer is None - needs struct name context in AstMapAccess"]
 fn missing_field_error_names_the_struct() {
     let input = r#"(name: "test", enabled: true)"#;
     let err = SimpleConfig::from_ron(input).unwrap_err();

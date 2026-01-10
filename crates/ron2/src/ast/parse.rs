@@ -375,6 +375,41 @@ impl<'a> AstParser<'a> {
             TokenKind::ByteString => self.parse_bytes(),
             TokenKind::Char => self.parse_char(),
             TokenKind::Eof => Err(Self::error(self.eof_span(), Error::Eof)),
+            TokenKind::Error => {
+                let tok = self.next_token();
+                // Detect specific error types based on token content
+                if tok.text.starts_with("/*") {
+                    Err(Self::error(tok.span, Error::UnclosedBlockComment))
+                } else if tok.text.starts_with('"') || tok.text.starts_with("r#") {
+                    Err(Self::error(tok.span, Error::ExpectedStringEnd))
+                } else if tok.text.starts_with("0x")
+                    || tok.text.starts_with("0X")
+                    || tok.text.starts_with("0b")
+                    || tok.text.starts_with("0B")
+                    || tok.text.starts_with("0o")
+                    || tok.text.starts_with("0O")
+                {
+                    // Invalid number with base prefix - point to position after prefix
+                    let prefix_len = 2;
+                    let error_span = Span {
+                        start: Position {
+                            line: tok.span.start.line,
+                            col: tok.span.start.col + prefix_len,
+                        },
+                        end: tok.span.end,
+                        start_offset: tok.span.start_offset + prefix_len,
+                        end_offset: tok.span.end_offset,
+                    };
+                    // Get the first invalid character after the prefix
+                    let invalid_char = tok.text[prefix_len..].chars().next().unwrap_or('?');
+                    Err(Self::error(error_span, Error::UnexpectedChar(invalid_char)))
+                } else {
+                    Err(Self::error(
+                        tok.span,
+                        Error::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
+                    ))
+                }
+            }
             _ => {
                 let tok = self.next_token();
                 Err(Self::error(
@@ -664,8 +699,10 @@ impl<'a> AstParser<'a> {
             let pre_colon = self.collect_leading_trivia();
 
             if self.peek_kind() != TokenKind::Colon {
+                // Point error to the unexpected token, not the key
+                let unexpected = self.next_token();
                 return Err(Self::error(
-                    key.span().clone(),
+                    unexpected.span,
                     Error::ExpectedMapColon {
                         context: Some("map entry"),
                     },
@@ -1250,8 +1287,33 @@ impl<'a> AstParser<'a> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::String);
 
-        let (value, kind) =
-            Self::decode_string(tok.text).map_err(|e| Self::error(tok.span.clone(), e))?;
+        let (value, kind) = Self::decode_string(tok.text).map_err(|(e, byte_offset)| {
+            // Compute the error position within the source
+            // byte_offset is relative to the token text start
+            let error_start_offset = tok.span.start_offset + byte_offset;
+            let error_end_offset = error_start_offset + 2; // Point to the escape sequence (\x)
+
+            // Compute line/column by counting from token start
+            // For now, assume same line (escapes rarely span lines)
+            let col_offset = tok.text[..byte_offset].chars().count();
+            let error_col = tok.span.start.col + col_offset;
+
+            Self::error(
+                Span {
+                    start: Position {
+                        line: tok.span.start.line,
+                        col: error_col,
+                    },
+                    end: Position {
+                        line: tok.span.start.line,
+                        col: error_col + 2,
+                    },
+                    start_offset: error_start_offset,
+                    end_offset: error_end_offset.min(tok.span.end_offset),
+                },
+                e,
+            )
+        })?;
 
         Ok(Expr::String(StringExpr {
             span: tok.span,
@@ -1262,9 +1324,10 @@ impl<'a> AstParser<'a> {
     }
 
     /// Decode a string literal.
-    fn decode_string(raw: &str) -> Result<(String, StringKind)> {
+    /// Returns `(value, kind)` on success, or `(Error, byte_offset_in_raw)` on failure.
+    fn decode_string(raw: &str) -> core::result::Result<(String, StringKind), (Error, usize)> {
         if raw.starts_with('r') {
-            // Raw string
+            // Raw string - no escapes to process
             let hash_count = raw.chars().skip(1).take_while(|&c| c == '#').count();
             let delim_len = 1 + hash_count + 1; // r + hashes + quote
             let content = &raw[delim_len..=raw.len() - delim_len];
@@ -1280,45 +1343,81 @@ impl<'a> AstParser<'a> {
         } else {
             // Regular string - need to process escapes
             let content = &raw[1..raw.len() - 1]; // Strip quotes
-            let value = Self::unescape_string(content)?;
+            let value = Self::unescape_string(content)
+                .map_err(|(e, offset)| (e, offset + 1))?; // +1 for opening quote
             Ok((value, StringKind::Regular))
         }
     }
 
     /// Process escape sequences in a string.
-    fn unescape_string(s: &str) -> Result<String> {
+    /// Returns the unescaped string, or `(Error, byte_offset)` on failure.
+    fn unescape_string(s: &str) -> core::result::Result<String, (Error, usize)> {
         let mut result = String::new();
+        let mut byte_offset = 0usize;
         let mut chars = s.chars().peekable();
 
         while let Some(c) = chars.next() {
+            let char_start = byte_offset;
+            byte_offset += c.len_utf8();
+
             if c == '\\' {
                 match chars.next() {
-                    Some('n') => result.push('\n'),
-                    Some('r') => result.push('\r'),
-                    Some('t') => result.push('\t'),
-                    Some('\\') => result.push('\\'),
-                    Some('0') => result.push('\0'),
-                    Some('"') => result.push('"'),
-                    Some('\'') => result.push('\''),
+                    Some('n') => {
+                        result.push('\n');
+                        byte_offset += 1;
+                    }
+                    Some('r') => {
+                        result.push('\r');
+                        byte_offset += 1;
+                    }
+                    Some('t') => {
+                        result.push('\t');
+                        byte_offset += 1;
+                    }
+                    Some('\\') => {
+                        result.push('\\');
+                        byte_offset += 1;
+                    }
+                    Some('0') => {
+                        result.push('\0');
+                        byte_offset += 1;
+                    }
+                    Some('"') => {
+                        result.push('"');
+                        byte_offset += 1;
+                    }
+                    Some('\'') => {
+                        result.push('\'');
+                        byte_offset += 1;
+                    }
                     Some('x') => {
+                        byte_offset += 1;
                         let hex: String = chars.by_ref().take(2).collect();
+                        byte_offset += hex.len();
                         let val = u8::from_str_radix(&hex, 16)
-                            .map_err(|_| Error::InvalidEscape("invalid hex escape"))?;
+                            .map_err(|_| (Error::InvalidEscape("invalid hex escape"), char_start))?;
                         result.push(val as char);
                     }
                     Some('u') => {
+                        byte_offset += 1;
                         if chars.next() != Some('{') {
-                            return Err(Error::InvalidEscape("expected { after \\u"));
+                            return Err((Error::InvalidEscape("expected { after \\u"), char_start));
                         }
+                        byte_offset += 1;
                         let hex: String = chars.by_ref().take_while(|&c| c != '}').collect();
+                        byte_offset += hex.len() + 1; // +1 for closing }
                         let val = u32::from_str_radix(&hex, 16)
-                            .map_err(|_| Error::InvalidEscape("invalid unicode escape"))?;
+                            .map_err(|_| (Error::InvalidEscape("invalid unicode escape"), char_start))?;
                         let c = char::from_u32(val)
-                            .ok_or(Error::InvalidEscape("invalid unicode codepoint"))?;
+                            .ok_or((Error::InvalidEscape("invalid unicode codepoint"), char_start))?;
                         result.push(c);
                     }
-                    Some(_) => return Err(Error::InvalidEscape("unknown escape sequence")),
-                    None => return Err(Error::InvalidEscape("unexpected end of string")),
+                    Some(_) => {
+                        return Err((Error::InvalidEscape("unknown escape sequence"), char_start));
+                    }
+                    None => {
+                        return Err((Error::InvalidEscape("unexpected end of string"), char_start));
+                    }
                 }
             } else {
                 result.push(c);

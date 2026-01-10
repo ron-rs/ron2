@@ -104,7 +104,7 @@ fn derive_named_struct_de(
         match expr {
             // Anonymous struct: (field: val, ...)
             ::ron2::ast::Expr::AnonStruct(s) => {
-                let mut access = ::ron2::AstMapAccess::from_anon(s);
+                let mut access = ::ron2::AstMapAccess::from_anon(s, Some(stringify!(#name)));
                 #(#field_extractions)*
                 #deny_unknown
                 Ok(#name { #(#field_names),* })

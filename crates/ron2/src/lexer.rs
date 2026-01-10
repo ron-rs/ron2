@@ -657,6 +657,15 @@ impl<'a> Lexer<'a> {
         }
 
         if !has_digits {
+            // No valid digits found after prefix - consume any alphanumeric chars
+            // that might have been intended as digits for better error reporting
+            while let Some(c) = self.peek_char() {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    self.next_char();
+                } else {
+                    break;
+                }
+            }
             return TokenKind::Error;
         }
 

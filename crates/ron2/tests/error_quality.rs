@@ -44,7 +44,6 @@ fn verify_span_position(
 }
 
 #[test]
-#[ignore = "span points to col 1 instead of the invalid digit - needs parser fix"]
 fn span_points_to_invalid_token() {
     // Invalid character in number - should point to the 'G'
     let source = "0xGGG";
@@ -101,7 +100,6 @@ fn span_points_to_unclosed_string() {
 }
 
 #[test]
-#[ignore = "escape error reports col 1 instead of escape position - needs parser fix"]
 fn span_points_to_invalid_escape_sequence() {
     let source = r#""hello\qworld""#;
     let result: SpannedResult<Value> = from_str(source);
@@ -118,7 +116,6 @@ fn span_points_to_invalid_escape_sequence() {
 }
 
 #[test]
-#[ignore = "missing colon error reports col 3 instead of error position - needs parser fix"]
 fn span_points_to_map_missing_colon() {
     let source = r#"{ "key" "value" }"#;
     let result: SpannedResult<Value> = from_str(source);
@@ -438,7 +435,6 @@ fn error_after_comment_has_correct_position() {
 }
 
 #[test]
-#[ignore = "reports UnexpectedChar('/') instead of UnclosedBlockComment - needs parser fix"]
 fn error_inside_block_comment() {
     let source = "/* unclosed comment";
     let result: SpannedResult<Value> = from_str(source);

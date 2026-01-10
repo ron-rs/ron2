@@ -913,7 +913,7 @@ impl_from_ron_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 ///     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
 ///         match expr {
 ///             Expr::AnonStruct(s) => {
-///                 let mut access = AstMapAccess::from_anon(s);
+///                 let mut access = AstMapAccess::from_anon(s, Some("Point"));
 ///                 let x = access.required("x")?;
 ///                 let y = access.required("y")?;
 ///                 access.deny_unknown_fields(&["x", "y"])?;
@@ -943,7 +943,7 @@ pub struct AstMapAccess<'a> {
 impl<'a> AstMapAccess<'a> {
     /// Create from an anonymous struct expression: `(field: value, ...)`
     #[must_use]
-    pub fn from_anon(s: &'a AnonStructExpr<'a>) -> Self {
+    pub fn from_anon(s: &'a AnonStructExpr<'a>, struct_name: Option<&'a str>) -> Self {
         let mut fields = HashMap::with_capacity(s.fields.len());
         for field in &s.fields {
             fields.insert(field.name.name.as_ref(), field);
@@ -952,7 +952,7 @@ impl<'a> AstMapAccess<'a> {
             fields,
             consumed: HashSet::new(),
             struct_span: s.span.clone(),
-            struct_name: None,
+            struct_name,
         }
     }
 
@@ -1238,7 +1238,7 @@ mod tests {
 
         // Get the anonymous struct from the document
         if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s);
+            let mut access = AstMapAccess::from_anon(s, Some("TestStruct"));
 
             assert_eq!(access.required::<String>("name").unwrap(), "test");
             assert_eq!(access.required::<i32>("value").unwrap(), 42);

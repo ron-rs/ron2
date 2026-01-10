@@ -95,41 +95,9 @@ Example messages:
 
 ### 2. Remaining Issues
 
-#### Issue 1: Some Parsing Spans Point to Parent Construct
+All fixable span accuracy issues have been resolved. The remaining ignored tests are for intentional RON behavior.
 
-A few parsing errors still report span at the parent construct instead of the precise error:
-
-```
-IGNORED: span_points_to_invalid_token
-  - Input: "0xGGG"
-  - Expected: col >= 3 (at 'G')
-  - Got: col 1 (start of number)
-
-IGNORED: span_points_to_invalid_escape_sequence
-  - Input: "hello\qworld"
-  - Expected: col >= 7 (at '\q')
-  - Got: col 1 (start of string)
-
-IGNORED: span_points_to_map_missing_colon
-  - Input: { "key" "value" }
-  - Expected: col >= 9 (near 'value')
-  - Got: col 3 (at "key")
-```
-
-**Root cause**: These errors are reported at the start of the containing token (string or number) rather than the specific character causing the error.
-
-#### Issue 2: Unclosed Block Comment Error Code
-
-```
-IGNORED: error_inside_block_comment
-  - Input: "/* unclosed comment"
-  - Expected: Error::UnclosedBlockComment
-  - Got: Error::UnexpectedChar('/')
-```
-
-**Note**: The error is caught, but with a less specific error code.
-
-#### Issue 3: Bare Identifiers Are Valid RON (By Design)
+#### Issue 1: Bare Identifiers Are Valid RON (By Design)
 
 ```
 IGNORED: span_multiline_points_to_correct_line
@@ -145,7 +113,7 @@ IGNORED: span_deeply_nested_error
 
 **Note**: This is intentional RON behavior - bare identifiers are valid unit-like values. Typos in enum variants are caught during deserialization, not parsing.
 
-#### Issue 4: Empty/Whitespace Input Parses as Unit (By Design)
+#### Issue 2: Empty/Whitespace Input Parses as Unit (By Design)
 
 ```
 IGNORED: empty_input_has_sensible_error
@@ -159,22 +127,18 @@ IGNORED: whitespace_only_has_sensible_error
 
 **Note**: This is intentional. Unit `()` can be represented as empty input in RON.
 
-#### Issue 5: Missing Struct Name Context in Some Errors
+#### Issue 3: Empty Struct Parses as Unit (By Design)
 
 ```
-IGNORED: missing_field_error_names_the_struct
-  - MissingStructField.outer is None
-  - Expected: outer to contain struct name for context
-
 IGNORED: empty_struct_error_is_helpful
   - Input: "()"
   - Got: "Expected struct SimpleConfig but found unit instead"
   - Expected: Error listing missing fields
 ```
 
-**Note**: The struct name is mentioned in type mismatch, but not in MissingStructField error code.
+**Note**: `()` is parsed as Unit type, not as an empty struct with missing fields.
 
-#### Issue 6: RON Ignores Struct Names (By Design)
+#### Issue 4: RON Ignores Struct Names (By Design)
 
 ```
 IGNORED: wrong_struct_name_error_is_helpful
@@ -185,7 +149,7 @@ IGNORED: wrong_struct_name_error_is_helpful
 
 **Note**: RON intentionally ignores struct names during deserialization. The struct name is cosmetic.
 
-#### Issue 7: Schema Validation Loses Source Spans
+#### Issue 5: Schema Validation Loses Source Spans
 
 The validation module works on `Value` (semantic data) not AST, so source positions are lost. Errors use logical paths instead:
 
@@ -201,13 +165,14 @@ The validation module works on `Value` (semantic data) not AST, so source positi
 
 ### 3. Recommendations for Rustc-Like Errors
 
-#### Phase 1: Fix Remaining Span Accuracy (Medium Priority)
+#### Phase 1: Span Accuracy ✅ COMPLETE
 
-1. **Fix token-internal error spans** for invalid hex digits and escape sequences
-2. **Add struct name context** to MissingStructField errors
-3. **Use UnclosedBlockComment** error code for unclosed block comments
-
-These are minor polish items - the core span accuracy is already good.
+All span accuracy issues have been fixed:
+- Invalid hex digits now point to the invalid character (not the number start)
+- Invalid escape sequences point to the `\` character
+- Missing colon errors point to the unexpected token
+- Block comments use `UnclosedBlockComment` error code
+- Struct names included in `MissingStructField` errors
 
 #### Phase 2: Add Error Rendering (Medium Priority)
 
@@ -260,17 +225,18 @@ To get spans in schema validation, would need to:
 ## Test Coverage Summary
 
 ### ron2 (parsing)
-- **17/25 tests pass (68%)**
-- 8 tests ignored:
-  - 3 span accuracy issues (token-internal positions)
-  - 1 error code issue (block comment)
-  - 4 intentional RON behavior (bare identifiers, empty input)
+- **21/25 tests pass (84%)**
+- 4 tests ignored (intentional RON behavior):
+  - `span_multiline_points_to_correct_line` - bare identifiers are valid
+  - `span_deeply_nested_error` - bare identifiers are valid
+  - `empty_input_has_sensible_error` - empty input parses as Unit
+  - `whitespace_only_has_sensible_error` - whitespace parses as Unit
 
 ### ron-derive (deserialization)
-- **26/29 tests pass (90%)**
-- 3 tests ignored:
-  - 1 struct name context issue (MissingStructField.outer)
-  - 2 intentional RON behavior (empty struct, struct name ignored)
+- **27/29 tests pass (93%)**
+- 2 tests ignored (intentional RON behavior):
+  - `empty_struct_error_is_helpful` - `()` parses as unit, not struct error
+  - `wrong_struct_name_error_is_helpful` - RON ignores struct names
 
 ### ron-schema (validation)
 - Good path tracking
@@ -295,21 +261,24 @@ To get spans in schema validation, would need to:
 
 ## Conclusion
 
-The error system is in good shape:
+The error system is now in excellent shape:
 - Spans capture line/column and byte offsets correctly
 - Error codes are specific and contextual
 - Type information flows through the system
 - Both parsing and deserialization provide accurate source positions
+- All token-internal span issues have been fixed
 
-**Progress since initial report:**
-- EOF span positions now work correctly
-- Long line positions track properly
-- Unicode character positions are accurate
-- Comment handling doesn't affect error positions
+**Fixes implemented:**
+1. Invalid hex digits (`0xGGG`) now point to the invalid character
+2. Invalid escape sequences (`\q`) point to the escape position
+3. Missing colon errors point to the unexpected token
+4. Block comments use specific `UnclosedBlockComment` error
+5. `MissingStructField` errors include the struct name
 
 **Remaining work for rustc-quality diagnostics:**
-1. **Minor span polish** - Fix token-internal error positions (3 cases)
-2. **Build a diagnostic renderer** - Extract source snippets, render underlines
-3. **Add helpful notes and suggestions** - Context for common errors
+1. **Build a diagnostic renderer** - Extract source snippets, render underlines
+2. **Add helpful notes and suggestions** - Context for common errors
 
-The deserialization layer (ron-derive) provides excellent span accuracy at 90%. The parsing layer (ron2) is at 68%, with most "failures" being intentional RON design decisions rather than bugs.
+**Test Coverage:**
+- ron2 (parsing): **21/25 (84%)** - 4 skipped are intentional RON behavior
+- ron-derive (deserialization): **27/29 (93%)** - 2 skipped are intentional RON behavior
