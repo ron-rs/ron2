@@ -65,7 +65,10 @@ pub mod value;
 #[cfg(feature = "std")]
 pub use crate::convert::{AstMapAccess, FromRonFields};
 pub use crate::convert::{FromRon, ParsedInt, ToRon, parse_int_raw};
-pub use crate::error::{Error, SpannedError, SpannedResult};
+pub use crate::error::{
+    Error, PathSegment, Position, Span, SpannedError, SpannedResult, ValidationError,
+    ValidationErrorKind,
+};
 pub use crate::extensions::Extensions;
 pub use crate::options::Options;
 pub use crate::ser::{PrettyConfig, Serializer};

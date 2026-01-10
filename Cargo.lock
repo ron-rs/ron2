@@ -996,6 +996,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ron-error"
+version = "0.1.0"
+
+[[package]]
 name = "ron-lsp"
 version = "0.1.0"
 dependencies = [
@@ -1013,6 +1017,7 @@ name = "ron-schema"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "ron-error",
  "ron2",
  "serde",
  "serial_test",
@@ -1038,6 +1043,7 @@ dependencies = [
  "indexmap",
  "ron",
  "ron-derive",
+ "ron-error",
  "serde",
  "unicode-ident",
  "unicode-segmentation",

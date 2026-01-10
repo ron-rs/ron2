@@ -3,7 +3,9 @@
 //! Validates RON files against their schemas and produces
 //! diagnostic messages for errors.
 
-use ron_schema::{validate_with_resolver, PathSegment, SchemaError, SchemaErrorKind};
+use ron_schema::{
+    validate_with_resolver, PathSegment, SchemaError, ValidationError, ValidationErrorKind,
+};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
@@ -118,11 +120,25 @@ fn validation_error_to_diagnostics(error: &SchemaError, doc: &Document) -> Vec<D
 
 /// Format a validation error and try to find its position.
 fn format_validation_error(error: &SchemaError, doc: &Document) -> (String, Option<Range>) {
-    // Build context prefix from path
+    // Handle storage errors (shouldn't occur during validation, but handle gracefully)
+    let validation_error = match error {
+        SchemaError::Validation(v) => v,
+        SchemaError::Storage(_) => return (error.to_string(), None),
+    };
+
+    format_validation_error_inner(validation_error, doc)
+}
+
+/// Format a ValidationError and try to find its position.
+fn format_validation_error_inner(
+    error: &ValidationError,
+    doc: &Document,
+) -> (String, Option<Range>) {
+    // Build context prefix from path (path is stored innermost-first, display outermost-first)
     let context_prefix = if error.path.is_empty() {
         String::new()
     } else {
-        let path_str: Vec<String> = error.path.iter().map(format_path_segment).collect();
+        let path_str: Vec<String> = error.path.iter().rev().map(format_path_segment).collect();
         format!("{}: ", path_str.join(" -> "))
     };
 
@@ -131,29 +147,38 @@ fn format_validation_error(error: &SchemaError, doc: &Document) -> (String, Opti
 
     // Format the message based on error kind
     let message = match &error.kind {
-        SchemaErrorKind::TypeMismatch { expected, actual } => {
+        ValidationErrorKind::TypeMismatch { expected, found } => {
             format!(
                 "{}Type mismatch: expected {}, got {}",
-                context_prefix, expected, actual
+                context_prefix, expected, found
             )
         }
-        SchemaErrorKind::MissingField(field) => {
+        ValidationErrorKind::MissingField { field, .. } => {
             format!("{}Missing required field: {}", context_prefix, field)
         }
-        SchemaErrorKind::UnknownField(field) => {
+        ValidationErrorKind::UnknownField { field, .. } => {
             format!("{}Unknown field: {}", context_prefix, field)
         }
-        SchemaErrorKind::UnknownVariant(variant) => {
+        ValidationErrorKind::UnknownVariant { variant, .. } => {
             format!("{}Unknown enum variant: {}", context_prefix, variant)
         }
-        SchemaErrorKind::TupleLengthMismatch { expected, actual } => {
+        ValidationErrorKind::LengthMismatch {
+            expected, found, ..
+        } => {
             format!(
                 "{}Tuple length mismatch: expected {} elements, got {}",
-                context_prefix, expected, actual
+                context_prefix, expected, found
             )
         }
-        // Storage errors shouldn't occur during validation, but handle gracefully
-        _ => format!("{}{}", context_prefix, error),
+        ValidationErrorKind::DuplicateField { field, .. } => {
+            format!("{}Duplicate field: {}", context_prefix, field)
+        }
+        ValidationErrorKind::IntegerOutOfBounds { value, target_type } => {
+            format!(
+                "{}Integer {} out of bounds for {}",
+                context_prefix, value, target_type
+            )
+        }
     };
 
     // Try to find better position for specific error kinds if path didn't help
@@ -196,11 +221,11 @@ fn find_position_from_path(path: &[PathSegment], doc: &Document) -> Option<Range
 }
 
 /// Try to find a position based on the error kind.
-fn find_position_from_kind(kind: &SchemaErrorKind, doc: &Document) -> Option<Range> {
+fn find_position_from_kind(kind: &ValidationErrorKind, doc: &Document) -> Option<Range> {
     match kind {
-        SchemaErrorKind::MissingField(_field) => find_field_insert_position(doc),
-        SchemaErrorKind::UnknownField(field) => find_field_position(doc, field),
-        SchemaErrorKind::UnknownVariant(variant) => find_text_position(doc, variant),
+        ValidationErrorKind::MissingField { .. } => find_field_insert_position(doc),
+        ValidationErrorKind::UnknownField { field, .. } => find_field_position(doc, field),
+        ValidationErrorKind::UnknownVariant { variant, .. } => find_text_position(doc, variant),
         _ => None,
     }
 }

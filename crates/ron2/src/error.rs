@@ -1,3 +1,12 @@
+//! Error types for RON parsing and deserialization.
+//!
+//! This module provides error types for parsing and validation:
+//! - [`Error`] - All ron2 errors (parsing + validation)
+//! - [`SpannedError`] - Error with source location
+//! - [`Position`], [`Span`] - Source position types (from `ron-error`)
+//! - [`ValidationError`], [`ValidationErrorKind`] - Validation errors (from `ron-error`)
+//! - [`PathSegment`] - Path context for errors (from `ron-error`)
+
 use alloc::{
     borrow::Cow,
     string::{String, ToString},
@@ -9,6 +18,9 @@ use unicode_ident::is_xid_continue;
 
 #[cfg(feature = "std")]
 use std::io;
+
+// Re-export types from ron-error
+pub use ron_error::{PathSegment, Position, Span, ValidationError, ValidationErrorKind};
 
 /// This type represents all possible errors that can occur when
 /// serializing or deserializing RON data.
@@ -347,109 +359,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Position {
-    pub line: usize,
-    pub col: usize,
-}
-
-impl Position {
-    pub(crate) fn from_src_end(src: &str) -> Position {
-        let line = 1 + src.chars().filter(|&c| c == '\n').count();
-        let col = 1 + src.chars().rev().take_while(|&c| c != '\n').count();
-
-        Self { line, col }
-    }
-}
-
-impl fmt::Display for Position {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Position { line, col } = self;
-        write!(f, "{line}:{col}")
-    }
-}
-
-/// Spans select a range of text between two positions.
-///
-/// Spans are used in [`SpannedError`] to indicate the start and end positions
-/// of the parser cursor before and after it encountered an error in parsing.
-/// Spans also include byte offsets for direct source text slicing.
-///
-/// ## Byte Offset Semantics
-///
-/// Byte offsets use **exclusive end** semantics (like Rust ranges):
-/// - `start_offset..end_offset` covers the half-open range `[start, end)`
-/// - Use `source[start_offset..end_offset]` to slice the spanned text
-///
-/// ## Position Semantics
-///
-/// Line and column positions are **1-indexed** (the first line is line 1,
-/// the first column is column 1). The end position points to the last
-/// character in the span (inclusive for display purposes).
-///
-/// ## Synthetic Spans
-///
-/// Spans created by [`Span::synthetic()`] have `line: 0` to distinguish them
-/// from real source positions. Use [`is_synthetic()`](Self::is_synthetic) to check.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Span {
-    /// The start position (line and column, 1-indexed).
-    pub start: Position,
-    /// The end position (line and column, 1-indexed).
-    pub end: Position,
-    /// The start byte offset in the source (0-indexed, inclusive).
-    pub start_offset: usize,
-    /// The end byte offset in the source (0-indexed, exclusive).
-    pub end_offset: usize,
-}
-
-impl Span {
-    /// Create a synthetic span for values without source positions.
-    ///
-    /// Uses line 0 to distinguish from real spans (which are 1-indexed).
-    /// This is useful when converting `Value` to `Expr` for deserialization.
-    /// Check with [`is_synthetic()`](Self::is_synthetic).
-    #[must_use]
-    pub fn synthetic() -> Self {
-        Self {
-            start: Position { line: 0, col: 0 },
-            end: Position { line: 0, col: 0 },
-            start_offset: 0,
-            end_offset: 0,
-        }
-    }
-
-    /// Returns `true` if this is a synthetic span (no source position).
-    ///
-    /// Synthetic spans are created by [`Span::synthetic()`] for values
-    /// converted from `Value` to AST without original source positions.
-    /// They use line 0 to distinguish from real spans (which are 1-indexed).
-    #[must_use]
-    pub fn is_synthetic(&self) -> bool {
-        self.start.line == 0
-    }
-
-    /// Slice the given source text using this span's byte offsets.
-    ///
-    /// # Panics
-    /// Panics if the byte offsets are out of bounds for the source.
-    #[must_use]
-    pub fn slice<'a>(&self, source: &'a str) -> &'a str {
-        &source[self.start_offset..self.end_offset]
-    }
-}
-
-impl fmt::Display for Span {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Span { start, end, .. } = self;
-        if start == end {
-            write!(f, "{start}")
-        } else {
-            write!(f, "{start}-{end}")
-        }
-    }
-}
-
 #[cfg(feature = "std")]
 impl core::error::Error for SpannedError {}
 
@@ -478,6 +387,63 @@ impl From<io::Error> for Error {
 impl From<SpannedError> for Error {
     fn from(e: SpannedError) -> Self {
         e.code
+    }
+}
+
+/// Convert a [`ValidationError`] to a [`SpannedError`].
+///
+/// The span is taken from the [`ValidationError`] if present, otherwise a synthetic span is used.
+impl From<ValidationError> for SpannedError {
+    fn from(e: ValidationError) -> Self {
+        let span = e.span.clone().unwrap_or_else(Span::synthetic);
+
+        // Convert ValidationErrorKind to Error
+        let code = match e.kind {
+            ValidationErrorKind::TypeMismatch { expected, found } => {
+                Error::InvalidValueForType { expected, found }
+            }
+            ValidationErrorKind::MissingField { field, outer } => {
+                Error::MissingStructField { field, outer }
+            }
+            ValidationErrorKind::UnknownField {
+                field,
+                expected,
+                outer,
+            } => Error::NoSuchStructField {
+                expected,
+                found: field,
+                outer,
+            },
+            ValidationErrorKind::UnknownVariant {
+                variant,
+                expected,
+                outer,
+            } => Error::NoSuchEnumVariant {
+                expected,
+                found: variant,
+                outer,
+            },
+            ValidationErrorKind::DuplicateField { field, outer } => {
+                Error::DuplicateStructField { field, outer }
+            }
+            ValidationErrorKind::LengthMismatch {
+                expected,
+                found,
+                context,
+            } => Error::ExpectedDifferentLength {
+                expected: if let Some(ctx) = context {
+                    alloc::format!("{ctx} with {expected} elements")
+                } else {
+                    alloc::format!("{expected} elements")
+                },
+                found,
+            },
+            ValidationErrorKind::IntegerOutOfBounds { value, target_type } => {
+                Error::IntegerOutOfBounds { value, target_type }
+            }
+        };
+
+        Self { code, span }
     }
 }
 
@@ -532,7 +498,9 @@ impl fmt::Display for Identifier<'_> {
 mod tests {
     use alloc::string::String;
 
-    use super::{Error, Position, Span, SpannedError};
+    use super::{
+        Error, PathSegment, Position, Span, SpannedError, ValidationError, ValidationErrorKind,
+    };
 
     #[test]
     fn error_messages() {
@@ -613,5 +581,63 @@ mod tests {
             }),
             Error::Eof
         );
+    }
+
+    #[test]
+    fn test_ron_error_reexports() {
+        // Verify all types from ron-error are accessible
+        let _pos = Position { line: 1, col: 1 };
+        let span = Span::synthetic();
+        assert!(span.is_synthetic());
+
+        let _seg = PathSegment::Field("test".into());
+
+        let kind = ValidationErrorKind::TypeMismatch {
+            expected: "String".into(),
+            found: "i32".into(),
+        };
+        let _err = ValidationError::new(kind);
+    }
+
+    #[test]
+    fn test_validation_error_to_spanned_error_conversion() {
+        let span = Span {
+            start: Position { line: 3, col: 15 },
+            end: Position { line: 3, col: 20 },
+            start_offset: 50,
+            end_offset: 55,
+        };
+
+        let validation_err = ValidationError::with_span(
+            ValidationErrorKind::MissingField {
+                field: "name".into(),
+                outer: Some("Config".into()),
+            },
+            span.clone(),
+        );
+
+        let spanned: SpannedError = validation_err.into();
+
+        // Verify span is preserved
+        assert_eq!(spanned.span, span);
+
+        // Verify error kind is converted correctly
+        match spanned.code {
+            Error::MissingStructField { field, outer } => {
+                assert_eq!(field.as_ref(), "name");
+                assert_eq!(outer.as_ref().map(|s| s.as_ref()), Some("Config"));
+            }
+            _ => panic!("Expected MissingStructField error"),
+        }
+    }
+
+    #[test]
+    fn test_validation_error_without_span_uses_synthetic() {
+        let validation_err = ValidationError::type_mismatch("bool", "string");
+
+        let spanned: SpannedError = validation_err.into();
+
+        // Verify synthetic span is used
+        assert!(spanned.span.is_synthetic());
     }
 }

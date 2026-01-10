@@ -1,48 +1,19 @@
 //! Unified error type for schema operations.
 //!
-//! Uses a context path approach instead of nested boxing for efficient
-//! error tracking and readable error messages.
+//! This module provides error types for schema operations:
+//! - [`ValidationError`], [`ValidationErrorKind`], [`PathSegment`] - Re-exported from `ron-error`
+//! - [`StorageError`] - Errors related to schema file I/O
+//! - [`SchemaError`] - Combined error type for all schema operations
 
 use std::fmt;
 use std::io;
 
-/// A segment in the error context path.
-///
-/// These segments describe the location within a data structure
-/// where an error occurred.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PathSegment {
-    /// Error occurred in a struct field.
-    Field(String),
-    /// Error occurred at a sequence/tuple element index.
-    Element(usize),
-    /// Error occurred in a map key.
-    MapKey,
-    /// Error occurred in a map value (includes key for context).
-    MapValue(String),
-    /// Error occurred in an enum variant.
-    Variant(String),
-    /// Error occurred in a TypeRef resolution.
-    TypeRef(String),
-}
+// Re-export validation error types from ron-error
+pub use ron_error::{PathSegment, Position, Span, ValidationError, ValidationErrorKind};
 
-impl fmt::Display for PathSegment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PathSegment::Field(name) => write!(f, "field '{}'", name),
-            PathSegment::Element(idx) => write!(f, "element {}", idx),
-            PathSegment::MapKey => write!(f, "map key"),
-            PathSegment::MapValue(key) => write!(f, "map value for '{}'", key),
-            PathSegment::Variant(name) => write!(f, "variant '{}'", name),
-            PathSegment::TypeRef(path) => write!(f, "type '{}'", path),
-        }
-    }
-}
-
-/// The specific kind of schema error that occurred.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SchemaErrorKind {
-    // Storage errors
+/// Errors related to schema storage operations.
+#[derive(Debug, Clone)]
+pub enum StorageError {
     /// IO error during file operations.
     Io(String),
     /// RON parsing error.
@@ -51,182 +22,161 @@ pub enum SchemaErrorKind {
     NoSchemaDir,
     /// Schema file not found for the given type.
     SchemaNotFound(String),
-
-    // Validation errors
-    /// Value type doesn't match expected schema type.
-    TypeMismatch { expected: String, actual: String },
-    /// Required field is missing from struct.
-    MissingField(String),
-    /// Field is not defined in schema.
-    UnknownField(String),
-    /// Enum variant is not defined in schema.
-    UnknownVariant(String),
-    /// Tuple/sequence has wrong number of elements.
-    TupleLengthMismatch { expected: usize, actual: usize },
 }
 
-impl fmt::Display for SchemaErrorKind {
+impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SchemaErrorKind::Io(msg) => write!(f, "IO error: {}", msg),
-            SchemaErrorKind::Parse(msg) => write!(f, "parse error: {}", msg),
-            SchemaErrorKind::NoSchemaDir => write!(f, "could not determine schema directory"),
-            SchemaErrorKind::SchemaNotFound(ty) => write!(f, "schema not found for type: {}", ty),
-            SchemaErrorKind::TypeMismatch { expected, actual } => {
-                write!(f, "type mismatch: expected {}, got {}", expected, actual)
-            }
-            SchemaErrorKind::MissingField(field) => write!(f, "missing required field: {}", field),
-            SchemaErrorKind::UnknownField(field) => write!(f, "unknown field: {}", field),
-            SchemaErrorKind::UnknownVariant(variant) => {
-                write!(f, "unknown enum variant: {}", variant)
-            }
-            SchemaErrorKind::TupleLengthMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "tuple length mismatch: expected {} elements, got {}",
-                    expected, actual
-                )
-            }
+            StorageError::Io(msg) => write!(f, "IO error: {}", msg),
+            StorageError::Parse(msg) => write!(f, "parse error: {}", msg),
+            StorageError::NoSchemaDir => write!(f, "could not determine schema directory"),
+            StorageError::SchemaNotFound(ty) => write!(f, "schema not found for type: {}", ty),
         }
     }
 }
 
-/// Errors that can occur during schema operations (storage, validation, etc.).
+impl std::error::Error for StorageError {}
+
+/// Errors that can occur during schema operations.
 ///
-/// Uses a context path to track error location within nested structures,
-/// avoiding deep allocation chains from nested boxing.
+/// This combines storage errors (file I/O) and validation errors
+/// into a single error type for convenience.
 #[derive(Debug, Clone)]
-pub struct SchemaError {
-    /// The specific error that occurred.
-    pub kind: SchemaErrorKind,
-    /// Path segments describing where in the structure the error occurred.
-    /// Empty for top-level errors.
-    pub path: Vec<PathSegment>,
+pub enum SchemaError {
+    /// Storage-related error (file I/O, parsing schema files).
+    Storage(StorageError),
+    /// Validation error (type mismatches, missing fields, etc.).
+    Validation(ValidationError),
 }
 
 impl SchemaError {
-    /// Create a new error with no context path.
-    pub fn new(kind: SchemaErrorKind) -> Self {
-        Self {
-            kind,
-            path: Vec::new(),
-        }
+    /// Create a new storage error.
+    pub fn storage(err: StorageError) -> Self {
+        SchemaError::Storage(err)
     }
 
-    /// Add a context segment to this error's path.
-    ///
-    /// Segments are prepended so the path reads from outermost to innermost.
-    pub fn in_context(mut self, segment: PathSegment) -> Self {
-        self.path.insert(0, segment);
-        self
-    }
-
-    /// Add a field context to this error.
-    pub fn in_field(self, name: impl Into<String>) -> Self {
-        self.in_context(PathSegment::Field(name.into()))
-    }
-
-    /// Add an element context to this error.
-    pub fn in_element(self, index: usize) -> Self {
-        self.in_context(PathSegment::Element(index))
-    }
-
-    /// Add a map key context to this error.
-    pub fn in_map_key(self) -> Self {
-        self.in_context(PathSegment::MapKey)
-    }
-
-    /// Add a map value context to this error.
-    pub fn in_map_value(self, key: impl Into<String>) -> Self {
-        self.in_context(PathSegment::MapValue(key.into()))
-    }
-
-    /// Add a variant context to this error.
-    pub fn in_variant(self, name: impl Into<String>) -> Self {
-        self.in_context(PathSegment::Variant(name.into()))
-    }
-
-    /// Add a type ref context to this error.
-    pub fn in_type_ref(self, type_path: impl Into<String>) -> Self {
-        self.in_context(PathSegment::TypeRef(type_path.into()))
-    }
-
-    /// Get the innermost path segment, if any.
-    pub fn innermost_segment(&self) -> Option<&PathSegment> {
-        self.path.last()
-    }
-
-    /// Get the outermost path segment, if any.
-    pub fn outermost_segment(&self) -> Option<&PathSegment> {
-        self.path.first()
+    /// Create a new validation error.
+    pub fn validation(err: ValidationError) -> Self {
+        SchemaError::Validation(err)
     }
 
     /// Check if this is a storage-related error.
     pub fn is_storage_error(&self) -> bool {
-        matches!(
-            self.kind,
-            SchemaErrorKind::Io(_)
-                | SchemaErrorKind::Parse(_)
-                | SchemaErrorKind::NoSchemaDir
-                | SchemaErrorKind::SchemaNotFound(_)
-        )
+        matches!(self, SchemaError::Storage(_))
     }
 
     /// Check if this is a validation error.
     pub fn is_validation_error(&self) -> bool {
-        !self.is_storage_error()
+        matches!(self, SchemaError::Validation(_))
     }
 
-    // Convenience constructors for common errors
+    // =========================================================================
+    // Convenience constructors for storage errors
+    // =========================================================================
+
+    /// Create a schema not found error.
+    pub fn schema_not_found(type_path: impl Into<String>) -> Self {
+        SchemaError::Storage(StorageError::SchemaNotFound(type_path.into()))
+    }
+
+    /// Create a no schema dir error.
+    pub fn no_schema_dir() -> Self {
+        SchemaError::Storage(StorageError::NoSchemaDir)
+    }
+
+    // =========================================================================
+    // Convenience constructors delegating to ValidationError
+    // =========================================================================
 
     /// Create a type mismatch error.
     pub fn type_mismatch(expected: impl Into<String>, actual: impl Into<String>) -> Self {
-        Self::new(SchemaErrorKind::TypeMismatch {
-            expected: expected.into(),
-            actual: actual.into(),
-        })
+        SchemaError::Validation(ValidationError::type_mismatch(expected, actual))
     }
 
     /// Create a missing field error.
     pub fn missing_field(field: impl Into<String>) -> Self {
-        Self::new(SchemaErrorKind::MissingField(field.into()))
+        SchemaError::Validation(ValidationError::missing_field(field.into()))
     }
 
     /// Create an unknown field error.
     pub fn unknown_field(field: impl Into<String>) -> Self {
-        Self::new(SchemaErrorKind::UnknownField(field.into()))
+        SchemaError::Validation(ValidationError::unknown_field(field.into(), &[]))
     }
 
     /// Create an unknown variant error.
     pub fn unknown_variant(variant: impl Into<String>) -> Self {
-        Self::new(SchemaErrorKind::UnknownVariant(variant.into()))
+        SchemaError::Validation(ValidationError::unknown_variant(variant.into(), &[]))
     }
 
     /// Create a tuple length mismatch error.
     pub fn tuple_length_mismatch(expected: usize, actual: usize) -> Self {
-        Self::new(SchemaErrorKind::TupleLengthMismatch { expected, actual })
+        SchemaError::Validation(ValidationError::length_mismatch(expected, actual))
     }
 
-    /// Create a schema not found error.
-    pub fn schema_not_found(type_path: impl Into<String>) -> Self {
-        Self::new(SchemaErrorKind::SchemaNotFound(type_path.into()))
+    // =========================================================================
+    // Context builders - delegate to inner ValidationError
+    // =========================================================================
+
+    /// Add a field context to this error's path.
+    #[must_use]
+    pub fn in_field(self, name: impl Into<String>) -> Self {
+        match self {
+            SchemaError::Validation(e) => SchemaError::Validation(e.in_field(name)),
+            other => other,
+        }
+    }
+
+    /// Add an element context to this error's path.
+    #[must_use]
+    pub fn in_element(self, index: usize) -> Self {
+        match self {
+            SchemaError::Validation(e) => SchemaError::Validation(e.in_element(index)),
+            other => other,
+        }
+    }
+
+    /// Add a map key context to this error's path.
+    #[must_use]
+    pub fn in_map_key(self) -> Self {
+        match self {
+            SchemaError::Validation(e) => SchemaError::Validation(e.in_map_key()),
+            other => other,
+        }
+    }
+
+    /// Add a map value context to this error's path.
+    #[must_use]
+    pub fn in_map_value(self, key: impl Into<String>) -> Self {
+        match self {
+            SchemaError::Validation(e) => SchemaError::Validation(e.in_map_value(key)),
+            other => other,
+        }
+    }
+
+    /// Add a variant context to this error's path.
+    #[must_use]
+    pub fn in_variant(self, name: impl Into<String>) -> Self {
+        match self {
+            SchemaError::Validation(e) => SchemaError::Validation(e.in_variant(name)),
+            other => other,
+        }
+    }
+
+    /// Add a type ref context to this error's path.
+    #[must_use]
+    pub fn in_type_ref(self, type_path: impl Into<String>) -> Self {
+        match self {
+            SchemaError::Validation(e) => SchemaError::Validation(e.in_type_ref(type_path)),
+            other => other,
+        }
     }
 }
 
 impl fmt::Display for SchemaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.path.is_empty() {
-            write!(f, "{}", self.kind)
-        } else {
-            // Format as: "in field 'x' -> element 0: type mismatch..."
-            for (i, segment) in self.path.iter().enumerate() {
-                if i == 0 {
-                    write!(f, "in {}", segment)?;
-                } else {
-                    write!(f, " -> {}", segment)?;
-                }
-            }
-            write!(f, ": {}", self.kind)
+        match self {
+            SchemaError::Storage(e) => write!(f, "{}", e),
+            SchemaError::Validation(e) => write!(f, "{}", e),
         }
     }
 }
@@ -235,24 +185,39 @@ impl std::error::Error for SchemaError {}
 
 impl From<io::Error> for SchemaError {
     fn from(e: io::Error) -> Self {
-        Self::new(SchemaErrorKind::Io(e.to_string()))
+        SchemaError::Storage(StorageError::Io(e.to_string()))
     }
 }
 
 impl From<ron2::SpannedError> for SchemaError {
     fn from(e: ron2::SpannedError) -> Self {
-        Self::new(SchemaErrorKind::Parse(e.to_string()))
+        SchemaError::Storage(StorageError::Parse(e.to_string()))
     }
 }
 
 impl From<ron2::Error> for SchemaError {
     fn from(e: ron2::Error) -> Self {
-        Self::new(SchemaErrorKind::Parse(e.to_string()))
+        SchemaError::Storage(StorageError::Parse(e.to_string()))
+    }
+}
+
+impl From<ValidationError> for SchemaError {
+    fn from(e: ValidationError) -> Self {
+        SchemaError::Validation(e)
+    }
+}
+
+impl From<StorageError> for SchemaError {
+    fn from(e: StorageError) -> Self {
+        SchemaError::Storage(e)
     }
 }
 
 /// Result type for schema operations.
 pub type Result<T> = std::result::Result<T, SchemaError>;
+
+/// Result type for validation-only operations.
+pub type ValidationResult<T> = std::result::Result<T, ValidationError>;
 
 #[cfg(test)]
 mod tests {
@@ -261,7 +226,7 @@ mod tests {
     #[test]
     fn test_error_display_no_path() {
         let err = SchemaError::type_mismatch("String", "Bool");
-        assert_eq!(err.to_string(), "type mismatch: expected String, got Bool");
+        assert_eq!(err.to_string(), "expected String but found Bool");
     }
 
     #[test]
@@ -271,7 +236,7 @@ mod tests {
             .in_field("items");
         assert_eq!(
             err.to_string(),
-            "in field 'items' -> element 0: type mismatch: expected i32, got String"
+            "in field 'items' -> element 0: expected i32 but found String"
         );
     }
 
@@ -283,7 +248,7 @@ mod tests {
             .in_type_ref("my::Type");
         assert_eq!(
             err.to_string(),
-            "in type 'my::Type' -> field 'data' -> variant 'Some': missing required field: name"
+            "in type 'my::Type' -> field 'data' -> variant 'Some': missing required field `name`"
         );
     }
 
@@ -293,19 +258,14 @@ mod tests {
             .in_map_value("key1")
             .in_field("config");
 
-        assert_eq!(
-            err.outermost_segment(),
-            Some(&PathSegment::Field("config".to_string()))
-        );
-        assert_eq!(
-            err.innermost_segment(),
-            Some(&PathSegment::MapValue("key1".to_string()))
-        );
+        // Verify it's a validation error
+        assert!(err.is_validation_error());
+        assert!(!err.is_storage_error());
     }
 
     #[test]
     fn test_error_categories() {
-        assert!(SchemaError::new(SchemaErrorKind::NoSchemaDir).is_storage_error());
+        assert!(SchemaError::no_schema_dir().is_storage_error());
         assert!(SchemaError::schema_not_found("Foo").is_storage_error());
         assert!(SchemaError::type_mismatch("a", "b").is_validation_error());
         assert!(SchemaError::missing_field("x").is_validation_error());
