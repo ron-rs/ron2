@@ -38,6 +38,7 @@ mod convert;
 mod fmt;
 mod parse;
 mod ser;
+mod unescape;
 
 pub use convert::{expr_to_value, to_value, value_to_expr};
 pub use fmt::{FormatConfig, format_document};

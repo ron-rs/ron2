@@ -3,18 +3,20 @@
 //! This module provides parsing of RON source into a full AST that preserves
 //! all trivia (whitespace and comments) for round-trip editing.
 
-use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 use core::iter::Peekable;
 
 use crate::ast::{
-    AnonStructExpr, Attribute, AttributeContent, BoolExpr, ByteExpr, BytesExpr, BytesKind,
-    CharExpr, Comment, CommentKind, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr,
-    NumberExpr, NumberKind, OptionExpr, OptionValue, SeqExpr, SeqItem, StringExpr, StringKind,
-    StructBody, StructExpr, StructField, Trivia, TupleBody, TupleElement, TupleExpr, UnitExpr,
+    AnonStructExpr, Attribute, AttributeContent, BoolExpr, ByteExpr, BytesExpr, CharExpr, Comment,
+    CommentKind, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr, NumberExpr, NumberKind,
+    OptionExpr, OptionValue, SeqExpr, SeqItem, StringExpr, StructBody, StructExpr, StructField,
+    Trivia, TupleBody, TupleElement, TupleExpr, UnitExpr,
 };
-use crate::error::{Error, Position, Result, Span, SpannedError, SpannedResult};
+use crate::error::{Error, Position, Span, SpannedError, SpannedResult};
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind};
+
+use super::unescape;
 
 /// Parse RON source into an AST document.
 ///
@@ -1287,7 +1289,7 @@ impl<'a> AstParser<'a> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::String);
 
-        let (value, kind) = Self::decode_string(tok.text).map_err(|(e, byte_offset)| {
+        let (value, kind) = unescape::decode_string(tok.text).map_err(|(e, byte_offset)| {
             // Compute the error position within the source
             // byte_offset is relative to the token text start
             let error_start_offset = tok.span.start_offset + byte_offset;
@@ -1323,120 +1325,13 @@ impl<'a> AstParser<'a> {
         }))
     }
 
-    /// Decode a string literal.
-    /// Returns `(value, kind)` on success, or `(Error, byte_offset_in_raw)` on failure.
-    fn decode_string(raw: &str) -> core::result::Result<(String, StringKind), (Error, usize)> {
-        if raw.starts_with('r') {
-            // Raw string - no escapes to process
-            let hash_count = raw.chars().skip(1).take_while(|&c| c == '#').count();
-            let delim_len = 1 + hash_count + 1; // r + hashes + quote
-            let content = &raw[delim_len..=raw.len() - delim_len];
-            // Hash count is bounded by string length, which fits in u8 for practical use
-            #[allow(clippy::cast_possible_truncation)]
-            let hash_count_u8 = hash_count as u8;
-            Ok((
-                String::from(content),
-                StringKind::Raw {
-                    hash_count: hash_count_u8,
-                },
-            ))
-        } else {
-            // Regular string - need to process escapes
-            let content = &raw[1..raw.len() - 1]; // Strip quotes
-            let value = Self::unescape_string(content).map_err(|(e, offset)| (e, offset + 1))?; // +1 for opening quote
-            Ok((value, StringKind::Regular))
-        }
-    }
-
-    /// Process escape sequences in a string.
-    /// Returns the unescaped string, or `(Error, byte_offset)` on failure.
-    fn unescape_string(s: &str) -> core::result::Result<String, (Error, usize)> {
-        let mut result = String::new();
-        let mut byte_offset = 0usize;
-        let mut chars = s.chars().peekable();
-
-        while let Some(c) = chars.next() {
-            let char_start = byte_offset;
-            byte_offset += c.len_utf8();
-
-            if c == '\\' {
-                match chars.next() {
-                    Some('n') => {
-                        result.push('\n');
-                        byte_offset += 1;
-                    }
-                    Some('r') => {
-                        result.push('\r');
-                        byte_offset += 1;
-                    }
-                    Some('t') => {
-                        result.push('\t');
-                        byte_offset += 1;
-                    }
-                    Some('\\') => {
-                        result.push('\\');
-                        byte_offset += 1;
-                    }
-                    Some('0') => {
-                        result.push('\0');
-                        byte_offset += 1;
-                    }
-                    Some('"') => {
-                        result.push('"');
-                        byte_offset += 1;
-                    }
-                    Some('\'') => {
-                        result.push('\'');
-                        byte_offset += 1;
-                    }
-                    Some('x') => {
-                        byte_offset += 1;
-                        let hex: String = chars.by_ref().take(2).collect();
-                        byte_offset += hex.len();
-                        let val = u8::from_str_radix(&hex, 16).map_err(|_| {
-                            (Error::InvalidEscape("invalid hex escape"), char_start)
-                        })?;
-                        result.push(val as char);
-                    }
-                    Some('u') => {
-                        byte_offset += 1;
-                        if chars.next() != Some('{') {
-                            return Err((Error::InvalidEscape("expected { after \\u"), char_start));
-                        }
-                        byte_offset += 1;
-                        let hex: String = chars.by_ref().take_while(|&c| c != '}').collect();
-                        byte_offset += hex.len() + 1; // +1 for closing }
-                        let val = u32::from_str_radix(&hex, 16).map_err(|_| {
-                            (Error::InvalidEscape("invalid unicode escape"), char_start)
-                        })?;
-                        let c = char::from_u32(val).ok_or((
-                            Error::InvalidEscape("invalid unicode codepoint"),
-                            char_start,
-                        ))?;
-                        result.push(c);
-                    }
-                    Some(_) => {
-                        return Err((Error::InvalidEscape("unknown escape sequence"), char_start));
-                    }
-                    None => {
-                        return Err((Error::InvalidEscape("unexpected end of string"), char_start));
-                    }
-                }
-            } else {
-                result.push(c);
-            }
-        }
-
-        Ok(result)
-    }
-
     /// Parse a byte string literal.
     fn parse_bytes(&mut self) -> SpannedResult<Expr<'a>> {
         let tok = self.next_token();
         debug_assert_eq!(tok.kind, TokenKind::ByteString);
 
         let (value, kind) =
-            Self::decode_byte_string(tok.text).map_err(|e| Self::error(tok.span.clone(), e))?;
+            unescape::decode_byte_string(tok.text).map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::Bytes(BytesExpr {
             span: tok.span,
@@ -1444,65 +1339,6 @@ impl<'a> AstParser<'a> {
             value,
             kind,
         }))
-    }
-
-    /// Decode a byte string literal.
-    fn decode_byte_string(raw: &str) -> Result<(Vec<u8>, BytesKind)> {
-        if raw.starts_with("br") {
-            // Raw byte string: br"..." or br#"..."#
-            let hash_count = raw.chars().skip(2).take_while(|&c| c == '#').count();
-            let start = 2 + hash_count + 1; // br + hashes + opening quote
-            let end = raw.len() - 1 - hash_count; // closing quote + hashes
-            let content = &raw[start..end];
-            // Hash count is bounded by string length, which fits in u8 for practical use
-            #[allow(clippy::cast_possible_truncation)]
-            let hash_count_u8 = hash_count as u8;
-            Ok((
-                content.as_bytes().to_vec(),
-                BytesKind::Raw {
-                    hash_count: hash_count_u8,
-                },
-            ))
-        } else {
-            // Regular byte string b"..."
-            let content = &raw[2..raw.len() - 1]; // Strip b" and "
-            let value = Self::unescape_bytes(content)?;
-            Ok((value, BytesKind::Regular))
-        }
-    }
-
-    /// Process escape sequences in a byte string.
-    fn unescape_bytes(s: &str) -> Result<Vec<u8>> {
-        let mut result = Vec::new();
-        let mut chars = s.chars().peekable();
-
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                match chars.next() {
-                    Some('n') => result.push(b'\n'),
-                    Some('r') => result.push(b'\r'),
-                    Some('t') => result.push(b'\t'),
-                    Some('\\') => result.push(b'\\'),
-                    Some('0') => result.push(0),
-                    Some('"') => result.push(b'"'),
-                    Some('\'') => result.push(b'\''),
-                    Some('x') => {
-                        let hex: String = chars.by_ref().take(2).collect();
-                        let val = u8::from_str_radix(&hex, 16)
-                            .map_err(|_| Error::InvalidEscape("invalid hex escape"))?;
-                        result.push(val);
-                    }
-                    Some(_) => return Err(Error::InvalidEscape("unknown escape sequence")),
-                    None => return Err(Error::InvalidEscape("unexpected end of string")),
-                }
-            } else if c.is_ascii() {
-                result.push(c as u8);
-            } else {
-                return Err(Error::InvalidEscape("non-ASCII character in byte string"));
-            }
-        }
-
-        Ok(result)
     }
 
     /// Parse a character literal.
@@ -1514,7 +1350,7 @@ impl<'a> AstParser<'a> {
         if tok.text.starts_with("b'") {
             let content = &tok.text[2..tok.text.len() - 1];
             let value =
-                Self::unescape_byte_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
+                unescape::unescape_byte_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
             return Ok(Expr::Byte(ByteExpr {
                 span: tok.span,
                 raw: Cow::Borrowed(tok.text),
@@ -1524,7 +1360,7 @@ impl<'a> AstParser<'a> {
 
         // Regular char literal 'x'
         let content = &tok.text[1..tok.text.len() - 1];
-        let value = Self::unescape_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
+        let value = unescape::unescape_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::Char(CharExpr {
             span: tok.span,
@@ -1532,74 +1368,13 @@ impl<'a> AstParser<'a> {
             value,
         }))
     }
-
-    /// Unescape a single character.
-    fn unescape_char(s: &str) -> Result<char> {
-        let mut chars = s.chars();
-        let c = chars.next().ok_or(Error::ExpectedChar)?;
-
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => Ok('\n'),
-                Some('r') => Ok('\r'),
-                Some('t') => Ok('\t'),
-                Some('\\') => Ok('\\'),
-                Some('0') => Ok('\0'),
-                Some('\'') => Ok('\''),
-                Some('x') => {
-                    let hex: String = chars.take(2).collect();
-                    let val = u8::from_str_radix(&hex, 16)
-                        .map_err(|_| Error::InvalidEscape("invalid hex escape"))?;
-                    Ok(val as char)
-                }
-                Some('u') => {
-                    if chars.next() != Some('{') {
-                        return Err(Error::InvalidEscape("expected { after \\u"));
-                    }
-                    let hex: String = chars.take_while(|&c| c != '}').collect();
-                    let val = u32::from_str_radix(&hex, 16)
-                        .map_err(|_| Error::InvalidEscape("invalid unicode escape"))?;
-                    char::from_u32(val).ok_or(Error::InvalidEscape("invalid unicode codepoint"))
-                }
-                _ => Err(Error::InvalidEscape("unknown escape sequence")),
-            }
-        } else {
-            Ok(c)
-        }
-    }
-
-    /// Unescape a byte character.
-    fn unescape_byte_char(s: &str) -> Result<u8> {
-        let mut chars = s.chars();
-        let c = chars.next().ok_or(Error::ExpectedByteLiteral)?;
-
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => Ok(b'\n'),
-                Some('r') => Ok(b'\r'),
-                Some('t') => Ok(b'\t'),
-                Some('\\') => Ok(b'\\'),
-                Some('0') => Ok(0),
-                Some('\'') => Ok(b'\''),
-                Some('x') => {
-                    let hex: String = chars.take(2).collect();
-                    u8::from_str_radix(&hex, 16)
-                        .map_err(|_| Error::InvalidEscape("invalid hex escape"))
-                }
-                _ => Err(Error::InvalidEscape("unknown escape sequence")),
-            }
-        } else if c.is_ascii() {
-            Ok(c as u8)
-        } else {
-            Err(Error::InvalidEscape("non-ASCII character in byte literal"))
-        }
-    }
 }
 
 #[cfg(test)]
 #[allow(clippy::panic)]
 mod tests {
     use super::*;
+    use crate::ast::StringKind;
 
     #[test]
     fn parse_empty_document() {

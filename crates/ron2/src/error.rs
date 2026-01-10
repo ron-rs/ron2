@@ -87,6 +87,13 @@ pub enum Error {
     InvalidEscape(&'static str),
 
     /// Integer out of bounds with context about the value and target type.
+    ///
+    /// Note: Consider using [`ValidationErrorKind::IntegerOutOfBounds`] from `ron-error`
+    /// and converting via [`Error::from_validation_kind`] for consistency.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use ValidationErrorKind::IntegerOutOfBounds and Error::from_validation_kind() instead"
+    )]
     IntegerOutOfBounds {
         /// The string representation of the integer that was out of bounds.
         value: Cow<'static, str>,
@@ -108,6 +115,14 @@ pub enum Error {
     Utf8Error(Utf8Error),
     TrailingCharacters,
 
+    /// Type mismatch error.
+    ///
+    /// Note: Consider using [`ValidationErrorKind::TypeMismatch`] from `ron-error`
+    /// and converting via [`Error::from_validation_kind`] for consistency.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use ValidationErrorKind::TypeMismatch and Error::from_validation_kind() instead"
+    )]
     InvalidValueForType {
         expected: String,
         found: String,
@@ -116,20 +131,52 @@ pub enum Error {
         expected: String,
         found: usize,
     },
+    /// Unknown enum variant error.
+    ///
+    /// Note: Consider using [`ValidationErrorKind::UnknownVariant`] from `ron-error`
+    /// and converting via [`Error::from_validation_kind`] for consistency.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use ValidationErrorKind::UnknownVariant and Error::from_validation_kind() instead"
+    )]
     NoSuchEnumVariant {
         expected: &'static [&'static str],
         found: Cow<'static, str>,
         outer: Option<Cow<'static, str>>,
     },
+    /// Unknown struct field error.
+    ///
+    /// Note: Consider using [`ValidationErrorKind::UnknownField`] from `ron-error`
+    /// and converting via [`Error::from_validation_kind`] for consistency.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use ValidationErrorKind::UnknownField and Error::from_validation_kind() instead"
+    )]
     NoSuchStructField {
         expected: &'static [&'static str],
         found: Cow<'static, str>,
         outer: Option<Cow<'static, str>>,
     },
+    /// Missing struct field error.
+    ///
+    /// Note: Consider using [`ValidationErrorKind::MissingField`] from `ron-error`
+    /// and converting via [`Error::from_validation_kind`] for consistency.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use ValidationErrorKind::MissingField and Error::from_validation_kind() instead"
+    )]
     MissingStructField {
         field: Cow<'static, str>,
         outer: Option<Cow<'static, str>>,
     },
+    /// Duplicate struct field error.
+    ///
+    /// Note: Consider using [`ValidationErrorKind::DuplicateField`] from `ron-error`
+    /// and converting via [`Error::from_validation_kind`] for consistency.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use ValidationErrorKind::DuplicateField and Error::from_validation_kind() instead"
+    )]
     DuplicateStructField {
         field: Cow<'static, str>,
         outer: Option<Cow<'static, str>>,
@@ -179,7 +226,7 @@ impl fmt::Display for SpannedError {
 }
 
 impl fmt::Display for Error {
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Error::Fmt => f.write_str("Formatting RON failed"),
@@ -390,15 +437,29 @@ impl From<SpannedError> for Error {
     }
 }
 
-/// Convert a [`ValidationError`] to a [`SpannedError`].
-///
-/// The span is taken from the [`ValidationError`] if present, otherwise a synthetic span is used.
-impl From<ValidationError> for SpannedError {
-    fn from(e: ValidationError) -> Self {
-        let span = e.span.clone().unwrap_or_else(Span::synthetic);
-
-        // Convert ValidationErrorKind to Error
-        let code = match e.kind {
+impl Error {
+    /// Convert a [`ValidationErrorKind`] to an [`Error`].
+    ///
+    /// This is the canonical way to create validation-related errors.
+    /// The deprecated error variants (e.g., `IntegerOutOfBounds`, `InvalidValueForType`)
+    /// are mapped from their corresponding `ValidationErrorKind` variants.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ron2::error::Error;
+    /// use ron_error::ValidationErrorKind;
+    ///
+    /// let kind = ValidationErrorKind::TypeMismatch {
+    ///     expected: "i32".into(),
+    ///     found: "String".into(),
+    /// };
+    /// let error = Error::from_validation_kind(kind);
+    /// ```
+    #[must_use]
+    #[allow(deprecated)]
+    pub fn from_validation_kind(kind: ValidationErrorKind) -> Self {
+        match kind {
             ValidationErrorKind::TypeMismatch { expected, found } => {
                 Error::InvalidValueForType { expected, found }
             }
@@ -441,8 +502,17 @@ impl From<ValidationError> for SpannedError {
             ValidationErrorKind::IntegerOutOfBounds { value, target_type } => {
                 Error::IntegerOutOfBounds { value, target_type }
             }
-        };
+        }
+    }
+}
 
+/// Convert a [`ValidationError`] to a [`SpannedError`].
+///
+/// The span is taken from the [`ValidationError`] if present, otherwise a synthetic span is used.
+impl From<ValidationError> for SpannedError {
+    fn from(e: ValidationError) -> Self {
+        let span = e.span.clone().unwrap_or_else(Span::synthetic);
+        let code = Error::from_validation_kind(e.kind);
         Self { code, span }
     }
 }
@@ -495,6 +565,7 @@ impl fmt::Display for Identifier<'_> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use alloc::string::String;
 

@@ -1,3 +1,6 @@
+// Allow deprecated errors during transition period
+#![allow(deprecated)]
+
 //! Conversion between AST and Value.
 //!
 //! This module provides bidirectional conversion:

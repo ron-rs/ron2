@@ -96,305 +96,17 @@
 
 mod attr;
 mod de;
+mod schema_build;
+mod schema_codegen;
 mod ser;
+mod type_mapper;
+mod util;
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, GenericArgument, Ident, PathArguments, Type,
-};
+use syn::parse_macro_input;
 
-use attr::{extract_doc_comment, ContainerAttrs, FieldAttrs};
-
-// =============================================================================
-// Type mapping abstraction
-// =============================================================================
-//
-// These types allow sharing the logic for converting Rust types to TypeKind
-// between code generation (TokenStream2) and compile-time building (TypeKind).
-
-/// Primitive types that map directly to TypeKind variants.
-#[derive(Debug, Clone, Copy)]
-enum PrimitiveKind {
-    Bool,
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
-    F32,
-    F64,
-    Char,
-    String,
-}
-
-impl PrimitiveKind {
-    /// Try to parse a primitive kind from a type identifier.
-    fn from_ident(ident: &str) -> Option<Self> {
-        match ident {
-            "bool" => Some(Self::Bool),
-            "i8" => Some(Self::I8),
-            "i16" => Some(Self::I16),
-            "i32" => Some(Self::I32),
-            "i64" => Some(Self::I64),
-            "i128" => Some(Self::I128),
-            "u8" => Some(Self::U8),
-            "u16" => Some(Self::U16),
-            "u32" => Some(Self::U32),
-            "u64" => Some(Self::U64),
-            "u128" => Some(Self::U128),
-            "f32" => Some(Self::F32),
-            "f64" => Some(Self::F64),
-            "char" => Some(Self::Char),
-            "String" | "str" => Some(Self::String),
-            _ => None,
-        }
-    }
-
-    /// Returns the TypeKind variant name (e.g., "Bool", "I32", "String").
-    const fn variant_name(self) -> &'static str {
-        match self {
-            Self::Bool => "Bool",
-            Self::I8 => "I8",
-            Self::I16 => "I16",
-            Self::I32 => "I32",
-            Self::I64 => "I64",
-            Self::I128 => "I128",
-            Self::U8 => "U8",
-            Self::U16 => "U16",
-            Self::U32 => "U32",
-            Self::U64 => "U64",
-            Self::U128 => "U128",
-            Self::F32 => "F32",
-            Self::F64 => "F64",
-            Self::Char => "Char",
-            Self::String => "String",
-        }
-    }
-
-    /// Convert to the corresponding `ron_schema::TypeKind` value.
-    fn to_type_kind(self) -> ron_schema::TypeKind {
-        match self {
-            Self::Bool => ron_schema::TypeKind::Bool,
-            Self::I8 => ron_schema::TypeKind::I8,
-            Self::I16 => ron_schema::TypeKind::I16,
-            Self::I32 => ron_schema::TypeKind::I32,
-            Self::I64 => ron_schema::TypeKind::I64,
-            Self::I128 => ron_schema::TypeKind::I128,
-            Self::U8 => ron_schema::TypeKind::U8,
-            Self::U16 => ron_schema::TypeKind::U16,
-            Self::U32 => ron_schema::TypeKind::U32,
-            Self::U64 => ron_schema::TypeKind::U64,
-            Self::U128 => ron_schema::TypeKind::U128,
-            Self::F32 => ron_schema::TypeKind::F32,
-            Self::F64 => ron_schema::TypeKind::F64,
-            Self::Char => ron_schema::TypeKind::Char,
-            Self::String => ron_schema::TypeKind::String,
-        }
-    }
-}
-
-/// Trait for mapping Rust types to TypeKind representations.
-///
-/// This abstraction allows sharing the type analysis logic between:
-/// - Code generation (returns TokenStream2 that constructs TypeKind at runtime)
-/// - Compile-time building (returns TypeKind values directly)
-trait TypeKindMapper {
-    type Output;
-
-    fn unit(&self) -> Self::Output;
-    fn primitive(&self, kind: PrimitiveKind) -> Self::Output;
-    fn option(&self, inner: Self::Output) -> Self::Output;
-    fn list(&self, inner: Self::Output) -> Self::Output;
-    fn map(&self, key: Self::Output, value: Self::Output) -> Self::Output;
-    fn tuple(&self, elements: Vec<Self::Output>) -> Self::Output;
-    fn type_ref(&self, path: String) -> Self::Output;
-}
-
-/// Mapper that generates TokenStream2 for runtime TypeKind construction.
-struct TokenMapper;
-
-impl TypeKindMapper for TokenMapper {
-    type Output = TokenStream2;
-
-    fn unit(&self) -> Self::Output {
-        quote! { ::ron_schema::TypeKind::Unit }
-    }
-
-    fn primitive(&self, kind: PrimitiveKind) -> Self::Output {
-        let variant = syn::Ident::new(kind.variant_name(), proc_macro2::Span::call_site());
-        quote! { ::ron_schema::TypeKind::#variant }
-    }
-
-    fn option(&self, inner: Self::Output) -> Self::Output {
-        quote! { ::ron_schema::TypeKind::Option(Box::new(#inner)) }
-    }
-
-    fn list(&self, inner: Self::Output) -> Self::Output {
-        quote! { ::ron_schema::TypeKind::List(Box::new(#inner)) }
-    }
-
-    fn map(&self, key: Self::Output, value: Self::Output) -> Self::Output {
-        quote! {
-            ::ron_schema::TypeKind::Map {
-                key: Box::new(#key),
-                value: Box::new(#value),
-            }
-        }
-    }
-
-    fn tuple(&self, elements: Vec<Self::Output>) -> Self::Output {
-        quote! { ::ron_schema::TypeKind::Tuple(vec![#(#elements),*]) }
-    }
-
-    fn type_ref(&self, path: String) -> Self::Output {
-        quote! { ::ron_schema::TypeKind::TypeRef(#path.to_string()) }
-    }
-}
-
-/// Mapper that builds TypeKind values directly at compile time.
-struct ValueMapper;
-
-impl TypeKindMapper for ValueMapper {
-    type Output = ron_schema::TypeKind;
-
-    fn unit(&self) -> Self::Output {
-        ron_schema::TypeKind::Unit
-    }
-
-    fn primitive(&self, kind: PrimitiveKind) -> Self::Output {
-        kind.to_type_kind()
-    }
-
-    fn option(&self, inner: Self::Output) -> Self::Output {
-        ron_schema::TypeKind::Option(Box::new(inner))
-    }
-
-    fn list(&self, inner: Self::Output) -> Self::Output {
-        ron_schema::TypeKind::List(Box::new(inner))
-    }
-
-    fn map(&self, key: Self::Output, value: Self::Output) -> Self::Output {
-        ron_schema::TypeKind::Map {
-            key: Box::new(key),
-            value: Box::new(value),
-        }
-    }
-
-    fn tuple(&self, elements: Vec<Self::Output>) -> Self::Output {
-        ron_schema::TypeKind::Tuple(elements)
-    }
-
-    fn type_ref(&self, path: String) -> Self::Output {
-        ron_schema::TypeKind::TypeRef(path)
-    }
-}
-
-/// Map a Rust type to its TypeKind representation using the given mapper.
-fn map_type<M: TypeKindMapper>(ty: &Type, mapper: &M) -> M::Output {
-    match ty {
-        Type::Path(type_path) => {
-            let path = &type_path.path;
-
-            if let Some(segment) = path.segments.last() {
-                let ident_str = segment.ident.to_string();
-
-                // Check for primitives
-                if let Some(prim) = PrimitiveKind::from_ident(&ident_str) {
-                    return mapper.primitive(prim);
-                }
-
-                // Check for generic types (Option, Vec, HashMap, etc.)
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    let generic_args: Vec<_> = args
-                        .args
-                        .iter()
-                        .filter_map(|arg| {
-                            if let GenericArgument::Type(t) = arg {
-                                Some(t)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-
-                    match ident_str.as_str() {
-                        "Option" if generic_args.len() == 1 => {
-                            let inner = map_type(generic_args[0], mapper);
-                            return mapper.option(inner);
-                        }
-                        "Vec" | "VecDeque" | "HashSet" | "BTreeSet" | "LinkedList"
-                            if generic_args.len() == 1 =>
-                        {
-                            let inner = map_type(generic_args[0], mapper);
-                            return mapper.list(inner);
-                        }
-                        "HashMap" | "BTreeMap" if generic_args.len() == 2 => {
-                            let key = map_type(generic_args[0], mapper);
-                            let value = map_type(generic_args[1], mapper);
-                            return mapper.map(key, value);
-                        }
-                        "Box" if generic_args.len() == 1 => {
-                            // Box<T> is treated as just T for schema purposes
-                            return map_type(generic_args[0], mapper);
-                        }
-                        _ => {}
-                    }
-                }
-
-                // For any other type, generate a TypeRef with the full path
-                let type_path_str = path_to_string(path);
-                return mapper.type_ref(type_path_str);
-            }
-
-            // Fallback for invalid paths (shouldn't happen in practice)
-            mapper.type_ref(quote!(#ty).to_string())
-        }
-        Type::Tuple(tuple) => {
-            if tuple.elems.is_empty() {
-                return mapper.unit();
-            }
-
-            let elements: Vec<_> = tuple.elems.iter().map(|t| map_type(t, mapper)).collect();
-            mapper.tuple(elements)
-        }
-        Type::Reference(reference) => {
-            // For references, use the underlying type
-            map_type(&reference.elem, mapper)
-        }
-        Type::Array(array) => {
-            // Treat arrays as List for schema purposes
-            let inner = map_type(&array.elem, mapper);
-            mapper.list(inner)
-        }
-        Type::Slice(slice) => {
-            // Treat slices as List for schema purposes
-            let inner = map_type(&slice.elem, mapper);
-            mapper.list(inner)
-        }
-        _ => {
-            // For other types, generate a TypeRef with the type as-is
-            let type_str = quote!(#ty).to_string();
-            mapper.type_ref(type_str)
-        }
-    }
-}
-
-/// Convert a Rust type to TypeKind tokens (for code generation).
-fn type_to_type_kind(ty: &Type) -> TokenStream2 {
-    map_type(ty, &TokenMapper)
-}
-
-/// Convert a Rust type to a TypeKind value (for compile-time building).
-fn rust_type_to_type_kind(ty: &Type) -> ron_schema::TypeKind {
-    map_type(ty, &ValueMapper)
-}
+use attr::ContainerAttrs;
 
 /// Derive macro for generating RON schemas at compile time.
 ///
@@ -419,9 +131,33 @@ fn rust_type_to_type_kind(ty: &Type) -> ron_schema::TypeKind {
 /// - `RON_SCHEMA_GLOBAL=1` environment variable is set (schemas written to XDG data dir)
 #[proc_macro_derive(RonSchema, attributes(ron, ron_schema))]
 pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
+    let input = parse_macro_input!(input as syn::DeriveInput);
 
-    match impl_ron_schema(&input) {
+    // Extract container attributes
+    let container_attrs = match ContainerAttrs::from_ast(&input.attrs) {
+        Ok(attrs) => attrs,
+        Err(err) => return err.to_compile_error().into(),
+    };
+
+    // Compile-time schema generation
+    let schema_dir = std::env::var("RON_SCHEMA_DIR").ok();
+    let schema_global = std::env::var("RON_SCHEMA_GLOBAL")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    if schema_dir.is_some() || schema_global {
+        if let Some(schema) = schema_build::build_schema(&input, &container_attrs) {
+            // Ignore errors during compile-time schema writing - don't fail the build
+            let _ = schema_build::write_schema_at_compile_time(
+                &input.ident,
+                &schema,
+                schema_dir.as_deref(),
+            );
+        }
+    }
+
+    // Code generation
+    match schema_codegen::impl_ron_schema(&input, &container_attrs) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
@@ -446,7 +182,7 @@ pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_derive(ToRon, attributes(ron, ron_schema))]
 pub fn derive_to_ron(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
+    let input = parse_macro_input!(input as syn::DeriveInput);
 
     match ser::derive_to_ron(&input) {
         Ok(tokens) => tokens.into(),
@@ -472,7 +208,7 @@ pub fn derive_to_ron(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_derive(FromRon, attributes(ron, ron_schema))]
 pub fn derive_from_ron(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
+    let input = parse_macro_input!(input as syn::DeriveInput);
 
     match de::derive_from_ron(&input) {
         Ok(tokens) => tokens.into(),
@@ -502,10 +238,32 @@ pub fn derive_from_ron(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_derive(Ron, attributes(ron, ron_schema))]
 pub fn derive_ron(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
+    let input = parse_macro_input!(input as syn::DeriveInput);
+
+    // Extract container attributes
+    let container_attrs = match ContainerAttrs::from_ast(&input.attrs) {
+        Ok(attrs) => attrs,
+        Err(err) => return err.to_compile_error().into(),
+    };
+
+    // Compile-time schema generation
+    let schema_dir = std::env::var("RON_SCHEMA_DIR").ok();
+    let schema_global = std::env::var("RON_SCHEMA_GLOBAL")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    if schema_dir.is_some() || schema_global {
+        if let Some(schema) = schema_build::build_schema(&input, &container_attrs) {
+            let _ = schema_build::write_schema_at_compile_time(
+                &input.ident,
+                &schema,
+                schema_dir.as_deref(),
+            );
+        }
+    }
 
     // Combine all three derives
-    let schema_result = impl_ron_schema(&input);
+    let schema_result = schema_codegen::impl_ron_schema(&input, &container_attrs);
     let to_ron_result = ser::derive_to_ron(&input);
     let from_ron_result = de::derive_from_ron(&input);
 
@@ -522,552 +280,4 @@ pub fn derive_ron(input: TokenStream) -> TokenStream {
         (_, Err(e), _) => e.to_compile_error().into(),
         (_, _, Err(e)) => e.to_compile_error().into(),
     }
-}
-
-fn impl_ron_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
-    let name = &input.ident;
-    let type_name = name.to_string();
-
-    // Extract doc comment
-    let doc = extract_doc_comment(&input.attrs);
-
-    // Extract container attributes
-    let container_attrs = ContainerAttrs::from_ast(&input.attrs)?;
-
-    // ==========================================================================
-    // Compile-time schema generation
-    // ==========================================================================
-    // Check if compile-time schema generation is enabled via environment variables
-    let schema_dir = std::env::var("RON_SCHEMA_DIR").ok();
-    let schema_global = std::env::var("RON_SCHEMA_GLOBAL")
-        .map(|v| v == "1")
-        .unwrap_or(false);
-
-    if schema_dir.is_some() || schema_global {
-        if let Some(schema) = build_schema(input, &container_attrs) {
-            // Ignore errors during compile-time schema writing - don't fail the build
-            let _ = write_schema_at_compile_time(name, &schema, schema_dir.as_deref());
-        }
-    }
-
-    // ==========================================================================
-    // Code generation (as before)
-    // ==========================================================================
-
-    // Generate the TypeKind based on the data type
-    let type_kind_tokens = match &input.data {
-        Data::Struct(data_struct) => generate_struct_kind(&data_struct.fields, &container_attrs)?,
-        Data::Enum(data_enum) => generate_enum_kind(data_enum, &container_attrs)?,
-        Data::Union(_) => {
-            return Err(syn::Error::new_spanned(
-                input,
-                "RonSchema cannot be derived for unions",
-            ));
-        }
-    };
-
-    // Generate the schema construction code
-    let schema_tokens = if let Some(doc_str) = doc {
-        quote! {
-            ::ron_schema::Schema::with_doc(#doc_str, #type_kind_tokens)
-        }
-    } else {
-        quote! {
-            ::ron_schema::Schema::new(#type_kind_tokens)
-        }
-    };
-
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-
-    let expanded = quote! {
-        impl #impl_generics ::ron_schema::RonSchemaType for #name #ty_generics #where_clause {
-            fn type_kind() -> ::ron_schema::TypeKind {
-                #type_kind_tokens
-            }
-
-            fn schema() -> ::ron_schema::Schema {
-                #schema_tokens
-            }
-
-            fn type_path() -> Option<&'static str> {
-                Some(concat!(module_path!(), "::", #type_name))
-            }
-        }
-    };
-
-    Ok(expanded)
-}
-
-/// Generate TypeKind tokens for a struct's fields.
-fn generate_struct_kind(
-    fields: &Fields,
-    container_attrs: &ContainerAttrs,
-) -> syn::Result<TokenStream2> {
-    // Handle transparent structs - return the inner type's TypeKind
-    if container_attrs.transparent {
-        return generate_transparent_struct_kind(fields);
-    }
-
-    match fields {
-        Fields::Named(named) => {
-            let mut field_tokens: Vec<TokenStream2> = Vec::new();
-
-            for f in named.named.iter() {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-
-                // Skip fields marked with #[ron(skip)]
-                if attrs.skip {
-                    continue;
-                }
-
-                field_tokens.push(generate_field(f, &attrs, container_attrs)?);
-            }
-
-            Ok(quote! {
-                ::ron_schema::TypeKind::Struct {
-                    fields: vec![#(#field_tokens),*],
-                }
-            })
-        }
-        Fields::Unnamed(unnamed) => {
-            // Tuple struct -> TypeKind::Tuple
-            let type_tokens: Vec<TokenStream2> = unnamed
-                .unnamed
-                .iter()
-                .map(|f| type_to_type_kind(&f.ty))
-                .collect();
-
-            Ok(quote! {
-                ::ron_schema::TypeKind::Tuple(vec![#(#type_tokens),*])
-            })
-        }
-        Fields::Unit => {
-            // Unit struct -> empty struct
-            Ok(quote! {
-                ::ron_schema::TypeKind::Unit
-            })
-        }
-    }
-}
-
-/// Generate TypeKind tokens for a transparent struct.
-///
-/// Returns the inner type's TypeKind directly.
-fn generate_transparent_struct_kind(fields: &Fields) -> syn::Result<TokenStream2> {
-    match fields {
-        Fields::Named(named) => {
-            // Find the single non-skipped field
-            let mut active_fields = Vec::new();
-            for f in &named.named {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-                if !attrs.skip {
-                    active_fields.push(f);
-                }
-            }
-
-            if active_fields.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    &named.named,
-                    "#[ron(transparent)] requires exactly one non-skipped field",
-                ));
-            }
-
-            Ok(type_to_type_kind(&active_fields[0].ty))
-        }
-        Fields::Unnamed(unnamed) => {
-            if unnamed.unnamed.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    unnamed,
-                    "#[ron(transparent)] requires exactly one field for tuple structs",
-                ));
-            }
-
-            Ok(type_to_type_kind(&unnamed.unnamed[0].ty))
-        }
-        Fields::Unit => Err(syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "#[ron(transparent)] cannot be used on unit structs",
-        )),
-    }
-}
-
-/// Generate TypeKind tokens for an enum.
-fn generate_enum_kind(
-    data_enum: &syn::DataEnum,
-    container_attrs: &ContainerAttrs,
-) -> syn::Result<TokenStream2> {
-    let variant_tokens: Vec<TokenStream2> = data_enum
-        .variants
-        .iter()
-        .map(|v| generate_variant(v, container_attrs))
-        .collect::<syn::Result<Vec<_>>>()?;
-
-    Ok(quote! {
-        ::ron_schema::TypeKind::Enum {
-            variants: vec![#(#variant_tokens),*],
-        }
-    })
-}
-
-/// Generate Field tokens for a struct field.
-fn generate_field(
-    field: &syn::Field,
-    attrs: &FieldAttrs,
-    container_attrs: &ContainerAttrs,
-) -> syn::Result<TokenStream2> {
-    let original_name = field
-        .ident
-        .as_ref()
-        .ok_or_else(|| syn::Error::new_spanned(field, "Expected named field"))?
-        .to_string();
-
-    let name = attrs.effective_name(&original_name, container_attrs);
-    let type_kind = type_to_type_kind(&field.ty);
-    let doc = extract_doc_comment(&field.attrs);
-    let optional = attrs.has_default();
-    let flattened = attrs.flatten;
-
-    let doc_tokens = match doc {
-        Some(d) => quote! { Some(#d.to_string()) },
-        None => quote! { None },
-    };
-
-    Ok(quote! {
-        ::ron_schema::Field {
-            name: #name.to_string(),
-            ty: #type_kind,
-            doc: #doc_tokens,
-            optional: #optional,
-            flattened: #flattened,
-        }
-    })
-}
-
-/// Generate Variant tokens for an enum variant.
-fn generate_variant(
-    variant: &syn::Variant,
-    container_attrs: &ContainerAttrs,
-) -> syn::Result<TokenStream2> {
-    let variant_attrs = attr::VariantAttrs::from_ast(&variant.attrs)?;
-    let original_name = variant.ident.to_string();
-    let name = variant_attrs.effective_name(&original_name, container_attrs);
-    let doc = extract_doc_comment(&variant.attrs);
-
-    let doc_tokens = match doc {
-        Some(d) => quote! { Some(#d.to_string()) },
-        None => quote! { None },
-    };
-
-    let kind_tokens = match &variant.fields {
-        Fields::Unit => quote! { ::ron_schema::VariantKind::Unit },
-        Fields::Unnamed(unnamed) => {
-            let type_tokens: Vec<TokenStream2> = unnamed
-                .unnamed
-                .iter()
-                .map(|f| type_to_type_kind(&f.ty))
-                .collect();
-
-            quote! {
-                ::ron_schema::VariantKind::Tuple(vec![#(#type_tokens),*])
-            }
-        }
-        Fields::Named(named) => {
-            let mut field_tokens: Vec<TokenStream2> = Vec::new();
-
-            for f in named.named.iter() {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-
-                // Skip fields marked with #[ron(skip)]
-                if attrs.skip {
-                    continue;
-                }
-
-                field_tokens.push(generate_field(f, &attrs, container_attrs)?);
-            }
-
-            quote! {
-                ::ron_schema::VariantKind::Struct(vec![#(#field_tokens),*])
-            }
-        }
-    };
-
-    Ok(quote! {
-        ::ron_schema::Variant {
-            name: #name.to_string(),
-            doc: #doc_tokens,
-            kind: #kind_tokens,
-        }
-    })
-}
-
-/// Convert a syn::Path to a string representation.
-///
-/// Single-segment paths (local types) are prefixed with the crate name to produce
-/// fully qualified paths like `my_crate::MyType`.
-fn path_to_string(path: &syn::Path) -> String {
-    let raw_path = path
-        .segments
-        .iter()
-        .map(|seg| {
-            let ident = seg.ident.to_string();
-            match &seg.arguments {
-                PathArguments::None => ident,
-                PathArguments::AngleBracketed(args) => {
-                    let args_str: Vec<String> = args
-                        .args
-                        .iter()
-                        .filter_map(|arg| {
-                            if let GenericArgument::Type(t) = arg {
-                                Some(quote!(#t).to_string())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    if args_str.is_empty() {
-                        ident
-                    } else {
-                        format!("{}<{}>", ident, args_str.join(", "))
-                    }
-                }
-                PathArguments::Parenthesized(_) => ident,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("::");
-
-    // Qualify single-segment paths (local types) with crate name
-    if path.segments.len() == 1 {
-        let crate_name = get_crate_name();
-        format!("{}::{}", crate_name, raw_path)
-    } else {
-        raw_path
-    }
-}
-
-/// Get the crate name, normalized for Rust path syntax (hyphens replaced with underscores).
-fn get_crate_name() -> String {
-    std::env::var("CARGO_CRATE_NAME")
-        .or_else(|_| std::env::var("CARGO_PKG_NAME").map(|s| s.replace('-', "_")))
-        .unwrap_or_else(|_| "unknown_crate".to_string())
-}
-
-// =============================================================================
-// Compile-time schema building functions
-// =============================================================================
-//
-// These functions build actual `ron_schema` values (not tokens) for use during
-// proc macro execution. This allows writing schema files at compile time.
-
-use ron_schema::{Field, Schema, TypeKind, Variant, VariantKind};
-
-/// Build a Schema value at compile time.
-fn build_schema(input: &DeriveInput, container_attrs: &ContainerAttrs) -> Option<Schema> {
-    let doc = extract_doc_comment(&input.attrs);
-
-    let type_kind = match &input.data {
-        Data::Struct(data_struct) => {
-            build_struct_kind(&data_struct.fields, container_attrs).ok()?
-        }
-        Data::Enum(data_enum) => build_enum_kind(data_enum, container_attrs).ok()?,
-        Data::Union(_) => return None,
-    };
-
-    Some(if let Some(doc_str) = doc {
-        Schema::with_doc(doc_str, type_kind)
-    } else {
-        Schema::new(type_kind)
-    })
-}
-
-/// Build TypeKind for a struct's fields.
-fn build_struct_kind(fields: &Fields, container_attrs: &ContainerAttrs) -> syn::Result<TypeKind> {
-    // Handle transparent structs - return the inner type's TypeKind
-    if container_attrs.transparent {
-        return build_transparent_struct_kind(fields);
-    }
-
-    match fields {
-        Fields::Named(named) => {
-            let mut field_values: Vec<Field> = Vec::new();
-
-            for f in named.named.iter() {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-                if attrs.skip {
-                    continue;
-                }
-                field_values.push(build_field(f, &attrs, container_attrs)?);
-            }
-
-            Ok(TypeKind::Struct {
-                fields: field_values,
-            })
-        }
-        Fields::Unnamed(unnamed) => {
-            let type_kinds: Vec<TypeKind> = unnamed
-                .unnamed
-                .iter()
-                .map(|f| rust_type_to_type_kind(&f.ty))
-                .collect();
-
-            Ok(TypeKind::Tuple(type_kinds))
-        }
-        Fields::Unit => Ok(TypeKind::Unit),
-    }
-}
-
-/// Build TypeKind for a transparent struct.
-///
-/// Returns the inner type's TypeKind directly.
-fn build_transparent_struct_kind(fields: &Fields) -> syn::Result<TypeKind> {
-    match fields {
-        Fields::Named(named) => {
-            // Find the single non-skipped field
-            let mut active_fields = Vec::new();
-            for f in &named.named {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-                if !attrs.skip {
-                    active_fields.push(f);
-                }
-            }
-
-            if active_fields.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    &named.named,
-                    "#[ron(transparent)] requires exactly one non-skipped field",
-                ));
-            }
-
-            Ok(rust_type_to_type_kind(&active_fields[0].ty))
-        }
-        Fields::Unnamed(unnamed) => {
-            if unnamed.unnamed.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    unnamed,
-                    "#[ron(transparent)] requires exactly one field for tuple structs",
-                ));
-            }
-
-            Ok(rust_type_to_type_kind(&unnamed.unnamed[0].ty))
-        }
-        Fields::Unit => Err(syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "#[ron(transparent)] cannot be used on unit structs",
-        )),
-    }
-}
-
-/// Build TypeKind for an enum.
-fn build_enum_kind(
-    data_enum: &syn::DataEnum,
-    container_attrs: &ContainerAttrs,
-) -> syn::Result<TypeKind> {
-    let variants: Vec<Variant> = data_enum
-        .variants
-        .iter()
-        .map(|v| build_variant(v, container_attrs))
-        .collect::<syn::Result<Vec<_>>>()?;
-
-    Ok(TypeKind::Enum { variants })
-}
-
-/// Build a Field value for a struct field.
-fn build_field(
-    field: &syn::Field,
-    attrs: &FieldAttrs,
-    container_attrs: &ContainerAttrs,
-) -> syn::Result<Field> {
-    let original_name = field
-        .ident
-        .as_ref()
-        .ok_or_else(|| syn::Error::new_spanned(field, "Expected named field"))?
-        .to_string();
-
-    let name = attrs.effective_name(&original_name, container_attrs);
-    let ty = rust_type_to_type_kind(&field.ty);
-    let doc = extract_doc_comment(&field.attrs);
-    let optional = attrs.has_default();
-    let flattened = attrs.flatten;
-
-    Ok(Field {
-        name,
-        ty,
-        doc,
-        optional,
-        flattened,
-    })
-}
-
-/// Build a Variant value for an enum variant.
-fn build_variant(variant: &syn::Variant, container_attrs: &ContainerAttrs) -> syn::Result<Variant> {
-    let variant_attrs = attr::VariantAttrs::from_ast(&variant.attrs)?;
-    let original_name = variant.ident.to_string();
-    let name = variant_attrs.effective_name(&original_name, container_attrs);
-    let doc = extract_doc_comment(&variant.attrs);
-
-    let kind = match &variant.fields {
-        Fields::Unit => VariantKind::Unit,
-        Fields::Unnamed(unnamed) => {
-            let type_kinds: Vec<TypeKind> = unnamed
-                .unnamed
-                .iter()
-                .map(|f| rust_type_to_type_kind(&f.ty))
-                .collect();
-            VariantKind::Tuple(type_kinds)
-        }
-        Fields::Named(named) => {
-            let mut field_values: Vec<Field> = Vec::new();
-            for f in named.named.iter() {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-                if attrs.skip {
-                    continue;
-                }
-                field_values.push(build_field(f, &attrs, container_attrs)?);
-            }
-            VariantKind::Struct(field_values)
-        }
-    };
-
-    Ok(Variant { name, doc, kind })
-}
-
-/// Write a schema file at compile time (during proc macro execution).
-fn write_schema_at_compile_time(
-    type_name: &Ident,
-    schema: &Schema,
-    env_schema_dir: Option<&str>,
-) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    use ron2::ser::PrettyConfig;
-    use ron_schema::ToRon;
-    use std::path::PathBuf;
-
-    // Resolve output directory (env var or XDG default)
-    let output_dir: PathBuf = if let Some(dir) = env_schema_dir {
-        PathBuf::from(dir)
-    } else {
-        // RON_SCHEMA_GLOBAL=1 but no dir specified - use XDG default
-        dirs::data_dir()
-            .ok_or("No data directory found")?
-            .join("ron-schemas")
-    };
-
-    // Build type path: crate_name::TypeName (normalized, hyphens -> underscores)
-    let crate_name = get_crate_name();
-    let type_path = format!("{}::{}", crate_name, type_name);
-
-    // Convert to file path
-    let file_path = output_dir.join(ron_schema::type_path_to_file_path(&type_path));
-
-    // Serialize
-    let value = schema.to_ron_value()?;
-    let config = PrettyConfig::default();
-    let contents = ron2::ser::to_string_pretty(&value, config)?;
-
-    // Write
-    if let Some(parent) = file_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&file_path, contents)?;
-
-    Ok(file_path)
 }
