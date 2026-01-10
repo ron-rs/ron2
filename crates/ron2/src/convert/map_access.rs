@@ -45,6 +45,7 @@ pub const MAX_FIELDS: usize = 64;
 ///     }
 /// }
 /// ```
+#[derive(Debug)]
 pub struct AstMapAccess<'a> {
     /// Slice of struct fields from the AST
     fields: &'a [StructField<'a>],
@@ -322,5 +323,211 @@ impl<'a> AstMapAccess<'a> {
     /// from this access.
     pub fn flatten<T: FromRonFields>(&mut self) -> SpannedResult<T> {
         T::from_fields(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::fmt::Write;
+
+    use super::*;
+    use crate::ast::parse_document;
+
+    #[test]
+    fn test_basic_field_access() {
+        let ron = "(a: 1, b: 2, c: 3)";
+        let doc = parse_document(ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let mut access = AstMapAccess::from_anon(s, Some("Test")).unwrap();
+
+            assert_eq!(access.required::<i32>("a").unwrap(), 1);
+            assert_eq!(access.required::<i32>("b").unwrap(), 2);
+            assert_eq!(access.required::<i32>("c").unwrap(), 3);
+            assert!(access.deny_unknown_fields(&["a", "b", "c"]).is_ok());
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_consumed_bitmask_tracking() {
+        let ron = "(a: 1, b: 2, c: 3)";
+        let doc = parse_document(ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let mut access = AstMapAccess::from_anon(s, Some("Test")).unwrap();
+
+            // Only consume 'a' and 'c', leaving 'b' unconsumed
+            assert_eq!(access.required::<i32>("a").unwrap(), 1);
+            assert_eq!(access.required::<i32>("c").unwrap(), 3);
+
+            // deny_unknown_fields should fail because 'b' wasn't consumed
+            let err = access.deny_unknown_fields(&["a", "c"]).unwrap_err();
+            assert!(matches!(err.code, Error::NoSuchStructField { .. }));
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_remaining_keys() {
+        let ron = "(a: 1, b: 2, c: 3, d: 4)";
+        let doc = parse_document(ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let mut access = AstMapAccess::from_anon(s, None).unwrap();
+
+            // Consume a and c
+            let _ = access.required::<i32>("a").unwrap();
+            let _ = access.required::<i32>("c").unwrap();
+
+            // Remaining should be b and d
+            let remaining: Vec<_> = access.remaining_keys().collect();
+            assert_eq!(remaining.len(), 2);
+            assert!(remaining.contains(&"b"));
+            assert!(remaining.contains(&"d"));
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_duplicate_field_detection() {
+        let ron = "(a: 1, b: 2, a: 3)";
+        let doc = parse_document(ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let err = AstMapAccess::from_anon(s, Some("Test")).unwrap_err();
+            match err.code {
+                Error::DuplicateStructField { field, outer } => {
+                    assert_eq!(field.as_ref(), "a");
+                    assert_eq!(outer.as_deref(), Some("Test"));
+                }
+                _ => panic!("Expected DuplicateStructField error"),
+            }
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_too_many_fields_error() {
+        // Build a RON string with 65 fields
+        let mut fields = String::new();
+        for i in 0..65 {
+            if i > 0 {
+                fields.push_str(", ");
+            }
+            let _ = write!(fields, "field_{i}: {i}");
+        }
+        let ron = format!("({fields})");
+
+        let doc = parse_document(&ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let err = AstMapAccess::from_anon(s, Some("TooLarge")).unwrap_err();
+            match err.code {
+                Error::TooManyFields { count, limit } => {
+                    assert_eq!(count, 65);
+                    assert_eq!(limit, MAX_FIELDS);
+                }
+                _ => panic!("Expected TooManyFields error, got {:?}", err.code),
+            }
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_exactly_64_fields_ok() {
+        // Build a RON string with exactly 64 fields (should succeed)
+        let mut fields = String::new();
+        for i in 0..64 {
+            if i > 0 {
+                fields.push_str(", ");
+            }
+            let _ = write!(fields, "f{i}: {i}");
+        }
+        let ron = format!("({fields})");
+
+        let doc = parse_document(&ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let access = AstMapAccess::from_anon(s, None).unwrap();
+            assert_eq!(access.fields.len(), 64);
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_missing_field_error() {
+        let ron = "(a: 1)";
+        let doc = parse_document(ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let mut access = AstMapAccess::from_anon(s, Some("Test")).unwrap();
+            let err = access.required::<i32>("missing").unwrap_err();
+            match err.code {
+                Error::MissingStructField { field, outer } => {
+                    assert_eq!(field.as_ref(), "missing");
+                    assert_eq!(outer.as_deref(), Some("Test"));
+                }
+                _ => panic!("Expected MissingStructField error"),
+            }
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_optional_field() {
+        let ron = "(a: 1)";
+        let doc = parse_document(ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let mut access = AstMapAccess::from_anon(s, None).unwrap();
+
+            assert_eq!(access.optional::<i32>("a").unwrap(), Some(1));
+            assert_eq!(access.optional::<i32>("missing").unwrap(), None);
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_with_default() {
+        let ron = "(a: 1)";
+        let doc = parse_document(ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let mut access = AstMapAccess::from_anon(s, None).unwrap();
+
+            assert_eq!(access.with_default::<i32>("a").unwrap(), 1);
+            assert_eq!(access.with_default::<i32>("missing").unwrap(), 0); // i32::default()
+        } else {
+            panic!("Expected anonymous struct");
+        }
+    }
+
+    #[test]
+    fn test_high_index_field_consumed() {
+        // Test that field at index 63 (highest bit) is tracked correctly
+        let mut fields = String::new();
+        for i in 0..64 {
+            if i > 0 {
+                fields.push_str(", ");
+            }
+            let _ = write!(fields, "f{i}: {i}");
+        }
+        let ron = format!("({fields})");
+
+        let doc = parse_document(&ron).unwrap();
+        if let Some(Expr::AnonStruct(s)) = &doc.value {
+            let mut access = AstMapAccess::from_anon(s, None).unwrap();
+
+            // Consume the last field (index 63)
+            assert_eq!(access.required::<i32>("f63").unwrap(), 63);
+
+            // Verify it's marked as consumed (bit 63 should be set)
+            assert_eq!(access.consumed & (1u64 << 63), 1u64 << 63);
+
+            // Verify f62 is not consumed
+            assert_eq!(access.consumed & (1u64 << 62), 0);
+        } else {
+            panic!("Expected anonymous struct");
+        }
     }
 }
