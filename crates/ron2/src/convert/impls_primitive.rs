@@ -2,12 +2,12 @@
 
 use alloc::string::String;
 
-use crate::error::{Error, Result, SpannedResult};
 use crate::ast::Expr;
+use crate::error::{Error, Result, SpannedResult};
 use crate::value::{Number, Value};
 
-use super::{ToRon, FromRon, spanned_type_mismatch, spanned_err};
-use super::number::{parse_integer_from_raw, parse_float_from_raw};
+use super::number::{parse_float_from_raw, parse_integer_from_raw};
+use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
 
 // =============================================================================
 // ToRon implementations

@@ -83,7 +83,6 @@ impl SchemaError {
     pub fn no_schema_dir() -> Self {
         SchemaError::Storage(StorageError::NoSchemaDir)
     }
-
 }
 
 impl fmt::Display for SchemaError {

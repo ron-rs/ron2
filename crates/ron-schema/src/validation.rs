@@ -179,7 +179,8 @@ pub fn validate_with_resolver<R: SchemaResolver>(
     resolver: &R,
 ) -> Result<()> {
     let mut ctx = ValidationContext::new(resolver);
-    validate_type_internal(value, &schema.kind, &mut ctx).map_err(|e| SchemaError::Validation(Box::new(e)))
+    validate_type_internal(value, &schema.kind, &mut ctx)
+        .map_err(|e| SchemaError::Validation(Box::new(e)))
 }
 
 /// Validate a RON value against a type kind with TypeRef resolution.
@@ -325,10 +326,9 @@ fn validate_struct_internal<R: SchemaResolver>(
     ) -> ValidationResult<()> {
         // Check all provided fields are valid
         for (key_str, val) in field_iter {
-            let field = fields
-                .iter()
-                .find(|f| f.name == key_str)
-                .ok_or_else(|| ValidationError::unknown_field(key_str.to_owned(), &[] as &[&str]))?;
+            let field = fields.iter().find(|f| f.name == key_str).ok_or_else(|| {
+                ValidationError::unknown_field(key_str.to_owned(), &[] as &[&str])
+            })?;
 
             validate_type_internal(val, &field.ty, ctx).map_err(|e| e.in_field(key_str))?;
         }
@@ -433,12 +433,9 @@ fn validate_enum_internal<R: SchemaResolver>(
                                   ctx: &mut ValidationContext<R>|
      -> ValidationResult<()> {
         for (key, val) in struct_fields.iter() {
-            let field = fields
-                .iter()
-                .find(|f| f.name == *key)
-                .ok_or_else(|| {
-                    ValidationError::unknown_field(key.clone(), &[] as &[&str]).in_variant(variant_name)
-                })?;
+            let field = fields.iter().find(|f| f.name == *key).ok_or_else(|| {
+                ValidationError::unknown_field(key.clone(), &[] as &[&str]).in_variant(variant_name)
+            })?;
 
             validate_type_internal(val, &field.ty, ctx)
                 .map_err(|e| e.in_field(key).in_variant(variant_name))?;
@@ -446,25 +443,30 @@ fn validate_enum_internal<R: SchemaResolver>(
         // Check required fields
         for field in fields {
             if !field.optional && !struct_fields.iter().any(|(k, _)| k == &field.name) {
-                return Err(ValidationError::missing_field(field.name.clone()).in_variant(variant_name));
+                return Err(
+                    ValidationError::missing_field(field.name.clone()).in_variant(variant_name)
+                );
             }
         }
         Ok(())
     };
 
     // Helper to validate tuple elements
-    let validate_tuple_elements =
-        |types: &[TypeKind], items: &[Value], ctx: &mut ValidationContext<R>| -> ValidationResult<()> {
-            if items.len() != types.len() {
-                return Err(ValidationError::length_mismatch(types.len(), items.len())
-                    .in_variant(variant_name));
-            }
-            for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
-                validate_type_internal(item, ty, ctx)
-                    .map_err(|e| e.in_element(i).in_variant(variant_name))?;
-            }
-            Ok(())
-        };
+    let validate_tuple_elements = |types: &[TypeKind],
+                                   items: &[Value],
+                                   ctx: &mut ValidationContext<R>|
+     -> ValidationResult<()> {
+        if items.len() != types.len() {
+            return Err(
+                ValidationError::length_mismatch(types.len(), items.len()).in_variant(variant_name)
+            );
+        }
+        for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
+            validate_type_internal(item, ty, ctx)
+                .map_err(|e| e.in_element(i).in_variant(variant_name))?;
+        }
+        Ok(())
+    };
 
     match (&variant.kind, content) {
         // Unit variants

@@ -185,6 +185,16 @@ pub enum Error {
     SuggestRawIdentifier(String),
     ExpectedRawValue,
     ExceededRecursionLimit,
+    /// Too many fields in struct for deserialization.
+    ///
+    /// The AST-based deserializer uses a 64-bit bitmask for field tracking,
+    /// limiting structs to 64 fields maximum.
+    TooManyFields {
+        /// Number of fields found
+        count: usize,
+        /// Maximum supported
+        limit: usize,
+    },
     ExpectedStructName(String),
 }
 
@@ -397,6 +407,9 @@ impl fmt::Display for Error {
             Error::ExceededRecursionLimit => f.write_str(
                 "Exceeded recursion limit, try increasing `ron::Options::recursion_limit`",
             ),
+            Error::TooManyFields { count, limit } => {
+                write!(f, "Struct has {count} fields but maximum is {limit}")
+            }
             Error::ExpectedStructName(ref name) => write!(
                 f,
                 "Expected the explicit struct name {}, but none was found",

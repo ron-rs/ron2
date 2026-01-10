@@ -1,12 +1,16 @@
 //! `AstMapAccess` helper for struct deserialization with span preservation.
 
 use alloc::borrow::Cow;
-use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AnonStructExpr, Expr, FieldsBody, StructField};
 use crate::error::{Error, Span, SpannedError, SpannedResult};
 
-use super::{expr_type_name, FromRon, FromRonFields};
+use super::{FromRon, FromRonFields, expr_type_name};
+
+/// Maximum number of fields supported in a struct.
+///
+/// This limit exists because we use a `u64` bitmask to track consumed fields.
+pub const MAX_FIELDS: usize = 64;
 
 /// Helper struct for deserializing RON structs to Rust structs from AST.
 ///
@@ -42,10 +46,10 @@ use super::{expr_type_name, FromRon, FromRonFields};
 /// }
 /// ```
 pub struct AstMapAccess<'a> {
-    /// Map from field name to the field struct
-    fields: HashMap<&'a str, &'a StructField<'a>>,
-    /// Track which fields have been consumed
-    consumed: HashSet<&'a str>,
+    /// Slice of struct fields from the AST
+    fields: &'a [StructField<'a>],
+    /// Bitmask tracking which fields have been consumed (bit i = field i)
+    consumed: u64,
     /// The span of the entire struct (for missing field errors)
     struct_span: Span,
     /// Optional struct name for error messages
@@ -57,28 +61,42 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if duplicate field names are found.
+    /// Returns an error if:
+    /// - The struct has more than 64 fields
+    /// - Duplicate field names are found
     pub fn from_anon(
         s: &'a AnonStructExpr<'a>,
         struct_name: Option<&'a str>,
     ) -> SpannedResult<Self> {
-        let mut fields = HashMap::with_capacity(s.fields.len());
-        for field in &s.fields {
-            let name = field.name.name.as_ref();
-            if fields.contains_key(name) {
-                return Err(SpannedError {
-                    code: Error::DuplicateStructField {
-                        field: Cow::Owned(name.to_string()),
-                        outer: struct_name.map(|s| Cow::Owned(s.to_string())),
-                    },
-                    span: field.name.span.clone(),
-                });
-            }
-            fields.insert(name, field);
+        if s.fields.len() > MAX_FIELDS {
+            return Err(SpannedError {
+                code: Error::TooManyFields {
+                    count: s.fields.len(),
+                    limit: MAX_FIELDS,
+                },
+                span: s.span.clone(),
+            });
         }
+
+        // Check for duplicate field names via linear scan
+        for (i, field) in s.fields.iter().enumerate() {
+            let name = field.name.name.as_ref();
+            for earlier in &s.fields[..i] {
+                if earlier.name.name.as_ref() == name {
+                    return Err(SpannedError {
+                        code: Error::DuplicateStructField {
+                            field: Cow::Owned(name.to_string()),
+                            outer: struct_name.map(|s| Cow::Owned(s.to_string())),
+                        },
+                        span: field.name.span.clone(),
+                    });
+                }
+            }
+        }
+
         Ok(Self {
-            fields,
-            consumed: HashSet::new(),
+            fields: &s.fields,
+            consumed: 0,
             struct_span: s.span.clone(),
             struct_name,
         })
@@ -88,32 +106,54 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if duplicate field names are found.
+    /// Returns an error if:
+    /// - The struct has more than 64 fields
+    /// - Duplicate field names are found
     pub fn from_fields(
         fields_body: &'a FieldsBody<'a>,
         struct_name: Option<&'a str>,
         struct_span: Span,
     ) -> SpannedResult<Self> {
-        let mut fields = HashMap::with_capacity(fields_body.fields.len());
-        for field in &fields_body.fields {
-            let name = field.name.name.as_ref();
-            if fields.contains_key(name) {
-                return Err(SpannedError {
-                    code: Error::DuplicateStructField {
-                        field: Cow::Owned(name.to_string()),
-                        outer: struct_name.map(|s| Cow::Owned(s.to_string())),
-                    },
-                    span: field.name.span.clone(),
-                });
-            }
-            fields.insert(name, field);
+        if fields_body.fields.len() > MAX_FIELDS {
+            return Err(SpannedError {
+                code: Error::TooManyFields {
+                    count: fields_body.fields.len(),
+                    limit: MAX_FIELDS,
+                },
+                span: struct_span,
+            });
         }
+
+        // Check for duplicate field names via linear scan
+        for (i, field) in fields_body.fields.iter().enumerate() {
+            let name = field.name.name.as_ref();
+            for earlier in &fields_body.fields[..i] {
+                if earlier.name.name.as_ref() == name {
+                    return Err(SpannedError {
+                        code: Error::DuplicateStructField {
+                            field: Cow::Owned(name.to_string()),
+                            outer: struct_name.map(|s| Cow::Owned(s.to_string())),
+                        },
+                        span: field.name.span.clone(),
+                    });
+                }
+            }
+        }
+
         Ok(Self {
-            fields,
-            consumed: HashSet::new(),
+            fields: &fields_body.fields,
+            consumed: 0,
             struct_span,
             struct_name,
         })
+    }
+
+    /// Find a field by name, returning its index and reference.
+    fn find_field(&self, name: &str) -> Option<(usize, &'a StructField<'a>)> {
+        self.fields
+            .iter()
+            .enumerate()
+            .find(|(_, f)| f.name.name.as_ref() == name)
     }
 
     /// Get a required field.
@@ -121,9 +161,9 @@ impl<'a> AstMapAccess<'a> {
     /// Returns an error with the field's span if deserialization fails,
     /// or the struct's span if the field is missing.
     pub fn required<T: FromRon>(&mut self, name: &'static str) -> SpannedResult<T> {
-        match self.fields.get(name) {
-            Some(field) => {
-                self.consumed.insert(name);
+        match self.find_field(name) {
+            Some((idx, field)) => {
+                self.consumed |= 1 << idx;
                 T::from_ast(&field.value)
             }
             None => Err(SpannedError {
@@ -140,9 +180,9 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// Returns `Ok(None)` if the field is missing.
     pub fn optional<T: FromRon>(&mut self, name: &'static str) -> SpannedResult<Option<T>> {
-        match self.fields.get(name) {
-            Some(field) => {
-                self.consumed.insert(name);
+        match self.find_field(name) {
+            Some((idx, field)) => {
+                self.consumed |= 1 << idx;
                 Ok(Some(T::from_ast(&field.value)?))
             }
             None => Ok(None),
@@ -151,9 +191,9 @@ impl<'a> AstMapAccess<'a> {
 
     /// Get a field with a default value if missing.
     pub fn with_default<T: FromRon + Default>(&mut self, name: &'static str) -> SpannedResult<T> {
-        match self.fields.get(name) {
-            Some(field) => {
-                self.consumed.insert(name);
+        match self.find_field(name) {
+            Some((idx, field)) => {
+                self.consumed |= 1 << idx;
                 T::from_ast(&field.value)
             }
             None => Ok(T::default()),
@@ -166,9 +206,9 @@ impl<'a> AstMapAccess<'a> {
         name: &'static str,
         default_fn: F,
     ) -> SpannedResult<T> {
-        match self.fields.get(name) {
-            Some(field) => {
-                self.consumed.insert(name);
+        match self.find_field(name) {
+            Some((idx, field)) => {
+                self.consumed |= 1 << idx;
                 T::from_ast(&field.value)
             }
             None => Ok(default_fn()),
@@ -180,8 +220,9 @@ impl<'a> AstMapAccess<'a> {
     /// Pass the list of expected field names. Returns an error pointing to
     /// the first unknown field's span.
     pub fn deny_unknown_fields(&self, expected: &'static [&'static str]) -> SpannedResult<()> {
-        for (&name, &field) in &self.fields {
-            if !self.consumed.contains(name) {
+        for (i, field) in self.fields.iter().enumerate() {
+            if self.consumed & (1 << i) == 0 {
+                let name = field.name.name.as_ref();
                 return Err(SpannedError {
                     code: Error::NoSuchStructField {
                         expected,
@@ -198,9 +239,10 @@ impl<'a> AstMapAccess<'a> {
     /// Get an iterator over remaining (unconsumed) field names.
     pub fn remaining_keys(&self) -> impl Iterator<Item = &str> {
         self.fields
-            .keys()
-            .filter(|k| !self.consumed.contains(*k))
-            .copied()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.consumed & (1 << *i) == 0)
+            .map(|(_, f)| f.name.name.as_ref())
     }
 
     /// Get a required Option field that requires explicit `Some(...)` or `None` syntax.
@@ -213,9 +255,9 @@ impl<'a> AstMapAccess<'a> {
         &mut self,
         name: &'static str,
     ) -> SpannedResult<Option<T>> {
-        match self.fields.get(name) {
-            Some(field) => {
-                self.consumed.insert(name);
+        match self.find_field(name) {
+            Some((idx, field)) => {
+                self.consumed |= 1 << idx;
                 match &field.value {
                     Expr::Option(opt) => match &opt.value {
                         None => Ok(None),
@@ -250,9 +292,9 @@ impl<'a> AstMapAccess<'a> {
         &mut self,
         name: &'static str,
     ) -> SpannedResult<Option<T>> {
-        match self.fields.get(name) {
-            Some(field) => {
-                self.consumed.insert(name);
+        match self.find_field(name) {
+            Some((idx, field)) => {
+                self.consumed |= 1 << idx;
                 match &field.value {
                     Expr::Option(opt) => match &opt.value {
                         None => Ok(None),

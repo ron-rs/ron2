@@ -8,7 +8,10 @@ use crate::attr::{extract_doc_comment, ContainerAttrs, FieldAttrs, VariantAttrs}
 use crate::type_mapper::type_to_type_kind;
 
 /// Generate the RonSchemaType implementation for a type.
-pub fn impl_ron_schema(input: &DeriveInput, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
+pub fn impl_ron_schema(
+    input: &DeriveInput,
+    container_attrs: &ContainerAttrs,
+) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let type_name = name.to_string();
 
@@ -17,7 +20,9 @@ pub fn impl_ron_schema(input: &DeriveInput, container_attrs: &ContainerAttrs) ->
 
     // Generate the TypeKind based on the data type
     let type_kind_tokens = match &input.data {
-        syn::Data::Struct(data_struct) => generate_struct_kind(&data_struct.fields, container_attrs)?,
+        syn::Data::Struct(data_struct) => {
+            generate_struct_kind(&data_struct.fields, container_attrs)?
+        }
         syn::Data::Enum(data_enum) => generate_enum_kind(data_enum, container_attrs)?,
         syn::Data::Union(_) => {
             return Err(syn::Error::new_spanned(

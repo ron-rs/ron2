@@ -78,9 +78,8 @@ pub fn unescape_string(s: &str) -> core::result::Result<String, (Error, usize)> 
                     byte_offset += 1;
                     let hex: String = chars.by_ref().take(2).collect();
                     byte_offset += hex.len();
-                    let val = u8::from_str_radix(&hex, 16).map_err(|_| {
-                        (Error::InvalidEscape("invalid hex escape"), char_start)
-                    })?;
+                    let val = u8::from_str_radix(&hex, 16)
+                        .map_err(|_| (Error::InvalidEscape("invalid hex escape"), char_start))?;
                     result.push(val as char);
                 }
                 Some('u') => {
@@ -224,8 +223,7 @@ pub fn unescape_byte_char(s: &str) -> Result<u8> {
             Some('\'') => Ok(b'\''),
             Some('x') => {
                 let hex: String = chars.take(2).collect();
-                u8::from_str_radix(&hex, 16)
-                    .map_err(|_| Error::InvalidEscape("invalid hex escape"))
+                u8::from_str_radix(&hex, 16).map_err(|_| Error::InvalidEscape("invalid hex escape"))
             }
             _ => Err(Error::InvalidEscape("unknown escape sequence")),
         }

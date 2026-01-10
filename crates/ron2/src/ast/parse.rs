@@ -1349,8 +1349,8 @@ impl<'a> AstParser<'a> {
         // Check if it's a byte literal b'x'
         if tok.text.starts_with("b'") {
             let content = &tok.text[2..tok.text.len() - 1];
-            let value =
-                unescape::unescape_byte_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
+            let value = unescape::unescape_byte_char(content)
+                .map_err(|e| Self::error(tok.span.clone(), e))?;
             return Ok(Expr::Byte(ByteExpr {
                 span: tok.span,
                 raw: Cow::Borrowed(tok.text),
@@ -1360,7 +1360,8 @@ impl<'a> AstParser<'a> {
 
         // Regular char literal 'x'
         let content = &tok.text[1..tok.text.len() - 1];
-        let value = unescape::unescape_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
+        let value =
+            unescape::unescape_char(content).map_err(|e| Self::error(tok.span.clone(), e))?;
 
         Ok(Expr::Char(CharExpr {
             span: tok.span,
