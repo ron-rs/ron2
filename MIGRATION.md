@@ -560,3 +560,46 @@ Decisions made during review:
 - ron-derive generates calls to ron-schema validation
 - More coupling, larger dependency for simple derives
 - **Rejected:** Over-engineering for current needs
+
+## Acceptance Criteria
+
+### 1. All Existing Tests Pass
+- [ ] `cargo nextest run -p ron2` - all 748+ tests pass
+- [ ] `cargo nextest run -p ron-schema` - all 316+ validation tests pass
+- [ ] `cargo nextest run -p ron-derive` - all 2,657+ tests pass (including 1,468 error_quality tests)
+- [ ] `cargo nextest run -p ronfmt` - formatter tests pass
+- [ ] `cargo clippy --all-targets` - no warnings
+
+### 2. ron-error Crate
+- [ ] Compiles with `no_std` (no `alloc` or `std` features)
+- [ ] Compiles with `alloc` feature only
+- [ ] Compiles with `std` feature
+- [ ] Zero external dependencies
+- [ ] `Span`, `Position` available without `alloc`
+- [ ] `ValidationError`, `ValidationErrorKind`, `PathSegment` available with `alloc`
+
+### 3. Error Message Format
+- [ ] Span prefix: `3:15: ` (line:col format)
+- [ ] Path context: `in field 'items' -> element 0: `
+- [ ] Messages display outermost context first (path reversed on display)
+- [ ] Synthetic spans omitted from display
+
+### 4. Re-exports Work Correctly
+- [ ] `ron2::Span` and `ron2::Position` resolve to `ron_error` types
+- [ ] `ron2::ValidationError` available at crate root
+- [ ] `ron_schema::ValidationError` is same type as `ron_error::ValidationError`
+
+### 5. Generated Code (ron-derive)
+- [ ] FromRon derives compile without changes to user code
+- [ ] ToRon derives compile without changes to user code
+- [ ] RonSchema derives compile without changes to user code
+- [ ] Spans preserved through recursive deserialization
+- [ ] `outer` context populated for MissingField, UnknownField, UnknownVariant, DuplicateField
+
+### 6. Backwards Compatibility
+- [ ] No deprecated APIs present
+- [ ] APIs are clean and consistent rather than optimized for backward compatibility
+
+### 7. Integration
+- [ ] LSP error diagnostics include correct line/column positions
+- [ ] ronfmt error output unchanged
