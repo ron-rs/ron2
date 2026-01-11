@@ -7,8 +7,8 @@
 //! - Schema generation for editor support
 //! - Extension attributes: `transparent`, `explicit`, implicit Some
 
-use ron_derive::Ron;
-use ron_schema::{FromRon, PrettyConfig, ToRon};
+use ron2_derive::Ron;
+use ron2_schema::{FromRon, PrettyConfig, ToRon};
 use std::collections::HashMap;
 use std::fs;
 

@@ -984,66 +984,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ron-derive"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "proc-macro2",
- "quote",
- "ron-schema",
- "ron2",
- "syn",
-]
-
-[[package]]
-name = "ron-doc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "ron-schema",
- "ron2",
- "serde_json",
- "walkdir",
-]
-
-[[package]]
-name = "ron-error"
-version = "0.1.0"
-
-[[package]]
-name = "ron-lsp"
-version = "0.1.0"
-dependencies = [
- "ron-schema",
- "ron2",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "tokio",
- "tower-lsp",
-]
-
-[[package]]
-name = "ron-schema"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "ron-error",
- "ron2",
- "serde",
- "serial_test",
- "tempfile",
- "thiserror 2.0.17",
-]
-
-[[package]]
 name = "ron-showcase"
 version = "0.1.0"
 dependencies = [
- "ron-derive",
- "ron-schema",
  "ron2",
+ "ron2-derive",
+ "ron2-schema",
 ]
 
 [[package]]
@@ -1054,20 +1000,78 @@ dependencies = [
  "criterion",
  "indexmap",
  "ron",
- "ron-derive",
- "ron-error",
+ "ron2-derive",
+ "ron2-error",
  "serde",
  "unicode-ident",
  "unicode-segmentation",
 ]
 
 [[package]]
-name = "ronfmt"
+name = "ron2-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "ron2",
+ "ron2-doc",
+ "ron2-schema",
+ "serde_json",
+ "walkdir",
+]
+
+[[package]]
+name = "ron2-derive"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "proc-macro2",
+ "quote",
+ "ron2",
+ "ron2-schema",
+ "syn",
+]
+
+[[package]]
+name = "ron2-doc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ron2",
+ "ron2-schema",
+ "serde_json",
+ "walkdir",
+]
+
+[[package]]
+name = "ron2-error"
+version = "0.1.0"
+
+[[package]]
+name = "ron2-lsp"
+version = "0.1.0"
+dependencies = [
+ "ron2",
+ "ron2-schema",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tower-lsp",
+]
+
+[[package]]
+name = "ron2-schema"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "ron2",
+ "ron2-error",
+ "serde",
+ "serial_test",
+ "tempfile",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

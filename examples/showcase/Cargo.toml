@@ -5,6 +5,6 @@ edition = "2021"
 publish = false
 
 [dependencies]
-ron2 = { path = "../../crates/ron2" }
-ron-schema = { path = "../../crates/ron-schema" }
-ron-derive = { path = "../../crates/ron-derive" }
+ron2 = { path = "../../crates/main" }
+ron2-schema = { path = "../../crates/schema" }
+ron2-derive = { path = "../../crates/derive" }

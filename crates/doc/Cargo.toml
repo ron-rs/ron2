@@ -1,0 +1,15 @@
+[package]
+name = "ron2-doc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generate Markdown documentation from RON schema files"
+
+[dependencies]
+ron2-schema.workspace = true
+ron2.workspace = true
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"
+walkdir = "2.4"
+serde_json = "1.0"

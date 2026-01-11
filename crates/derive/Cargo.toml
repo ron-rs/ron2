@@ -1,0 +1,17 @@
+[package]
+name = "ron2-derive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Derive macro for generating RON schemas at compile time"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+ron2-schema.workspace = true
+ron2.workspace = true
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+dirs = "5"

@@ -1,0 +1,57 @@
+[package]
+name = "ron2"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+keywords = ["parser", "serialization", "ron"]
+authors = [
+	"Thomas Schaller <torkleyy@gmail.com>",
+]
+edition = "2024"
+description = "Rusty Object Notation - Value-only variant without serde"
+categories = ["encoding"]
+rust-version = "1.90.0"
+
+[features]
+default = ["std"]
+integer128 = []
+std = ["indexmap/std"]
+serde = ["dep:serde"]
+internal-span-substring-test = ["dep:unicode-segmentation"]
+
+[dependencies]
+bitflags = { version = "2.1", default-features = false }
+indexmap = { version = "2.0", default-features = false }
+ron2-error = { workspace = true, default-features = false, features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
+unicode-ident = { version = "1.0", default-features = false }
+unicode-segmentation = { version = "1.11", default-features = false, optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+ron = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+ron2-derive = { path = "../derive" }
+
+[[bench]]
+name = "parsing"
+harness = false
+
+[[bench]]
+name = "serialization"
+harness = false
+
+[[bench]]
+name = "formatting"
+harness = false
+
+[[bench]]
+name = "roundtrip"
+harness = false
+
+[[bench]]
+name = "typed"
+harness = false
+
+[package.metadata.docs.rs]
+features = ["integer128"]
+rustdoc-args = ["--generate-link-to-definition"]
