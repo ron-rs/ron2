@@ -5,8 +5,8 @@
 //! - [`StorageError`] - Errors related to schema file I/O
 //! - [`SchemaError`] - Combined error type for all schema operations
 
-use std::fmt;
 use std::io;
+use core::fmt;
 
 // Re-export validation error types from ron-error
 pub use crate::error::{PathSegment, Position, Span, ValidationError, ValidationErrorKind};
@@ -27,15 +27,15 @@ pub enum StorageError {
 impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StorageError::Io(msg) => write!(f, "IO error: {}", msg),
-            StorageError::Parse(msg) => write!(f, "parse error: {}", msg),
+            StorageError::Io(msg) => write!(f, "IO error: {msg}"),
+            StorageError::Parse(msg) => write!(f, "parse error: {msg}"),
             StorageError::NoSchemaDir => write!(f, "could not determine schema directory"),
-            StorageError::SchemaNotFound(ty) => write!(f, "schema not found for type: {}", ty),
+            StorageError::SchemaNotFound(ty) => write!(f, "schema not found for type: {ty}"),
         }
     }
 }
 
-impl std::error::Error for StorageError {}
+impl core::error::Error for StorageError {}
 
 /// Errors that can occur during schema operations.
 ///
@@ -51,21 +51,25 @@ pub enum SchemaError {
 
 impl SchemaError {
     /// Create a new storage error.
+    #[must_use]
     pub fn storage(err: StorageError) -> Self {
         SchemaError::Storage(err)
     }
 
     /// Create a new validation error.
+    #[must_use]
     pub fn validation(err: ValidationError) -> Self {
         SchemaError::Validation(Box::new(err))
     }
 
     /// Check if this is a storage-related error.
+    #[must_use]
     pub fn is_storage_error(&self) -> bool {
         matches!(self, SchemaError::Storage(_))
     }
 
     /// Check if this is a validation error.
+    #[must_use]
     pub fn is_validation_error(&self) -> bool {
         matches!(self, SchemaError::Validation(_))
     }
@@ -75,11 +79,13 @@ impl SchemaError {
     // =========================================================================
 
     /// Create a schema not found error.
+    #[must_use]
     pub fn schema_not_found(type_path: impl Into<String>) -> Self {
         SchemaError::Storage(StorageError::SchemaNotFound(type_path.into()))
     }
 
     /// Create a no schema dir error.
+    #[must_use]
     pub fn no_schema_dir() -> Self {
         SchemaError::Storage(StorageError::NoSchemaDir)
     }
@@ -88,13 +94,13 @@ impl SchemaError {
 impl fmt::Display for SchemaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SchemaError::Storage(e) => write!(f, "{}", e),
-            SchemaError::Validation(e) => write!(f, "{}", e),
+            SchemaError::Storage(e) => write!(f, "{e}"),
+            SchemaError::Validation(e) => write!(f, "{e}"),
         }
     }
 }
 
-impl std::error::Error for SchemaError {}
+impl core::error::Error for SchemaError {}
 
 impl From<io::Error> for SchemaError {
     fn from(e: io::Error) -> Self {
@@ -127,10 +133,10 @@ impl From<StorageError> for SchemaError {
 }
 
 /// Result type for schema operations.
-pub type Result<T> = std::result::Result<T, SchemaError>;
+pub type Result<T> = core::result::Result<T, SchemaError>;
 
 /// Result type for validation-only operations.
-pub type ValidationResult<T> = std::result::Result<T, ValidationError>;
+pub type ValidationResult<T> = core::result::Result<T, ValidationError>;
 
 #[cfg(test)]
 mod tests {

@@ -10,10 +10,10 @@ use super::{Field, Schema, TypeKind, Variant, VariantKind};
 // Schema Resolver Trait
 // =============================================================================
 
-/// Trait for resolving TypeRef schemas during validation.
+/// Trait for resolving `TypeRef` schemas during validation.
 ///
 /// Implement this trait to provide schema resolution for `TypeRef` validation.
-/// When `resolve` returns `None`, the TypeRef validation passes (accepts any value).
+/// When `resolve` returns `None`, the `TypeRef` validation passes (accepts any value).
 /// When it returns `Some(schema)`, the value is validated against that schema.
 ///
 /// # Example
@@ -36,11 +36,11 @@ pub trait SchemaResolver {
     /// Resolve a type path to its schema.
     ///
     /// Returns `Some(schema)` if the schema is found, `None` otherwise.
-    /// When `None` is returned, TypeRef validation accepts any value.
+    /// When `None` is returned, `TypeRef` validation accepts any value.
     fn resolve(&self, type_path: &str) -> Option<Schema>;
 }
 
-/// A resolver that accepts any value for all TypeRefs.
+/// A resolver that accepts any value for all `TypeRefs`.
 ///
 /// This is the default behavior when no resolver is provided,
 /// maintaining backward compatibility.
@@ -63,11 +63,13 @@ pub struct StorageResolver {
 
 impl StorageResolver {
     /// Create a new storage resolver using default schema locations.
+    #[must_use]
     pub fn new() -> Self {
         Self { search_dir: None }
     }
 
     /// Create a storage resolver that searches a specific directory first.
+    #[must_use]
     pub fn with_search_dir(dir: impl Into<PathBuf>) -> Self {
         Self {
             search_dir: Some(dir.into()),
@@ -75,6 +77,7 @@ impl StorageResolver {
     }
 
     /// Set the search directory.
+    #[must_use]
     pub fn search_dir(&self) -> Option<&Path> {
         self.search_dir.as_deref()
     }
@@ -137,23 +140,23 @@ impl<'a, R: SchemaResolver> ValidationContext<'a, R> {
 
 /// Validate a RON value against a schema.
 ///
-/// TypeRef fields accept any value. Use [`validate_with_resolver`] for
-/// full TypeRef validation.
+/// `TypeRef` fields accept any value. Use [`validate_with_resolver`] for
+/// full `TypeRef` validation.
 pub fn validate(value: &Value, schema: &Schema) -> Result<()> {
     validate_with_resolver(value, schema, &AcceptAllResolver)
 }
 
 /// Validate a RON value against a type kind.
 ///
-/// TypeRef fields accept any value. Use [`validate_type_with_resolver`] for
-/// full TypeRef validation.
+/// `TypeRef` fields accept any value. Use [`validate_type_with_resolver`] for
+/// full `TypeRef` validation.
 pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
     validate_type_with_resolver(value, kind, &AcceptAllResolver)
 }
 
-/// Validate a RON value against a schema with TypeRef resolution.
+/// Validate a RON value against a schema with `TypeRef` resolution.
 ///
-/// This function resolves TypeRef references using the provided resolver,
+/// This function resolves `TypeRef` references using the provided resolver,
 /// enabling validation of nested/referenced schemas.
 ///
 /// # Example
@@ -183,7 +186,7 @@ pub fn validate_with_resolver<R: SchemaResolver>(
         .map_err(|e| SchemaError::Validation(Box::new(e)))
 }
 
-/// Validate a RON value against a type kind with TypeRef resolution.
+/// Validate a RON value against a type kind with `TypeRef` resolution.
 pub fn validate_type_with_resolver<R: SchemaResolver>(
     value: &Value,
     kind: &TypeKind,
@@ -256,9 +259,9 @@ fn validate_type_internal<R: SchemaResolver>(
         TypeKind::Map { key, value: val_ty } => match value {
             Value::Map(map) => {
                 for (k, v) in map.iter() {
-                    validate_type_internal(k, key, ctx).map_err(|e| e.in_map_key())?;
+                    validate_type_internal(k, key, ctx).map_err(ValidationError::in_map_key)?;
                     validate_type_internal(v, val_ty, ctx)
-                        .map_err(|e| e.in_map_value(format!("{:?}", k)))?;
+                        .map_err(|e| e.in_map_value(format!("{k:?}")))?;
                 }
                 Ok(())
             }
@@ -345,7 +348,7 @@ fn validate_struct_internal<R: SchemaResolver>(
 
     match value {
         // Empty struct: () - parsed as Unit
-        Value::Unit => validate_struct_fields_inner(std::iter::empty(), fields, |_| false, ctx),
+        Value::Unit => validate_struct_fields_inner(core::iter::empty(), fields, |_| false, ctx),
         // Anonymous struct: (x: 1, y: 2)
         Value::Struct(struct_fields) => validate_struct_fields_inner(
             struct_fields.iter().map(|(k, v)| (k.as_str(), v)),
@@ -366,7 +369,7 @@ fn validate_struct_internal<R: SchemaResolver>(
         // Map with string keys (legacy RON format)
         Value::Map(map) => {
             // Extract string keys only
-            let string_fields: std::result::Result<Vec<_>, _> = map
+            let string_fields: core::result::Result<Vec<_>, _> = map
                 .iter()
                 .map(|(k, v)| match k {
                     Value::String(s) => Ok((s.as_str(), v)),
@@ -413,7 +416,9 @@ fn validate_enum_internal<R: SchemaResolver>(
         Value::Named { name, content } => (name.as_str(), VariantContent::Named(content)),
         // Map with single string key: { "Variant": content }
         Value::Map(map) if map.len() == 1 => {
-            let (k, v) = map.iter().next().unwrap();
+            let Some((k, v)) = map.iter().next() else {
+                return Err(type_mismatch("Enum", value));
+            };
             match k {
                 Value::String(s) => (s.as_str(), VariantContent::Value(v)),
                 _ => return Err(type_mismatch("Enum variant name", k)),
@@ -432,7 +437,7 @@ fn validate_enum_internal<R: SchemaResolver>(
                                   struct_fields: &[(String, Value)],
                                   ctx: &mut ValidationContext<R>|
      -> ValidationResult<()> {
-        for (key, val) in struct_fields.iter() {
+        for (key, val) in struct_fields {
             let field = fields.iter().find(|f| f.name == *key).ok_or_else(|| {
                 ValidationError::unknown_field(key.clone(), &[] as &[&str]).in_variant(variant_name)
             })?;
@@ -470,21 +475,19 @@ fn validate_enum_internal<R: SchemaResolver>(
 
     match (&variant.kind, content) {
         // Unit variants
-        (VariantKind::Unit, VariantContent::None) => Ok(()),
-        (VariantKind::Unit, VariantContent::Named(NamedContent::Unit)) => Ok(()),
-        (VariantKind::Unit, VariantContent::Value(Value::Unit)) => Ok(()),
+        (
+            VariantKind::Unit,
+            VariantContent::None
+            | VariantContent::Named(NamedContent::Unit)
+            | VariantContent::Value(Value::Unit),
+        ) => Ok(()),
 
         // Tuple variants from NamedContent
-        (VariantKind::Tuple(types), VariantContent::Named(NamedContent::Tuple(items))) => {
-            validate_tuple_elements(types, items, ctx)
-        }
-        // Tuple variants from Value (Map-style)
-        (VariantKind::Tuple(types), VariantContent::Value(Value::Seq(items))) => {
-            validate_tuple_elements(types, items, ctx)
-        }
-        (VariantKind::Tuple(types), VariantContent::Value(Value::Tuple(items))) => {
-            validate_tuple_elements(types, items, ctx)
-        }
+        (
+            VariantKind::Tuple(types),
+            VariantContent::Named(NamedContent::Tuple(items))
+            | VariantContent::Value(Value::Seq(items) | Value::Tuple(items)),
+        ) => validate_tuple_elements(types, items, ctx),
 
         // Struct variants from NamedContent
         (
@@ -504,7 +507,7 @@ fn validate_enum_internal<R: SchemaResolver>(
             Err(ValidationError::type_mismatch("variant content", "none").in_variant(variant_name))
         }
         (_, _) => Err(ValidationError::type_mismatch(
-            format!("{:?}", variant.kind),
+            format!("{variant_kind:?}", variant_kind = variant.kind),
             "mismatched content",
         )
         .in_variant(variant_name)),

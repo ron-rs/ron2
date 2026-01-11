@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use ron2_derive::{FromRon, ToRon};
 
@@ -17,8 +17,8 @@ pub struct Schema {
 /// # Trait-Based Design
 ///
 /// This enum works alongside the trait system in `crate::traits`:
-/// - `List` represents any type implementing `RonList` (Vec, VecDeque, custom types)
-/// - `Map` represents any type implementing `RonMap` (HashMap, BTreeMap, custom types)
+/// - `List` represents any type implementing `RonList` (`Vec`, `VecDeque`, custom types)
+/// - `Map` represents any type implementing `RonMap` (`HashMap`, `BTreeMap`, custom types)
 ///
 /// Custom types implementing these traits will serialize to the same `TypeKind`
 /// variants, allowing the validation and LSP systems to work uniformly.
@@ -77,6 +77,7 @@ pub enum TypeKind {
 
 impl TypeKind {
     /// Get inner type for Option or List.
+    #[must_use]
     pub fn inner_type(&self) -> Option<&TypeKind> {
         match self {
             TypeKind::Option(inner) | TypeKind::List(inner) => Some(inner),
@@ -85,6 +86,7 @@ impl TypeKind {
     }
 
     /// Get key/value types for Map.
+    #[must_use]
     pub fn map_types(&self) -> Option<(&TypeKind, &TypeKind)> {
         match self {
             TypeKind::Map { key, value } => Some((key, value)),
@@ -93,6 +95,7 @@ impl TypeKind {
     }
 
     /// Get tuple element types.
+    #[must_use]
     pub fn tuple_types(&self) -> Option<&[TypeKind]> {
         match self {
             TypeKind::Tuple(types) => Some(types),
@@ -101,6 +104,7 @@ impl TypeKind {
     }
 
     /// Get struct fields.
+    #[must_use]
     pub fn struct_fields(&self) -> Option<&[Field]> {
         match self {
             TypeKind::Struct { fields } => Some(fields),
@@ -109,6 +113,7 @@ impl TypeKind {
     }
 
     /// Get enum variants.
+    #[must_use]
     pub fn enum_variants(&self) -> Option<&[Variant]> {
         match self {
             TypeKind::Enum { variants } => Some(variants),
@@ -116,7 +121,8 @@ impl TypeKind {
         }
     }
 
-    /// Get TypeRef path.
+    /// Get `TypeRef` path.
+    #[must_use]
     pub fn type_ref_path(&self) -> Option<&str> {
         match self {
             TypeKind::TypeRef(path) => Some(path),
@@ -125,6 +131,7 @@ impl TypeKind {
     }
 
     /// Check if this is a primitive type (no nested types).
+    #[must_use]
     pub fn is_primitive(&self) -> bool {
         matches!(
             self,
@@ -167,22 +174,22 @@ impl fmt::Display for TypeKind {
             TypeKind::Char => write!(f, "char"),
             TypeKind::String => write!(f, "String"),
             TypeKind::Unit => write!(f, "()"),
-            TypeKind::Option(inner) => write!(f, "Option<{}>", inner),
-            TypeKind::List(inner) => write!(f, "List<{}>", inner),
-            TypeKind::Map { key, value } => write!(f, "Map<{}, {}>", key, value),
+            TypeKind::Option(inner) => write!(f, "Option<{inner}>"),
+            TypeKind::List(inner) => write!(f, "List<{inner}>"),
+            TypeKind::Map { key, value } => write!(f, "Map<{key}, {value}>"),
             TypeKind::Tuple(types) => {
                 write!(f, "(")?;
                 for (i, ty) in types.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", ty)?;
+                    write!(f, "{ty}")?;
                 }
                 write!(f, ")")
             }
             TypeKind::Struct { .. } => write!(f, "Struct"),
             TypeKind::Enum { .. } => write!(f, "Enum"),
-            TypeKind::TypeRef(path) => write!(f, "{}", path),
+            TypeKind::TypeRef(path) => write!(f, "{path}"),
         }
     }
 }
@@ -201,7 +208,7 @@ pub struct Field {
     #[ron(default, skip_serializing_if = "std::ops::Not::not")]
     pub optional: bool,
     /// Whether this field is flattened (its fields are merged into the parent).
-    /// Only valid when `ty` is a Struct or TypeRef to a struct.
+    /// Only valid when `ty` is a Struct or `TypeRef` to a struct.
     #[ron(default, skip_serializing_if = "std::ops::Not::not")]
     pub flattened: bool,
 }
@@ -231,11 +238,13 @@ pub enum VariantKind {
 
 impl Schema {
     /// Create a new schema with the given kind.
+    #[must_use]
     pub fn new(kind: TypeKind) -> Self {
         Self { doc: None, kind }
     }
 
     /// Create a new schema with documentation.
+    #[must_use]
     pub fn with_doc(doc: impl Into<String>, kind: TypeKind) -> Self {
         Self {
             doc: Some(doc.into()),
@@ -246,6 +255,7 @@ impl Schema {
 
 impl Field {
     /// Create a new required field.
+    #[must_use]
     pub fn new(name: impl Into<String>, ty: TypeKind) -> Self {
         Self {
             name: name.into(),
@@ -257,6 +267,7 @@ impl Field {
     }
 
     /// Create a new optional field.
+    #[must_use]
     pub fn optional(name: impl Into<String>, ty: TypeKind) -> Self {
         Self {
             name: name.into(),
@@ -269,6 +280,7 @@ impl Field {
 
     /// Create a new flattened field.
     /// Flattened fields have their inner struct fields merged into the parent.
+    #[must_use]
     pub fn flattened(name: impl Into<String>, ty: TypeKind) -> Self {
         Self {
             name: name.into(),
@@ -280,12 +292,14 @@ impl Field {
     }
 
     /// Add documentation to this field.
+    #[must_use]
     pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
         self.doc = Some(doc.into());
         self
     }
 
     /// Mark this field as flattened.
+    #[must_use]
     pub fn with_flatten(mut self) -> Self {
         self.flattened = true;
         self
@@ -294,6 +308,7 @@ impl Field {
 
 impl Variant {
     /// Create a unit variant.
+    #[must_use]
     pub fn unit(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -303,6 +318,7 @@ impl Variant {
     }
 
     /// Create a tuple variant.
+    #[must_use]
     pub fn tuple(name: impl Into<String>, fields: Vec<TypeKind>) -> Self {
         Self {
             name: name.into(),
@@ -312,6 +328,7 @@ impl Variant {
     }
 
     /// Create a struct variant.
+    #[must_use]
     pub fn struct_variant(name: impl Into<String>, fields: Vec<Field>) -> Self {
         Self {
             name: name.into(),
@@ -321,6 +338,7 @@ impl Variant {
     }
 
     /// Add documentation to this variant.
+    #[must_use]
     pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
         self.doc = Some(doc.into());
         self

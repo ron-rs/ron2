@@ -32,6 +32,7 @@ pub fn resolve_schema_dir() -> Result<PathBuf> {
 /// Convert a Rust type path to a schema file path.
 ///
 /// Example: `my_crate::config::AppConfig` -> `my_crate/config/AppConfig.schema.ron`
+#[must_use]
 pub fn type_path_to_file_path(type_path: &str) -> PathBuf {
     let parts: Vec<&str> = type_path.split("::").collect();
     let mut path = PathBuf::new();
@@ -39,7 +40,7 @@ pub fn type_path_to_file_path(type_path: &str) -> PathBuf {
     for (i, part) in parts.iter().enumerate() {
         if i == parts.len() - 1 {
             // Last part is the type name
-            path.push(format!("{}.{}", part, SCHEMA_EXTENSION));
+            path.push(format!("{part}.{SCHEMA_EXTENSION}"));
         } else {
             path.push(part);
         }

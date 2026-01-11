@@ -24,9 +24,17 @@
 //! }
 //! ```
 
+use alloc::borrow::Cow;
+use alloc::collections::{BTreeMap, BTreeSet, LinkedList, VecDeque};
+use alloc::rc::Rc;
+use alloc::sync::Arc;
+use core::cell::{Cell, RefCell};
+use core::hash::BuildHasher;
+use core::marker::PhantomData;
 use crate::schema::StorageError;
 use crate::schema::{Schema, SchemaError, TypeKind};
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 /// Core trait for types that can be represented in the RON schema system.
 ///
@@ -60,6 +68,7 @@ pub trait RonSchemaType {
     /// Returns optional documentation for this type.
     ///
     /// Override this to provide documentation that appears in the schema.
+    #[must_use]
     fn type_doc() -> Option<&'static str> {
         None
     }
@@ -69,9 +78,10 @@ pub trait RonSchemaType {
     /// The default implementation constructs a schema from `type_kind()` and `type_doc()`.
     /// Types using `#[derive(RonSchema)]` will override this with a more complete
     /// implementation that includes field-level documentation.
+    #[must_use]
     fn schema() -> Schema {
         Schema {
-            doc: Self::type_doc().map(|s| s.to_string()),
+            doc: Self::type_doc().map(str::to_string),
             kind: Self::type_kind(),
         }
     }
@@ -80,6 +90,7 @@ pub trait RonSchemaType {
     ///
     /// This is used to locate schema files and for `TypeRef` references.
     /// Returns `None` for primitive types and standard library types.
+    #[must_use]
     fn type_path() -> Option<&'static str> {
         None
     }
@@ -91,7 +102,7 @@ pub trait RonSchemaType {
     ///
     /// Returns the path to the written schema file, or `None` if this type
     /// doesn't support schema storage (e.g., primitive types).
-    fn write_schema(output_dir: Option<&std::path::Path>) -> Result<PathBuf, SchemaError> {
+    fn write_schema(output_dir: Option<&Path>) -> Result<PathBuf, SchemaError> {
         let type_path = Self::type_path().ok_or_else(|| {
             SchemaError::Storage(StorageError::Io(
                 "type does not support schema storage".to_string(),
@@ -130,6 +141,7 @@ pub trait RonList: RonSchemaType {
     type Element: RonSchemaType;
 
     /// Returns the `TypeKind` of the element type.
+    #[must_use]
     fn element_type_kind() -> TypeKind {
         Self::Element::type_kind()
     }
@@ -170,11 +182,13 @@ pub trait RonMap: RonSchemaType {
     type Value: RonSchemaType;
 
     /// Returns the `TypeKind` of the key type.
+    #[must_use]
     fn key_type_kind() -> TypeKind {
         Self::Key::type_kind()
     }
 
     /// Returns the `TypeKind` of the value type.
+    #[must_use]
     fn value_type_kind() -> TypeKind {
         Self::Value::type_kind()
     }
@@ -190,6 +204,7 @@ pub trait RonOptional: RonSchemaType {
     type Inner: RonSchemaType;
 
     /// Returns the `TypeKind` of the inner type.
+    #[must_use]
     fn inner_type_kind() -> TypeKind {
         Self::Inner::type_kind()
     }
@@ -363,7 +378,7 @@ impl<T: RonSchemaType, const N: usize> RonList for [T; N] {
 
 // HashMap and BTreeMap
 
-impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for std::collections::HashMap<K, V> {
+impl<K: RonSchemaType, V: RonSchemaType, S: BuildHasher> RonSchemaType for HashMap<K, V, S> {
     fn type_kind() -> TypeKind {
         TypeKind::Map {
             key: Box::new(K::type_kind()),
@@ -372,12 +387,12 @@ impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for std::collections::Has
     }
 }
 
-impl<K: RonSchemaType, V: RonSchemaType> RonMap for std::collections::HashMap<K, V> {
+impl<K: RonSchemaType, V: RonSchemaType, S: BuildHasher> RonMap for HashMap<K, V, S> {
     type Key = K;
     type Value = V;
 }
 
-impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for std::collections::BTreeMap<K, V> {
+impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for BTreeMap<K, V> {
     fn type_kind() -> TypeKind {
         TypeKind::Map {
             key: Box::new(K::type_kind()),
@@ -386,54 +401,54 @@ impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for std::collections::BTr
     }
 }
 
-impl<K: RonSchemaType, V: RonSchemaType> RonMap for std::collections::BTreeMap<K, V> {
+impl<K: RonSchemaType, V: RonSchemaType> RonMap for BTreeMap<K, V> {
     type Key = K;
     type Value = V;
 }
 
 // HashSet and BTreeSet (as lists)
 
-impl<T: RonSchemaType> RonSchemaType for std::collections::HashSet<T> {
+impl<T: RonSchemaType, S: BuildHasher> RonSchemaType for HashSet<T, S> {
     fn type_kind() -> TypeKind {
         TypeKind::List(Box::new(T::type_kind()))
     }
 }
 
-impl<T: RonSchemaType> RonList for std::collections::HashSet<T> {
+impl<T: RonSchemaType, S: BuildHasher> RonList for HashSet<T, S> {
     type Element = T;
 }
 
-impl<T: RonSchemaType> RonSchemaType for std::collections::BTreeSet<T> {
+impl<T: RonSchemaType> RonSchemaType for BTreeSet<T> {
     fn type_kind() -> TypeKind {
         TypeKind::List(Box::new(T::type_kind()))
     }
 }
 
-impl<T: RonSchemaType> RonList for std::collections::BTreeSet<T> {
+impl<T: RonSchemaType> RonList for BTreeSet<T> {
     type Element = T;
 }
 
 // VecDeque
 
-impl<T: RonSchemaType> RonSchemaType for std::collections::VecDeque<T> {
+impl<T: RonSchemaType> RonSchemaType for VecDeque<T> {
     fn type_kind() -> TypeKind {
         TypeKind::List(Box::new(T::type_kind()))
     }
 }
 
-impl<T: RonSchemaType> RonList for std::collections::VecDeque<T> {
+impl<T: RonSchemaType> RonList for VecDeque<T> {
     type Element = T;
 }
 
 // LinkedList
 
-impl<T: RonSchemaType> RonSchemaType for std::collections::LinkedList<T> {
+impl<T: RonSchemaType> RonSchemaType for LinkedList<T> {
     fn type_kind() -> TypeKind {
         TypeKind::List(Box::new(T::type_kind()))
     }
 }
 
-impl<T: RonSchemaType> RonList for std::collections::LinkedList<T> {
+impl<T: RonSchemaType> RonList for LinkedList<T> {
     type Element = T;
 }
 
@@ -447,13 +462,13 @@ impl<T: RonSchemaType> RonSchemaType for Box<T> {
 
 // Rc<T> and Arc<T>
 
-impl<T: RonSchemaType> RonSchemaType for std::rc::Rc<T> {
+impl<T: RonSchemaType> RonSchemaType for Rc<T> {
     fn type_kind() -> TypeKind {
         T::type_kind()
     }
 }
 
-impl<T: RonSchemaType> RonSchemaType for std::sync::Arc<T> {
+impl<T: RonSchemaType> RonSchemaType for Arc<T> {
     fn type_kind() -> TypeKind {
         T::type_kind()
     }
@@ -461,13 +476,13 @@ impl<T: RonSchemaType> RonSchemaType for std::sync::Arc<T> {
 
 // Cell<T> and RefCell<T>
 
-impl<T: RonSchemaType> RonSchemaType for std::cell::Cell<T> {
+impl<T: RonSchemaType> RonSchemaType for Cell<T> {
     fn type_kind() -> TypeKind {
         T::type_kind()
     }
 }
 
-impl<T: RonSchemaType> RonSchemaType for std::cell::RefCell<T> {
+impl<T: RonSchemaType> RonSchemaType for RefCell<T> {
     fn type_kind() -> TypeKind {
         T::type_kind()
     }
@@ -489,7 +504,7 @@ impl<T: RonSchemaType> RonSchemaType for std::sync::RwLock<T> {
 
 // Cow<T>
 
-impl<'a, T: RonSchemaType + ToOwned + ?Sized> RonSchemaType for std::borrow::Cow<'a, T> {
+impl<T: RonSchemaType + ToOwned + ?Sized> RonSchemaType for Cow<'_, T> {
     fn type_kind() -> TypeKind {
         T::type_kind()
     }
@@ -761,7 +776,7 @@ impl RonSchemaType for std::ffi::OsStr {
 
 // PhantomData
 
-impl<T: ?Sized> RonSchemaType for std::marker::PhantomData<T> {
+impl<T: ?Sized> RonSchemaType for PhantomData<T> {
     fn type_kind() -> TypeKind {
         TypeKind::Unit
     }
