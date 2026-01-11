@@ -2,9 +2,11 @@
 
 use alloc::string::String;
 
-use crate::ast::Expr;
+use crate::ast::{
+    Expr, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
+    synthetic_string, synthetic_unit,
+};
 use crate::error::{Error, Result, SpannedResult};
-use crate::value::{Number, Value};
 
 use super::number::{parse_float_from_raw, parse_integer_from_raw};
 use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
@@ -14,42 +16,42 @@ use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
 // =============================================================================
 
 impl ToRon for bool {
-    fn to_ron_value(&self) -> Result<Value> {
-        Ok(Value::Bool(*self))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        Ok(synthetic_bool(*self))
     }
 }
 
 impl ToRon for char {
-    fn to_ron_value(&self) -> Result<Value> {
-        Ok(Value::Char(*self))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        Ok(synthetic_char(*self))
     }
 }
 
 impl ToRon for String {
-    fn to_ron_value(&self) -> Result<Value> {
-        Ok(Value::String(self.clone()))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        Ok(synthetic_string(self.clone()))
     }
 }
 
 impl ToRon for str {
-    fn to_ron_value(&self) -> Result<Value> {
-        Ok(Value::String(self.into()))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        Ok(synthetic_string(self.into()))
     }
 }
 
 impl ToRon for () {
-    fn to_ron_value(&self) -> Result<Value> {
-        Ok(Value::Unit)
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        Ok(synthetic_unit())
     }
 }
 
 // Integer types
 macro_rules! impl_to_ron_int {
-    ($($ty:ty => $variant:ident),+ $(,)?) => {
+    ($($ty:ty),+ $(,)?) => {
         $(
             impl ToRon for $ty {
-                fn to_ron_value(&self) -> Result<Value> {
-                    Ok(Value::Number(Number::$variant(*self)))
+                fn to_ast(&self) -> Result<Expr<'static>> {
+                    Ok(synthetic_integer(*self))
                 }
             }
         )+
@@ -57,32 +59,25 @@ macro_rules! impl_to_ron_int {
 }
 
 impl_to_ron_int! {
-    i8 => I8,
-    i16 => I16,
-    i32 => I32,
-    i64 => I64,
-    u8 => U8,
-    u16 => U16,
-    u32 => U32,
-    u64 => U64,
+    i8, i16, i32, i64,
+    u8, u16, u32, u64,
 }
 
 #[cfg(feature = "integer128")]
 impl_to_ron_int! {
-    i128 => I128,
-    u128 => U128,
+    i128, u128,
 }
 
 // Float types
 impl ToRon for f32 {
-    fn to_ron_value(&self) -> Result<Value> {
-        Ok(Value::Number(Number::F32((*self).into())))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        Ok(synthetic_f32(*self))
     }
 }
 
 impl ToRon for f64 {
-    fn to_ron_value(&self) -> Result<Value> {
-        Ok(Value::Number(Number::F64((*self).into())))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        Ok(synthetic_f64(*self))
     }
 }
 

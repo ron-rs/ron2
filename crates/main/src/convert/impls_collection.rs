@@ -13,9 +13,8 @@ use core::hash::BuildHasher;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::Expr;
+use crate::ast::{Expr, synthetic_map, synthetic_seq};
 use crate::error::{Error, Result, SpannedResult};
-use crate::value::{Map, Value};
 
 use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
 
@@ -24,93 +23,93 @@ use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
 // =============================================================================
 
 impl<T: ToRon> ToRon for Vec<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
-        Ok(Value::Seq(values?))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
+        Ok(synthetic_seq(items?))
     }
 }
 
 impl<T: ToRon> ToRon for VecDeque<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
-        Ok(Value::Seq(values?))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
+        Ok(synthetic_seq(items?))
     }
 }
 
 impl<T: ToRon> ToRon for LinkedList<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
-        Ok(Value::Seq(values?))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
+        Ok(synthetic_seq(items?))
     }
 }
 
 #[cfg(feature = "std")]
 impl<T: ToRon + Eq + Hash, S: BuildHasher> ToRon for HashSet<T, S> {
-    fn to_ron_value(&self) -> Result<Value> {
-        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
-        Ok(Value::Seq(values?))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
+        Ok(synthetic_seq(items?))
     }
 }
 
 impl<T: ToRon + Ord> ToRon for BTreeSet<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
-        Ok(Value::Seq(values?))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
+        Ok(synthetic_seq(items?))
     }
 }
 
 impl<T: ToRon, const N: usize> ToRon for [T; N] {
-    fn to_ron_value(&self) -> Result<Value> {
-        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
-        Ok(Value::Seq(values?))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
+        Ok(synthetic_seq(items?))
     }
 }
 
 impl<T: ToRon> ToRon for [T] {
-    fn to_ron_value(&self) -> Result<Value> {
-        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
-        Ok(Value::Seq(values?))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
+        Ok(synthetic_seq(items?))
     }
 }
 
 // Map types
 #[cfg(feature = "std")]
 impl<K: ToRon + Eq + Hash, V: ToRon, S: BuildHasher> ToRon for HashMap<K, V, S> {
-    fn to_ron_value(&self) -> Result<Value> {
-        let mut map = Map::new();
-        for (k, v) in self {
-            map.insert(k.to_ron_value()?, v.to_ron_value()?);
-        }
-        Ok(Value::Map(map))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let entries: Result<Vec<_>> = self
+            .iter()
+            .map(|(k, v)| Ok((k.to_ast()?, v.to_ast()?)))
+            .collect();
+        Ok(synthetic_map(entries?))
     }
 }
 
 impl<K: ToRon + Ord, V: ToRon> ToRon for BTreeMap<K, V> {
-    fn to_ron_value(&self) -> Result<Value> {
-        let mut map = Map::new();
-        for (k, v) in self {
-            map.insert(k.to_ron_value()?, v.to_ron_value()?);
-        }
-        Ok(Value::Map(map))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let entries: Result<Vec<_>> = self
+            .iter()
+            .map(|(k, v)| Ok((k.to_ast()?, v.to_ast()?)))
+            .collect();
+        Ok(synthetic_map(entries?))
     }
 }
 
 impl<K: ToRon + Eq + Hash, V: ToRon, S: core::hash::BuildHasher> ToRon
     for indexmap::IndexMap<K, V, S>
 {
-    fn to_ron_value(&self) -> Result<Value> {
-        let mut map = Map::new();
-        for (k, v) in self {
-            map.insert(k.to_ron_value()?, v.to_ron_value()?);
-        }
-        Ok(Value::Map(map))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let entries: Result<Vec<_>> = self
+            .iter()
+            .map(|(k, v)| Ok((k.to_ast()?, v.to_ast()?)))
+            .collect();
+        Ok(synthetic_map(entries?))
     }
 }
 
 impl<T: ToRon + Eq + Hash, S: core::hash::BuildHasher> ToRon for indexmap::IndexSet<T, S> {
-    fn to_ron_value(&self) -> Result<Value> {
-        let values: Result<Vec<_>> = self.iter().map(ToRon::to_ron_value).collect();
-        Ok(Value::Seq(values?))
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
+        Ok(synthetic_seq(items?))
     }
 }
 

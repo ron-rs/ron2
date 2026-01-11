@@ -1,6 +1,6 @@
 use std::fmt;
 
-use ron2::ast::{expr_to_value, Expr};
+use ron2::ast::{expr_to_value, value_to_expr, Expr};
 use ron2::error::{Error, Result, SpannedError, SpannedResult};
 use ron2::value::{NamedContent, StructFields};
 use ron2::{FromRon, ToRon, Value};
@@ -342,143 +342,145 @@ impl Variant {
 // =============================================================================
 
 impl ToRon for Schema {
-    fn to_ron_value(&self) -> Result<Value> {
+    fn to_ast(&self) -> Result<Expr<'static>> {
         let mut fields: StructFields = Vec::new();
         if let Some(ref doc) = self.doc {
             fields.push(("doc".to_string(), Value::String(doc.clone())));
         }
         fields.push(("kind".to_string(), self.kind.to_ron_value()?));
-        Ok(Value::Named {
+        let value = Value::Named {
             name: "Schema".to_string(),
             content: NamedContent::Struct(fields),
-        })
+        };
+        Ok(value_to_expr(value))
     }
 }
 
 impl ToRon for TypeKind {
-    fn to_ron_value(&self) -> Result<Value> {
-        match self {
-            TypeKind::Bool => Ok(Value::Named {
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let value = match self {
+            TypeKind::Bool => Value::Named {
                 name: "Bool".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::I8 => Ok(Value::Named {
+            },
+            TypeKind::I8 => Value::Named {
                 name: "I8".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::I16 => Ok(Value::Named {
+            },
+            TypeKind::I16 => Value::Named {
                 name: "I16".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::I32 => Ok(Value::Named {
+            },
+            TypeKind::I32 => Value::Named {
                 name: "I32".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::I64 => Ok(Value::Named {
+            },
+            TypeKind::I64 => Value::Named {
                 name: "I64".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::I128 => Ok(Value::Named {
+            },
+            TypeKind::I128 => Value::Named {
                 name: "I128".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::U8 => Ok(Value::Named {
+            },
+            TypeKind::U8 => Value::Named {
                 name: "U8".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::U16 => Ok(Value::Named {
+            },
+            TypeKind::U16 => Value::Named {
                 name: "U16".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::U32 => Ok(Value::Named {
+            },
+            TypeKind::U32 => Value::Named {
                 name: "U32".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::U64 => Ok(Value::Named {
+            },
+            TypeKind::U64 => Value::Named {
                 name: "U64".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::U128 => Ok(Value::Named {
+            },
+            TypeKind::U128 => Value::Named {
                 name: "U128".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::F32 => Ok(Value::Named {
+            },
+            TypeKind::F32 => Value::Named {
                 name: "F32".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::F64 => Ok(Value::Named {
+            },
+            TypeKind::F64 => Value::Named {
                 name: "F64".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::Char => Ok(Value::Named {
+            },
+            TypeKind::Char => Value::Named {
                 name: "Char".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::String => Ok(Value::Named {
+            },
+            TypeKind::String => Value::Named {
                 name: "String".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::Unit => Ok(Value::Named {
+            },
+            TypeKind::Unit => Value::Named {
                 name: "Unit".to_string(),
                 content: NamedContent::Unit,
-            }),
-            TypeKind::Option(inner) => Ok(Value::Named {
+            },
+            TypeKind::Option(inner) => Value::Named {
                 name: "Option".to_string(),
                 content: NamedContent::Tuple(vec![inner.to_ron_value()?]),
-            }),
-            TypeKind::List(inner) => Ok(Value::Named {
+            },
+            TypeKind::List(inner) => Value::Named {
                 name: "List".to_string(),
                 content: NamedContent::Tuple(vec![inner.to_ron_value()?]),
-            }),
+            },
             TypeKind::Map { key, value } => {
                 let fields: StructFields = vec![
                     ("key".to_string(), key.to_ron_value()?),
                     ("value".to_string(), value.to_ron_value()?),
                 ];
-                Ok(Value::Named {
+                Value::Named {
                     name: "Map".to_string(),
                     content: NamedContent::Struct(fields),
-                })
+                }
             }
             TypeKind::Tuple(types) => {
                 let values: Result<Vec<_>, _> = types.iter().map(|t| t.to_ron_value()).collect();
-                Ok(Value::Named {
+                Value::Named {
                     name: "Tuple".to_string(),
                     content: NamedContent::Tuple(vec![Value::Seq(values?)]),
-                })
+                }
             }
             TypeKind::Struct { fields } => {
                 let field_values: Result<Vec<_>, _> =
                     fields.iter().map(|f| f.to_ron_value()).collect();
-                Ok(Value::Named {
+                Value::Named {
                     name: "Struct".to_string(),
                     content: NamedContent::Struct(vec![(
                         "fields".to_string(),
                         Value::Seq(field_values?),
                     )]),
-                })
+                }
             }
             TypeKind::Enum { variants } => {
                 let variant_values: Result<Vec<_>, _> =
                     variants.iter().map(|v| v.to_ron_value()).collect();
-                Ok(Value::Named {
+                Value::Named {
                     name: "Enum".to_string(),
                     content: NamedContent::Struct(vec![(
                         "variants".to_string(),
                         Value::Seq(variant_values?),
                     )]),
-                })
+                }
             }
-            TypeKind::TypeRef(path) => Ok(Value::Named {
+            TypeKind::TypeRef(path) => Value::Named {
                 name: "TypeRef".to_string(),
                 content: NamedContent::Tuple(vec![Value::String(path.clone())]),
-            }),
-        }
+            },
+        };
+        Ok(value_to_expr(value))
     }
 }
 
 impl ToRon for Field {
-    fn to_ron_value(&self) -> Result<Value> {
+    fn to_ast(&self) -> Result<Expr<'static>> {
         let mut fields: StructFields = Vec::new();
         fields.push(("name".to_string(), Value::String(self.name.clone())));
         fields.push(("ty".to_string(), self.ty.to_ron_value()?));
@@ -491,51 +493,54 @@ impl ToRon for Field {
         if self.flattened {
             fields.push(("flattened".to_string(), Value::Bool(true)));
         }
-        Ok(Value::Named {
+        let value = Value::Named {
             name: "Field".to_string(),
             content: NamedContent::Struct(fields),
-        })
+        };
+        Ok(value_to_expr(value))
     }
 }
 
 impl ToRon for Variant {
-    fn to_ron_value(&self) -> Result<Value> {
+    fn to_ast(&self) -> Result<Expr<'static>> {
         let mut fields: StructFields = Vec::new();
         fields.push(("name".to_string(), Value::String(self.name.clone())));
         if let Some(ref doc) = self.doc {
             fields.push(("doc".to_string(), Value::String(doc.clone())));
         }
         fields.push(("kind".to_string(), self.kind.to_ron_value()?));
-        Ok(Value::Named {
+        let value = Value::Named {
             name: "Variant".to_string(),
             content: NamedContent::Struct(fields),
-        })
+        };
+        Ok(value_to_expr(value))
     }
 }
 
 impl ToRon for VariantKind {
-    fn to_ron_value(&self) -> Result<Value> {
-        match self {
-            VariantKind::Unit => Ok(Value::Named {
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        let value = match self {
+            VariantKind::Unit => Value::Named {
                 name: "Unit".to_string(),
                 content: NamedContent::Unit,
-            }),
+            },
             VariantKind::Tuple(types) => {
                 let values: Result<Vec<_>, _> = types.iter().map(|t| t.to_ron_value()).collect();
-                Ok(Value::Named {
+                Value::Named {
                     name: "Tuple".to_string(),
                     content: NamedContent::Tuple(vec![Value::Seq(values?)]),
-                })
+                }
             }
             VariantKind::Struct(fields) => {
                 let field_values: Result<Vec<_>, _> =
                     fields.iter().map(|f| f.to_ron_value()).collect();
-                Ok(Value::Named {
+                Value::Named {
                     name: "Struct".to_string(),
                     content: NamedContent::Tuple(vec![Value::Seq(field_values?)]),
-                })
+                }
             }
-        }
+        };
+        Ok(value_to_expr(value))
     }
 }
 

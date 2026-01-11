@@ -9,7 +9,7 @@
 //! - Struct fields use PARENTHESES: `Point(x: 1, y: 2)`
 //! - Curly braces are for MAPS only: `{ "key": value }`
 
-use ron2::{NamedContent, Number, PrettyConfig, Value, from_str, to_string, to_string_pretty};
+use ron2::{FormatConfig, NamedContent, Number, ToRon, Value, from_str};
 
 // =============================================================================
 // Unit Named Types - Edge Cases
@@ -188,7 +188,10 @@ fn serialize_named_unit() {
         name: String::from("MyType"),
         content: NamedContent::Unit,
     };
-    assert_eq!(to_string(&value).unwrap(), "MyType");
+    assert_eq!(
+        value.to_ron_with(&FormatConfig::Minimal).unwrap(),
+        "MyType"
+    );
 }
 
 #[test]
@@ -200,7 +203,10 @@ fn serialize_named_tuple() {
             Value::Number(Number::U8(2)),
         ]),
     };
-    assert_eq!(to_string(&value).unwrap(), "Point(1,2)");
+    assert_eq!(
+        value.to_ron_with(&FormatConfig::Minimal).unwrap(),
+        "Point(1,2)"
+    );
 }
 
 #[test]
@@ -212,7 +218,10 @@ fn serialize_named_struct() {
             (String::from("y"), Value::Number(Number::U8(2))),
         ]),
     };
-    assert_eq!(to_string(&value).unwrap(), "Point(x:1,y:2)");
+    assert_eq!(
+        value.to_ron_with(&FormatConfig::Minimal).unwrap(),
+        "Point(x:1,y:2)"
+    );
 }
 
 #[test]
@@ -224,7 +233,7 @@ fn serialize_named_struct_pretty() {
             (String::from("y"), Value::Number(Number::U8(2))),
         ]),
     };
-    let pretty = to_string_pretty(&value, PrettyConfig::new()).unwrap();
+    let pretty = value.to_ron().unwrap();
     assert!(pretty.contains("x: 1"));
     assert!(pretty.contains("y: 2"));
     assert!(pretty.contains('\n'));
@@ -375,7 +384,7 @@ fn realistic_config_file() {
     )"#;
 
     let value = from_str(input).unwrap();
-    let serialized = to_string(&value).unwrap();
+    let serialized = value.to_ron_with(&FormatConfig::Minimal).unwrap();
     let reparsed = from_str(&serialized).unwrap();
     assert_eq!(value, reparsed);
 }

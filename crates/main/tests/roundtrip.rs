@@ -2,12 +2,14 @@
 //!
 //! These tests verify that parsing and serialization are consistent.
 
-use ron2::{Map, NamedContent, Number, PrettyConfig, Value, from_str, to_string, to_string_pretty};
+use ron2::{FormatConfig, Map, NamedContent, Number, ToRon, Value, from_str};
 
 /// Helper: parse, serialize, parse again, and verify values match.
 fn roundtrip(input: &str) -> Value {
     let value = from_str(input).unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
-    let serialized = to_string(&value).unwrap_or_else(|e| panic!("Failed to serialize: {e}"));
+    let serialized = value
+        .to_ron_with(&FormatConfig::Minimal)
+        .unwrap_or_else(|e| panic!("Failed to serialize: {e}"));
     let reparsed = from_str(&serialized)
         .unwrap_or_else(|e| panic!("Failed to reparse '{serialized}' (from '{input}'): {e}"));
     assert_eq!(value, reparsed, "Roundtrip mismatch for '{input}'");
@@ -17,7 +19,8 @@ fn roundtrip(input: &str) -> Value {
 /// Helper: roundtrip with pretty printing.
 fn roundtrip_pretty(input: &str) -> Value {
     let value = from_str(input).unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
-    let serialized = to_string_pretty(&value, PrettyConfig::new())
+    let serialized = value
+        .to_ron()
         .unwrap_or_else(|e| panic!("Failed to serialize: {e}"));
     let reparsed = from_str(&serialized)
         .unwrap_or_else(|e| panic!("Failed to reparse '{serialized}' (from '{input}'): {e}"));
@@ -1234,7 +1237,7 @@ fn struct_serializes_with_parentheses() {
     let value = from_str("Point(x: 1, y: 2)").unwrap();
 
     // Serialize and verify output uses parentheses
-    let serialized = to_string(&value).unwrap();
+    let serialized = value.to_ron_with(&FormatConfig::Minimal).unwrap();
     assert_eq!(serialized, "Point(x:1,y:2)");
     assert!(!serialized.contains('{'), "Struct should not use braces");
     assert!(!serialized.contains('}'), "Struct should not use braces");
@@ -1272,6 +1275,6 @@ fn brace_syntax_after_ident_is_rejected() {
 #[test]
 fn nested_struct_serializes_with_parentheses() {
     let value = from_str("Outer(inner: Inner(x: 1))").unwrap();
-    let serialized = to_string(&value).unwrap();
+    let serialized = value.to_ron_with(&FormatConfig::Minimal).unwrap();
     assert_eq!(serialized, "Outer(inner:Inner(x:1))");
 }

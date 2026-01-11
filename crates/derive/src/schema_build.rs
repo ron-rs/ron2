@@ -186,7 +186,6 @@ pub fn write_schema_at_compile_time(
     schema: &Schema,
     env_schema_dir: Option<&str>,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    use ron2::ser::PrettyConfig;
     use ron2_schema::ToRon;
     use std::path::PathBuf;
 
@@ -207,10 +206,8 @@ pub fn write_schema_at_compile_time(
     // Convert to file path
     let file_path = output_dir.join(ron2_schema::type_path_to_file_path(&type_path));
 
-    // Serialize
-    let value = schema.to_ron_value()?;
-    let config = PrettyConfig::default();
-    let contents = ron2::ser::to_string_pretty(&value, config)?;
+    // Serialize with pretty printing (default)
+    let contents = schema.to_ron()?;
 
     // Write
     if let Some(parent) = file_path.parent() {

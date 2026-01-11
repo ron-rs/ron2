@@ -3,6 +3,7 @@
 //! This module tests that ron2 can parse ron output and vice versa,
 //! validating roundtrips and semantic equivalence.
 
+use ron2::ast::FormatConfig;
 use ron2::{FromRon, ToRon, Value};
 use ron2_derive::{FromRon, ToRon};
 use serde::{Deserialize, Serialize};
@@ -742,9 +743,9 @@ mod struct_syntax {
     #[test]
     fn ron2_produces_standard_syntax() {
         let point = Point { x: 1, y: 2 };
-        let ron2_out = point.to_ron().unwrap();
+        let ron2_out = point.to_ron_with(&FormatConfig::Minimal).unwrap();
 
-        // ron2 produces compact output: Point(x:1,y:2)
+        // ron2 with Minimal format produces compact output: Point(x:1,y:2)
         assert_eq!(ron2_out, "Point(x:1,y:2)");
     }
 }

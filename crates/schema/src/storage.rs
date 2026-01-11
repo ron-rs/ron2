@@ -69,9 +69,7 @@ pub fn write_schema(
     }
 
     // Serialize with pretty printing
-    let value = schema.to_ron_value()?;
-    let config = ron2::ser::PrettyConfig::default();
-    let contents = ron2::ser::to_string_pretty(&value, config)?;
+    let contents = schema.to_ron()?;
 
     fs::write(&file_path, contents)?;
 

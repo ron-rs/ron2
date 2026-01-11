@@ -1,8 +1,13 @@
 //! AST formatter for RON documents.
 //!
-//! This module provides formatting of AST with comment preservation.
-//! Unlike the round-trip serializer (`ser.rs`), this module generates
-//! new formatting while preserving comment content.
+//! This module provides formatting of AST expressions and documents.
+//! All serialization flows through this module via [`format_expr`] or [`format_document`].
+//!
+//! # Format Modes
+//!
+//! - [`FormatConfig::Minimal`]: No whitespace, no comments. Most compact output.
+//! - [`FormatConfig::Compact`]: Single line with readable spacing.
+//! - [`FormatConfig::Pretty`]: Multi-line with indentation and comment preservation.
 
 use alloc::string::String;
 
@@ -12,17 +17,48 @@ use crate::ast::{
     TupleElement, TupleExpr,
 };
 
-/// Configuration for formatting RON documents.
+/// Controls how RON output is formatted.
 #[derive(Clone, Debug)]
-pub struct FormatConfig {
+pub enum FormatConfig {
+    /// No whitespace, no comments. Most compact output.
+    ///
+    /// Output example: `Point(x:1,y:2)`
+    Minimal,
+
+    /// Single line with readable spacing. No line wrapping.
+    ///
+    /// Output example: `Point(x: 1, y: 2)`
+    Compact,
+
+    /// Multi-line with indentation and line wrapping.
+    ///
+    /// Output example:
+    /// ```ron
+    /// Point(
+    ///     x: 1,
+    ///     y: 2,
+    /// )
+    /// ```
+    Pretty(PrettyConfig),
+}
+
+/// Configuration for pretty-printed output.
+#[derive(Clone, Debug)]
+pub struct PrettyConfig {
     /// Indentation string (default: 4 spaces).
     pub indent: String,
-    /// Character limit for compact formatting (default: 80).
+    /// Line width before wrapping (default: 80).
     /// Collections that fit within this limit are formatted on a single line.
     pub char_limit: usize,
 }
 
 impl Default for FormatConfig {
+    fn default() -> Self {
+        Self::Pretty(PrettyConfig::default())
+    }
+}
+
+impl Default for PrettyConfig {
     fn default() -> Self {
         Self {
             indent: String::from("    "),
@@ -32,7 +68,39 @@ impl Default for FormatConfig {
 }
 
 impl FormatConfig {
-    /// Create a new `FormatConfig` with default settings.
+    /// Create a new pretty `FormatConfig` with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the indentation string (only applies to Pretty mode).
+    #[must_use]
+    pub fn indent(self, indent: impl Into<String>) -> Self {
+        match self {
+            Self::Pretty(mut config) => {
+                config.indent = indent.into();
+                Self::Pretty(config)
+            }
+            other => other,
+        }
+    }
+
+    /// Set the character limit for compact formatting (only applies to Pretty mode).
+    #[must_use]
+    pub fn char_limit(self, char_limit: usize) -> Self {
+        match self {
+            Self::Pretty(mut config) => {
+                config.char_limit = char_limit;
+                Self::Pretty(config)
+            }
+            other => other,
+        }
+    }
+}
+
+impl PrettyConfig {
+    /// Create a new `PrettyConfig` with default settings.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -40,14 +108,14 @@ impl FormatConfig {
 
     /// Set the indentation string.
     #[must_use]
-    pub fn indent(mut self, indent: impl Into<String>) -> Self {
+    pub fn with_indent(mut self, indent: impl Into<String>) -> Self {
         self.indent = indent.into();
         self
     }
 
     /// Set the character limit for compact formatting.
     #[must_use]
-    pub fn char_limit(mut self, char_limit: usize) -> Self {
+    pub fn with_char_limit(mut self, char_limit: usize) -> Self {
         self.char_limit = char_limit;
         self
     }
@@ -56,10 +124,10 @@ impl FormatConfig {
 /// Format a RON document with the given configuration.
 ///
 /// This preserves comments while applying consistent formatting.
-/// The output always ends with a newline.
+/// For Pretty mode, the output always ends with a newline.
 ///
-/// Root-level collections are always formatted multiline, while nested
-/// collections use compact format if they fit within the character limit.
+/// Root-level collections are always formatted multiline in Pretty mode,
+/// while nested collections use compact format if they fit within the character limit.
 ///
 /// # Example
 ///
@@ -69,7 +137,7 @@ impl FormatConfig {
 /// let source = "Config(x:1,y:2)";
 /// let doc = parse_document(source).unwrap();
 /// let formatted = format_document(&doc, &FormatConfig::default());
-/// // Root collections are always multiline
+/// // Root collections are always multiline in Pretty mode
 /// assert_eq!(formatted, "Config(\n    x: 1,\n    y: 2,\n)\n");
 /// ```
 #[must_use]
@@ -79,12 +147,39 @@ pub fn format_document(doc: &Document<'_>, config: &FormatConfig) -> String {
     formatter.output
 }
 
+/// Format a RON expression with the given configuration.
+///
+/// This is the primary entry point for serializing values to RON strings.
+/// Unlike [`format_document`], this does not include document-level concerns
+/// like attributes or trailing newlines.
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::{format_expr, FormatConfig, value_to_expr};
+/// use ron2::Value;
+///
+/// let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
+/// let expr = value_to_expr(value);
+/// let minimal = format_expr(&expr, &FormatConfig::Minimal);
+/// assert_eq!(minimal, "[1,2]");
+/// ```
+#[must_use]
+pub fn format_expr(expr: &Expr<'_>, config: &FormatConfig) -> String {
+    let mut formatter = Formatter::new(config);
+    // For standalone expression formatting, don't force root to be multiline
+    // unless we're in Pretty mode (handled by is_root flag)
+    formatter.is_root = matches!(config, FormatConfig::Pretty(_));
+    formatter.format_expr(expr);
+    formatter.output
+}
+
 /// Internal formatter state.
 struct Formatter<'a> {
     config: &'a FormatConfig,
     output: String,
     indent_level: usize,
-    /// Whether we're formatting the root expression (compact mode disabled at root).
+    /// Whether we're formatting the root expression (forces multiline in Pretty mode).
     is_root: bool,
 }
 
@@ -98,21 +193,31 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// Returns the char limit, or MAX for non-Pretty modes (always compact).
+    fn char_limit(&self) -> usize {
+        match self.config {
+            FormatConfig::Pretty(config) => config.char_limit,
+            _ => usize::MAX,
+        }
+    }
+
     fn format_document(&mut self, doc: &Document<'_>) {
-        // Format leading comments (before attributes)
+        let is_pretty = matches!(self.config, FormatConfig::Pretty(_));
+
+        // Format leading comments (before attributes) - Pretty mode only
         self.format_leading_comments(&doc.leading);
 
-        // Format attributes (one per line)
+        // Format attributes (one per line in Pretty mode, inline in others)
         for attr in &doc.attributes {
             self.format_attribute(attr);
         }
 
-        // Empty line between attributes and value (if both exist)
-        if !doc.attributes.is_empty() && doc.value.is_some() {
+        // Empty line between attributes and value (if both exist) - Pretty mode only
+        if is_pretty && !doc.attributes.is_empty() && doc.value.is_some() {
             self.output.push('\n');
         }
 
-        // Format pre-value comments
+        // Format pre-value comments - Pretty mode only
         self.format_leading_comments(&doc.pre_value);
 
         // Format the main value
@@ -120,11 +225,11 @@ impl<'a> Formatter<'a> {
             self.format_expr(value);
         }
 
-        // Format trailing comments (at end of document, they're standalone)
+        // Format trailing comments (at end of document) - Pretty mode only
         self.format_leading_comments(&doc.trailing);
 
-        // Ensure file ends with newline if it has content
-        if !self.output.is_empty() && !self.output.ends_with('\n') {
+        // Ensure file ends with newline if it has content - Pretty mode only
+        if is_pretty && !self.output.is_empty() && !self.output.ends_with('\n') {
             self.output.push('\n');
         }
     }
@@ -251,7 +356,7 @@ impl<'a> Formatter<'a> {
         self.write_indent();
         self.format_expr(&entry.key);
         self.format_trailing_inline_comment(&entry.pre_colon);
-        self.output.push_str(": ");
+        self.write_colon();
         self.format_leading_comments_inline(&entry.post_colon);
         self.format_expr(&entry.value);
         self.format_trailing_inline_comment(&entry.trailing);
@@ -350,7 +455,7 @@ impl<'a> Formatter<'a> {
         self.write_indent();
         self.output.push_str(&field.name.name);
         self.format_trailing_inline_comment(&field.pre_colon);
-        self.output.push_str(": ");
+        self.write_colon();
         self.format_leading_comments_inline(&field.post_colon);
         self.format_expr(&field.value);
         self.format_trailing_inline_comment(&field.trailing);
@@ -391,7 +496,7 @@ impl<'a> Formatter<'a> {
 
         // Try compact format (only for nested collections)
         let compact = self.try_format_compact(open, close, items, &format_item);
-        if compact.len() <= self.config.char_limit {
+        if compact.len() <= self.char_limit() {
             self.output.push_str(&compact);
         } else {
             self.format_collection_multiline(open, close, leading, trailing, items, format_item);
@@ -409,11 +514,12 @@ impl<'a> Formatter<'a> {
         F: Fn(&mut Self, &T),
     {
         let mut compact_formatter = Formatter::new(self.config);
+        compact_formatter.is_root = false; // Nested collections in compact mode
         compact_formatter.output.push(open);
 
         for (i, item) in items.iter().enumerate() {
             if i > 0 {
-                compact_formatter.output.push_str(", ");
+                compact_formatter.write_separator();
             }
             format_item(&mut compact_formatter, item);
         }
@@ -471,13 +577,35 @@ impl<'a> Formatter<'a> {
     }
 
     fn write_indent(&mut self) {
+        let indent = match self.config {
+            FormatConfig::Pretty(config) => &config.indent,
+            _ => return, // No indentation in Minimal/Compact modes
+        };
         for _ in 0..self.indent_level {
-            self.output.push_str(&self.config.indent);
+            self.output.push_str(indent);
+        }
+    }
+
+    fn write_colon(&mut self) {
+        match self.config {
+            FormatConfig::Minimal => self.output.push(':'),
+            FormatConfig::Compact | FormatConfig::Pretty(_) => self.output.push_str(": "),
+        }
+    }
+
+    fn write_separator(&mut self) {
+        match self.config {
+            FormatConfig::Minimal => self.output.push(','),
+            FormatConfig::Compact | FormatConfig::Pretty(_) => self.output.push_str(", "),
         }
     }
 
     /// Format leading comments (comments that appear before an item on their own lines).
     fn format_leading_comments(&mut self, trivia: &Trivia<'_>) {
+        // Only Pretty mode preserves leading comments
+        if !matches!(self.config, FormatConfig::Pretty(_)) {
+            return;
+        }
         for comment in &trivia.comments {
             self.format_comment(comment);
         }
@@ -485,6 +613,10 @@ impl<'a> Formatter<'a> {
 
     /// Format leading comments inline (for comments after colons, don't add newlines).
     fn format_leading_comments_inline(&mut self, trivia: &Trivia<'_>) {
+        // No comments in Minimal mode
+        if matches!(self.config, FormatConfig::Minimal) {
+            return;
+        }
         for comment in &trivia.comments {
             match comment.kind {
                 CommentKind::Block => {
@@ -494,9 +626,11 @@ impl<'a> Formatter<'a> {
                 }
                 CommentKind::Line => {
                     // Line comments can't really be inline, but if they're here,
-                    // they'll force a newline
-                    self.output.push_str("  ");
-                    self.output.push_str(&comment.text);
+                    // they'll force a newline (only in Pretty mode)
+                    if matches!(self.config, FormatConfig::Pretty(_)) {
+                        self.output.push_str("  ");
+                        self.output.push_str(&comment.text);
+                    }
                 }
             }
         }
@@ -504,12 +638,18 @@ impl<'a> Formatter<'a> {
 
     /// Format trailing inline comments (comments on the same line after a value).
     fn format_trailing_inline_comment(&mut self, trivia: &Trivia<'_>) {
+        // No comments in Minimal mode
+        if matches!(self.config, FormatConfig::Minimal) {
+            return;
+        }
         for comment in &trivia.comments {
             match comment.kind {
                 CommentKind::Line => {
-                    // Line comments get a space before them
-                    self.output.push_str("  ");
-                    self.output.push_str(&comment.text);
+                    // Line comments only in Pretty mode (they need newlines)
+                    if matches!(self.config, FormatConfig::Pretty(_)) {
+                        self.output.push_str("  ");
+                        self.output.push_str(&comment.text);
+                    }
                 }
                 CommentKind::Block => {
                     self.output.push(' ');
@@ -520,6 +660,7 @@ impl<'a> Formatter<'a> {
     }
 
     fn format_comment(&mut self, comment: &Comment<'_>) {
+        // Only called from format_leading_comments which already checks for Pretty mode
         match comment.kind {
             CommentKind::Line => {
                 self.write_indent();

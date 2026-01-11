@@ -1,14 +1,14 @@
 //! Round-trip benchmarks for ron2.
 //!
 //! Benchmarks complete parse → serialize cycles for different paths:
-//! - Value path: from_str → to_string
+//! - Value path: from_str → to_ron
 //! - AST path: parse_document → serialize_document
 //! - AST format path: parse_document → format_document
 
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ron2::{PrettyConfig, ast::FormatConfig};
+use ron2::{FormatConfig, ToRon};
 
 /// Benchmark Value round-trip (compact output).
 fn bench_value_roundtrip_compact(c: &mut Criterion) {
@@ -20,7 +20,7 @@ fn bench_value_roundtrip_compact(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(name), &input, |b, input| {
             b.iter(|| {
                 let value = ron2::from_str(input).unwrap();
-                ron2::to_string(&value).unwrap()
+                value.to_ron_with(&FormatConfig::Minimal).unwrap()
             });
         });
     }
@@ -31,7 +31,6 @@ fn bench_value_roundtrip_compact(c: &mut Criterion) {
 /// Benchmark Value round-trip (pretty output).
 fn bench_value_roundtrip_pretty(c: &mut Criterion) {
     let mut group = c.benchmark_group("roundtrip/value_pretty");
-    let config = PrettyConfig::new();
 
     for (name, input) in common::test_inputs() {
         group.throughput(Throughput::Bytes(input.len() as u64));
@@ -39,7 +38,7 @@ fn bench_value_roundtrip_pretty(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(name), &input, |b, input| {
             b.iter(|| {
                 let value = ron2::from_str(input).unwrap();
-                ron2::to_string_pretty(&value, config.clone()).unwrap()
+                value.to_ron().unwrap()
             });
         });
     }
@@ -90,7 +89,6 @@ fn bench_roundtrip_comparison(c: &mut Criterion) {
 
     // Use medium config for comparison
     let input = common::MEDIUM_CONFIG;
-    let pretty_config = PrettyConfig::new();
     let format_config = FormatConfig::default();
 
     group.throughput(Throughput::Bytes(input.len() as u64));
@@ -98,14 +96,14 @@ fn bench_roundtrip_comparison(c: &mut Criterion) {
     group.bench_function("value_compact", |b| {
         b.iter(|| {
             let value = ron2::from_str(input).unwrap();
-            ron2::to_string(&value).unwrap()
+            value.to_ron_with(&FormatConfig::Minimal).unwrap()
         });
     });
 
     group.bench_function("value_pretty", |b| {
         b.iter(|| {
             let value = ron2::from_str(input).unwrap();
-            ron2::to_string_pretty(&value, pretty_config.clone()).unwrap()
+            value.to_ron().unwrap()
         });
     });
 
@@ -135,11 +133,11 @@ fn bench_multiple_roundtrips(c: &mut Criterion) {
     group.bench_function("value_3x", |b| {
         b.iter(|| {
             let v1 = ron2::from_str(input).unwrap();
-            let s1 = ron2::to_string(&v1).unwrap();
+            let s1 = v1.to_ron_with(&FormatConfig::Minimal).unwrap();
             let v2 = ron2::from_str(&s1).unwrap();
-            let s2 = ron2::to_string(&v2).unwrap();
+            let s2 = v2.to_ron_with(&FormatConfig::Minimal).unwrap();
             let v3 = ron2::from_str(&s2).unwrap();
-            ron2::to_string(&v3).unwrap()
+            v3.to_ron_with(&FormatConfig::Minimal).unwrap()
         });
     });
 

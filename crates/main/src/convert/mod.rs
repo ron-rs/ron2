@@ -39,12 +39,14 @@ use std::io::Read;
 
 use crate::{
     Value,
-    ast::{Expr, parse_document, value_to_expr},
+    ast::{Expr, FormatConfig, expr_to_value, format_expr, parse_document, value_to_expr},
     error::{Error, Result, SpannedError, SpannedResult},
-    ser::PrettyConfig,
 };
 
 /// Trait for types that can be converted to RON.
+///
+/// The core method is [`to_ast`](ToRon::to_ast), which converts to an AST expression.
+/// All other methods derive from this.
 ///
 /// # Example
 ///
@@ -53,20 +55,37 @@ use crate::{
 ///
 /// let value = vec![1, 2, 3];
 /// let ron_string = value.to_ron().unwrap();
-/// assert_eq!(ron_string, "[1,2,3]");
+/// assert!(ron_string.contains("1") && ron_string.contains("2") && ron_string.contains("3"));
 /// ```
 pub trait ToRon {
-    /// Convert this value to a RON [`Value`].
-    fn to_ron_value(&self) -> Result<Value>;
+    /// Convert this value to a RON AST expression.
+    ///
+    /// This is the core method that all types must implement.
+    fn to_ast(&self) -> Result<Expr<'static>>;
 
-    /// Convert this value to a compact RON string.
+    /// Convert this value to a pretty-printed RON string (default format).
     fn to_ron(&self) -> Result<String> {
-        crate::to_string(&self.to_ron_value()?)
+        Ok(format_expr(&self.to_ast()?, &FormatConfig::default()))
     }
 
-    /// Convert this value to a pretty-printed RON string.
-    fn to_ron_pretty(&self, config: &PrettyConfig) -> Result<String> {
-        crate::to_string_pretty(&self.to_ron_value()?, config.clone())
+    /// Convert this value to a RON string with custom formatting.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ron2::{ToRon, ast::FormatConfig};
+    ///
+    /// let value = vec![1, 2, 3];
+    /// let minimal = value.to_ron_with(&FormatConfig::Minimal).unwrap();
+    /// assert_eq!(minimal, "[1,2,3]");
+    /// ```
+    fn to_ron_with(&self, config: &FormatConfig) -> Result<String> {
+        Ok(format_expr(&self.to_ast()?, config))
+    }
+
+    /// Convert this value to a RON [`Value`] (via AST).
+    fn to_ron_value(&self) -> Result<Value> {
+        expr_to_value(&self.to_ast()?).map_err(|e| e.code)
     }
 }
 
@@ -261,22 +280,39 @@ pub(crate) fn spanned_err(code: Error, expr: &Expr<'_>) -> SpannedError {
     }
 }
 
+// =============================================================================
+// ToRon implementation for Value
+// =============================================================================
+
+impl ToRon for Value {
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        // Clone self and convert to AST using value_to_expr
+        Ok(crate::ast::value_to_expr(self.clone()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::FormatConfig;
     use alloc::collections::BTreeMap;
     use alloc::vec;
     use alloc::vec::Vec;
 
+    /// Helper to get minimal (compact) output
+    fn minimal(v: &impl ToRon) -> String {
+        v.to_ron_with(&FormatConfig::Minimal).unwrap()
+    }
+
     #[test]
     fn test_primitives_to_ron() {
-        assert_eq!(true.to_ron().unwrap(), "true");
-        assert_eq!(false.to_ron().unwrap(), "false");
-        assert_eq!(42i32.to_ron().unwrap(), "42");
-        assert_eq!((-10i8).to_ron().unwrap(), "-10");
-        assert_eq!('a'.to_ron().unwrap(), "'a'");
-        assert_eq!("hello".to_ron().unwrap(), "\"hello\"");
-        assert_eq!(().to_ron().unwrap(), "()");
+        assert_eq!(minimal(&true), "true");
+        assert_eq!(minimal(&false), "false");
+        assert_eq!(minimal(&42i32), "42");
+        assert_eq!(minimal(&(-10i8)), "-10");
+        assert_eq!(minimal(&'a'), "'a'");
+        assert_eq!(minimal(&"hello"), "\"hello\"");
+        assert_eq!(minimal(&()), "()");
     }
 
     #[test]
@@ -300,9 +336,9 @@ mod tests {
 
     #[test]
     fn test_collections() {
-        // Note: ron2's compact serializer doesn't add spaces after commas
-        assert_eq!(vec![1, 2, 3].to_ron().unwrap(), "[1,2,3]");
-        assert_eq!(Vec::<i32>::new().to_ron().unwrap(), "[]");
+        // Note: ron2's Minimal format doesn't add spaces after commas
+        assert_eq!(minimal(&vec![1, 2, 3]), "[1,2,3]");
+        assert_eq!(minimal(&Vec::<i32>::new()), "[]");
 
         assert_eq!(Vec::<i32>::from_ron("[1, 2, 3]").unwrap(), vec![1, 2, 3]);
         assert_eq!(Vec::<i32>::from_ron("[]").unwrap(), Vec::<i32>::new());
@@ -310,8 +346,8 @@ mod tests {
 
     #[test]
     fn test_option() {
-        assert_eq!(Some(42).to_ron().unwrap(), "Some(42)");
-        assert_eq!(Option::<i32>::None.to_ron().unwrap(), "None");
+        assert_eq!(minimal(&Some(42)), "Some(42)");
+        assert_eq!(minimal(&Option::<i32>::None), "None");
 
         assert_eq!(Option::<i32>::from_ron("Some(42)").unwrap(), Some(42));
         assert_eq!(Option::<i32>::from_ron("None").unwrap(), None);
@@ -322,7 +358,7 @@ mod tests {
     #[test]
     fn test_tuple() {
         // ron2 serializes tuples as (a, b)
-        let tuple_ron = (1, 2).to_ron().unwrap();
+        let tuple_ron = minimal(&(1, 2));
         assert!(tuple_ron.contains('1') && tuple_ron.contains('2'));
 
         assert_eq!(<(i32, i32)>::from_ron("(1, 2)").unwrap(), (1, 2));
@@ -337,7 +373,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("a".to_string(), 1);
         map.insert("b".to_string(), 2);
-        let ron = map.to_ron().unwrap();
+        let ron = minimal(&map);
         assert!(ron.contains("\"a\""));
         assert!(ron.contains("\"b\""));
 

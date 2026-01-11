@@ -26,8 +26,9 @@ pub fn derive_to_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         impl #impl_generics ::ron2::ToRon for #name #ty_generics #where_clause {
-            fn to_ron_value(&self) -> ::ron2::error::Result<::ron2::Value> {
-                #body
+            fn to_ast(&self) -> ::ron2::error::Result<::ron2::ast::Expr<'static>> {
+                let __value_result: ::ron2::error::Result<::ron2::Value> = (|| { #body })();
+                __value_result.map(::ron2::ast::value_to_expr)
             }
         }
     })

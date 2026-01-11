@@ -526,6 +526,211 @@ pub fn value_to_expr(value: Value) -> Expr<'static> {
     }
 }
 
+// ============================================================================
+// AST construction helpers (public for use by ToRon implementations)
+// ============================================================================
+
+/// Create a synthetic boolean expression.
+#[must_use]
+pub fn synthetic_bool(value: bool) -> Expr<'static> {
+    Expr::Bool(BoolExpr {
+        span: Span::synthetic(),
+        value,
+    })
+}
+
+/// Create a synthetic character expression.
+#[must_use]
+pub fn synthetic_char(value: char) -> Expr<'static> {
+    Expr::Char(CharExpr {
+        span: Span::synthetic(),
+        raw: Cow::Owned(escape_char(value)),
+        value,
+    })
+}
+
+/// Create a synthetic string expression.
+#[must_use]
+pub fn synthetic_string(value: String) -> Expr<'static> {
+    let raw = escape_string(&value);
+    Expr::String(StringExpr {
+        span: Span::synthetic(),
+        raw: Cow::Owned(raw),
+        value,
+        kind: StringKind::Regular,
+    })
+}
+
+/// Create a synthetic unit expression.
+#[must_use]
+pub fn synthetic_unit() -> Expr<'static> {
+    Expr::Unit(UnitExpr {
+        span: Span::synthetic(),
+    })
+}
+
+/// Create a synthetic integer expression.
+#[must_use]
+pub fn synthetic_integer<T: core::fmt::Display + PartialOrd + Default + Copy>(value: T) -> Expr<'static> {
+    let kind = if value < T::default() {
+        NumberKind::NegativeInteger
+    } else {
+        NumberKind::Integer
+    };
+    Expr::Number(NumberExpr {
+        span: Span::synthetic(),
+        raw: Cow::Owned(alloc::format!("{value}")),
+        kind,
+    })
+}
+
+/// Create a synthetic f32 expression.
+#[must_use]
+pub fn synthetic_f32(value: f32) -> Expr<'static> {
+    let (raw, kind) = if value.is_nan() {
+        ("NaN".into(), NumberKind::SpecialFloat)
+    } else if value.is_infinite() {
+        if value.is_sign_positive() {
+            ("inf".into(), NumberKind::SpecialFloat)
+        } else {
+            ("-inf".into(), NumberKind::SpecialFloat)
+        }
+    } else {
+        let s = alloc::format!("{value}");
+        if s.contains('.') || s.contains('e') || s.contains('E') {
+            (s, NumberKind::Float)
+        } else {
+            (alloc::format!("{value}.0"), NumberKind::Float)
+        }
+    };
+    Expr::Number(NumberExpr {
+        span: Span::synthetic(),
+        raw: Cow::Owned(raw),
+        kind,
+    })
+}
+
+/// Create a synthetic f64 expression.
+#[must_use]
+pub fn synthetic_f64(value: f64) -> Expr<'static> {
+    let (raw, kind) = if value.is_nan() {
+        ("NaN".into(), NumberKind::SpecialFloat)
+    } else if value.is_infinite() {
+        if value.is_sign_positive() {
+            ("inf".into(), NumberKind::SpecialFloat)
+        } else {
+            ("-inf".into(), NumberKind::SpecialFloat)
+        }
+    } else {
+        let s = alloc::format!("{value}");
+        if s.contains('.') || s.contains('e') || s.contains('E') {
+            (s, NumberKind::Float)
+        } else {
+            (alloc::format!("{value}.0"), NumberKind::Float)
+        }
+    };
+    Expr::Number(NumberExpr {
+        span: Span::synthetic(),
+        raw: Cow::Owned(raw),
+        kind,
+    })
+}
+
+/// Create a synthetic sequence expression from items.
+#[must_use]
+pub fn synthetic_seq(items: Vec<Expr<'static>>) -> Expr<'static> {
+    let seq_items: Vec<SeqItem<'static>> = items
+        .into_iter()
+        .map(|expr| SeqItem {
+            leading: Trivia::empty(),
+            expr,
+            trailing: Trivia::empty(),
+            comma: None,
+        })
+        .collect();
+    Expr::Seq(SeqExpr {
+        span: Span::synthetic(),
+        open_bracket: Span::synthetic(),
+        leading: Trivia::empty(),
+        items: seq_items,
+        trailing: Trivia::empty(),
+        close_bracket: Span::synthetic(),
+    })
+}
+
+/// Create a synthetic map expression from key-value pairs.
+#[must_use]
+pub fn synthetic_map(entries: Vec<(Expr<'static>, Expr<'static>)>) -> Expr<'static> {
+    let map_entries: Vec<MapEntry<'static>> = entries
+        .into_iter()
+        .map(|(key, value)| MapEntry {
+            leading: Trivia::empty(),
+            key,
+            pre_colon: Trivia::empty(),
+            colon: Span::synthetic(),
+            post_colon: Trivia::empty(),
+            value,
+            trailing: Trivia::empty(),
+            comma: None,
+        })
+        .collect();
+    Expr::Map(MapExpr {
+        span: Span::synthetic(),
+        open_brace: Span::synthetic(),
+        leading: Trivia::empty(),
+        entries: map_entries,
+        trailing: Trivia::empty(),
+        close_brace: Span::synthetic(),
+    })
+}
+
+/// Create a synthetic option expression (Some or None).
+#[must_use]
+pub fn synthetic_option(inner: Option<Expr<'static>>) -> Expr<'static> {
+    Expr::Option(Box::new(match inner {
+        None => OptionExpr {
+            span: Span::synthetic(),
+            value: None,
+        },
+        Some(expr) => OptionExpr {
+            span: Span::synthetic(),
+            value: Some(OptionValue {
+                open_paren: Span::synthetic(),
+                leading: Trivia::empty(),
+                expr,
+                trailing: Trivia::empty(),
+                close_paren: Span::synthetic(),
+            }),
+        },
+    }))
+}
+
+/// Create a synthetic tuple expression from elements.
+#[must_use]
+pub fn synthetic_tuple(elements: Vec<Expr<'static>>) -> Expr<'static> {
+    let tuple_elements: Vec<TupleElement<'static>> = elements
+        .into_iter()
+        .map(|expr| TupleElement {
+            leading: Trivia::empty(),
+            expr,
+            trailing: Trivia::empty(),
+            comma: None,
+        })
+        .collect();
+    Expr::Tuple(TupleExpr {
+        span: Span::synthetic(),
+        open_paren: Span::synthetic(),
+        leading: Trivia::empty(),
+        elements: tuple_elements,
+        trailing: Trivia::empty(),
+        close_paren: Span::synthetic(),
+    })
+}
+
+// ============================================================================
+// Internal helpers
+// ============================================================================
+
 /// Format a number to its raw string representation.
 fn format_number(n: &Number) -> (String, NumberKind) {
     match n {

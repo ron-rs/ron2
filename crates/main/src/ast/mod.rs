@@ -40,8 +40,12 @@ mod parse;
 mod ser;
 mod unescape;
 
-pub use convert::{expr_to_value, to_value, value_to_expr};
-pub use fmt::{FormatConfig, format_document};
+pub use convert::{
+    expr_to_value, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64,
+    synthetic_integer, synthetic_map, synthetic_option, synthetic_seq, synthetic_string,
+    synthetic_tuple, synthetic_unit, to_value, value_to_expr,
+};
+pub use fmt::{FormatConfig, PrettyConfig, format_document, format_expr};
 pub use parse::parse_document;
 pub use ser::{serialize_document, serialize_document_to};
 

@@ -1,46 +1,44 @@
 //! Serialization benchmarks for ron2.
 //!
 //! Compares different serialization methods:
-//! - Value compact serialization via `to_string()`
-//! - Value pretty serialization via `to_string_pretty()`
+//! - Value compact serialization via `to_ron_with(Minimal)`
+//! - Value pretty serialization via `to_ron()`
 //! - AST round-trip serialization via `serialize_document()`
 
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ron2::PrettyConfig;
+use ron2::ast::FormatConfig;
+use ron2::ToRon;
 
-/// Benchmark compact Value serialization using `to_string()`.
+/// Benchmark compact Value serialization using `to_ron_with(Minimal)`.
 fn bench_value_compact(c: &mut Criterion) {
     let mut group = c.benchmark_group("serialization/value_compact");
 
     for (name, input) in common::test_inputs() {
-        let value = ron2::from_str(&input).unwrap();
-        let output_size = ron2::to_string(&value).unwrap().len();
+        let value: ron2::Value = ron2::from_str(&input).unwrap();
+        let output_size = value.to_ron_with(&FormatConfig::Minimal).unwrap().len();
         group.throughput(Throughput::Bytes(output_size as u64));
 
         group.bench_with_input(BenchmarkId::from_parameter(name), &value, |b, value| {
-            b.iter(|| ron2::to_string(value).unwrap());
+            b.iter(|| value.to_ron_with(&FormatConfig::Minimal).unwrap());
         });
     }
 
     group.finish();
 }
 
-/// Benchmark pretty Value serialization using `to_string_pretty()`.
+/// Benchmark pretty Value serialization using `to_ron()`.
 fn bench_value_pretty(c: &mut Criterion) {
     let mut group = c.benchmark_group("serialization/value_pretty");
-    let config = PrettyConfig::new();
 
     for (name, input) in common::test_inputs() {
-        let value = ron2::from_str(&input).unwrap();
-        let output_size = ron2::to_string_pretty(&value, config.clone())
-            .unwrap()
-            .len();
+        let value: ron2::Value = ron2::from_str(&input).unwrap();
+        let output_size = value.to_ron().unwrap().len();
         group.throughput(Throughput::Bytes(output_size as u64));
 
         group.bench_with_input(BenchmarkId::from_parameter(name), &value, |b, value| {
-            b.iter(|| ron2::to_string_pretty(value, config.clone()).unwrap());
+            b.iter(|| value.to_ron().unwrap());
         });
     }
 
@@ -69,49 +67,22 @@ fn bench_serialization_comparison(c: &mut Criterion) {
 
     // Use medium config for comparison
     let input = common::MEDIUM_CONFIG;
-    let value = ron2::from_str(input).unwrap();
+    let value: ron2::Value = ron2::from_str(input).unwrap();
     let doc = ron2::ast::parse_document(input).unwrap();
-    let config = PrettyConfig::new();
 
     // Use input size as throughput baseline
     group.throughput(Throughput::Bytes(input.len() as u64));
 
     group.bench_function("value_compact", |b| {
-        b.iter(|| ron2::to_string(&value).unwrap());
+        b.iter(|| value.to_ron_with(&FormatConfig::Minimal).unwrap());
     });
 
     group.bench_function("value_pretty", |b| {
-        b.iter(|| ron2::to_string_pretty(&value, config.clone()).unwrap());
+        b.iter(|| value.to_ron().unwrap());
     });
 
     group.bench_function("ast_roundtrip", |b| {
         b.iter(|| ron2::ast::serialize_document(&doc).unwrap());
-    });
-
-    group.finish();
-}
-
-/// Benchmark serialization to a pre-allocated buffer.
-fn bench_to_writer(c: &mut Criterion) {
-    let mut group = c.benchmark_group("serialization/to_writer");
-
-    let input = common::MEDIUM_CONFIG;
-    let value = ron2::from_str(input).unwrap();
-    let expected_size = ron2::to_string(&value).unwrap().len();
-
-    group.throughput(Throughput::Bytes(expected_size as u64));
-
-    group.bench_function("to_string", |b| {
-        b.iter(|| ron2::to_string(&value).unwrap());
-    });
-
-    group.bench_function("to_writer_preallocated", |b| {
-        let mut buffer = String::with_capacity(expected_size * 2);
-        b.iter(|| {
-            buffer.clear();
-            ron2::to_writer(&mut buffer, &value).unwrap();
-            buffer.len()
-        });
     });
 
     group.finish();
@@ -123,7 +94,6 @@ criterion_group!(
     bench_value_pretty,
     bench_ast_serialize,
     bench_serialization_comparison,
-    bench_to_writer,
 );
 
 criterion_main!(benches);

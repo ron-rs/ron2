@@ -6,7 +6,8 @@
 //! - Field and Variant builders
 //! - Nested types (Vec of Option of Struct, etc.)
 
-use ron2_schema::{Field, FromRon, PrettyConfig, Schema, ToRon, TypeKind, Variant, VariantKind};
+use ron2::ast::FormatConfig;
+use ron2_schema::{Field, FromRon, Schema, ToRon, TypeKind, Variant, VariantKind};
 
 // ============================================================================
 // Schema tests
@@ -30,7 +31,7 @@ fn test_schema_with_doc() {
 fn test_schema_serialization_roundtrip_simple() {
     let schema = Schema::with_doc("Test schema", TypeKind::String);
 
-    let serialized = schema.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let serialized = schema.to_ron_with(&FormatConfig::default()).unwrap();
     let deserialized = Schema::from_ron(&serialized).unwrap();
 
     assert_eq!(schema, deserialized);
@@ -40,7 +41,7 @@ fn test_schema_serialization_roundtrip_simple() {
 fn test_schema_serialization_without_doc() {
     let schema = Schema::new(TypeKind::I32);
 
-    let serialized = schema.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let serialized = schema.to_ron_with(&FormatConfig::default()).unwrap();
     // doc should not appear in serialized output when None
     assert!(!serialized.contains("doc:"));
 
@@ -249,21 +250,21 @@ fn test_field_optional_with_doc() {
 #[test]
 fn test_field_serialization_skips_none_doc() {
     let field = Field::new("value", TypeKind::I32);
-    let serialized = field.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let serialized = field.to_ron_with(&FormatConfig::default()).unwrap();
     assert!(!serialized.contains("doc:"));
 }
 
 #[test]
 fn test_field_serialization_skips_false_optional() {
     let field = Field::new("value", TypeKind::I32);
-    let serialized = field.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let serialized = field.to_ron_with(&FormatConfig::default()).unwrap();
     assert!(!serialized.contains("optional:"));
 }
 
 #[test]
 fn test_field_serialization_includes_true_optional() {
     let field = Field::optional("value", TypeKind::I32);
-    let serialized = field.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let serialized = field.to_ron_with(&FormatConfig::default()).unwrap();
     assert!(serialized.contains("optional: true"));
 }
 
@@ -475,7 +476,7 @@ fn test_complex_schema_roundtrip() {
         },
     );
 
-    let serialized = schema.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let serialized = schema.to_ron_with(&FormatConfig::default()).unwrap();
     let deserialized = Schema::from_ron(&serialized).unwrap();
     assert_eq!(schema, deserialized);
 }
@@ -497,7 +498,7 @@ fn test_enum_schema_roundtrip() {
         },
     );
 
-    let serialized = schema.to_ron_pretty(&PrettyConfig::default()).unwrap();
+    let serialized = schema.to_ron_with(&FormatConfig::default()).unwrap();
     let deserialized = Schema::from_ron(&serialized).unwrap();
     assert_eq!(schema, deserialized);
 }

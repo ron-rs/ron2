@@ -3,9 +3,8 @@
 use alloc::{borrow::Cow, boxed::Box, rc::Rc, sync::Arc};
 use core::cell::{Cell, RefCell};
 
-use crate::ast::Expr;
+use crate::ast::{Expr, synthetic_option, synthetic_tuple};
 use crate::error::{Error, Result, SpannedResult};
-use crate::value::Value;
 
 use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
 
@@ -14,10 +13,10 @@ use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
 // =============================================================================
 
 impl<T: ToRon> ToRon for Option<T> {
-    fn to_ron_value(&self) -> Result<Value> {
+    fn to_ast(&self) -> Result<Expr<'static>> {
         match self {
-            Some(v) => Ok(Value::Option(Some(Box::new(v.to_ron_value()?)))),
-            None => Ok(Value::Option(None)),
+            Some(v) => Ok(synthetic_option(Some(v.to_ast()?))),
+            None => Ok(synthetic_option(None)),
         }
     }
 }
@@ -40,8 +39,8 @@ impl<T: FromRon> FromRon for Option<T> {
 // =============================================================================
 
 impl<T: ToRon + ?Sized> ToRon for Box<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        (**self).to_ron_value()
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        (**self).to_ast()
     }
 }
 
@@ -56,14 +55,14 @@ impl<T: FromRon> FromRon for Box<T> {
 // =============================================================================
 
 impl<T: ToRon + ?Sized> ToRon for &T {
-    fn to_ron_value(&self) -> Result<Value> {
-        (*self).to_ron_value()
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        (*self).to_ast()
     }
 }
 
 impl<T: ToRon + ?Sized> ToRon for &mut T {
-    fn to_ron_value(&self) -> Result<Value> {
-        (**self).to_ron_value()
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        (**self).to_ast()
     }
 }
 
@@ -72,8 +71,8 @@ impl<T: ToRon + ?Sized> ToRon for &mut T {
 // =============================================================================
 
 impl<T: ToRon + Clone> ToRon for Cow<'_, T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        self.as_ref().to_ron_value()
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        self.as_ref().to_ast()
     }
 }
 
@@ -88,8 +87,8 @@ impl<T: FromRon + Clone> FromRon for Cow<'static, T> {
 // =============================================================================
 
 impl<T: ToRon> ToRon for Rc<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        (**self).to_ron_value()
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        (**self).to_ast()
     }
 }
 
@@ -100,8 +99,8 @@ impl<T: FromRon> FromRon for Rc<T> {
 }
 
 impl<T: ToRon> ToRon for Arc<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        (**self).to_ron_value()
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        (**self).to_ast()
     }
 }
 
@@ -116,8 +115,8 @@ impl<T: FromRon> FromRon for Arc<T> {
 // =============================================================================
 
 impl<T: ToRon + Copy> ToRon for Cell<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        self.get().to_ron_value()
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        self.get().to_ast()
     }
 }
 
@@ -128,8 +127,8 @@ impl<T: FromRon> FromRon for Cell<T> {
 }
 
 impl<T: ToRon> ToRon for RefCell<T> {
-    fn to_ron_value(&self) -> Result<Value> {
-        self.borrow().to_ron_value()
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        self.borrow().to_ast()
     }
 }
 
@@ -156,12 +155,12 @@ macro_rules! impl_to_ron_tuple {
     () => {};
     ($first:ident $(, $rest:ident)*) => {
         impl<$first: ToRon $(, $rest: ToRon)*> ToRon for ($first, $($rest,)*) {
-            fn to_ron_value(&self) -> Result<Value> {
+            fn to_ast(&self) -> Result<Expr<'static>> {
                 #[allow(non_snake_case)]
                 let ($first, $($rest,)*) = self;
-                Ok(Value::Tuple(alloc::vec![
-                    $first.to_ron_value()?,
-                    $($rest.to_ron_value()?,)*
+                Ok(synthetic_tuple(alloc::vec![
+                    $first.to_ast()?,
+                    $($rest.to_ast()?,)*
                 ]))
             }
         }

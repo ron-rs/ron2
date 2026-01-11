@@ -7,6 +7,7 @@
 
 #![allow(dead_code)]
 
+use ron2::ast::FormatConfig;
 use ron2::{FromRon, ToRon};
 use ron2_derive::Ron;
 
@@ -399,8 +400,8 @@ mod combinations {
             id: UserId(100),
             name: "Bob".to_string(),
         };
-        let ron = user.to_ron().unwrap();
-        // id should be serialized as just the number
+        let ron = user.to_ron_with(&FormatConfig::Minimal).unwrap();
+        // id should be serialized as just the number (in minimal format: no spaces)
         assert!(ron.contains("id:100"), "Expected id:100 in {}", ron);
     }
 

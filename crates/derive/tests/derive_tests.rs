@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+use ron2::ast::FormatConfig;
 use ron2::{FromRon, ToRon};
 use ron2_derive::{Ron, RonSchema};
 use ron2_schema::{RonSchemaType, TypeKind, VariantKind};
@@ -90,7 +91,9 @@ enum TestEnum {
 #[test]
 fn test_enum_tofrom() {
     assert_eq!(
-        TestEnum::Struct { x: 1.0, y: 2.0 }.to_ron().unwrap(),
+        TestEnum::Struct { x: 1.0, y: 2.0 }
+            .to_ron_with(&FormatConfig::Minimal)
+            .unwrap(),
         "Struct(x:1.0,y:2.0)"
     );
 

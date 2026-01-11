@@ -20,10 +20,13 @@
 //! # Value Example (semantic only)
 //!
 //! ```
-//! use ron2::{from_str, to_string, Value};
+//! use ron2::{from_str, ToRon, FormatConfig};
 //!
 //! let value = from_str("Point(x: 1, y: 2)").unwrap();
-//! let output = to_string(&value).unwrap();
+//! // Pretty output (default)
+//! let pretty = value.to_ron().unwrap();
+//! // Compact output (no whitespace)
+//! let compact = value.to_ron_with(&FormatConfig::Minimal).unwrap();
 //! ```
 
 #![deny(clippy::correctness)]
@@ -57,7 +60,6 @@ pub mod error;
 pub mod extensions;
 pub mod lexer;
 pub mod options;
-pub mod ser;
 pub mod token;
 mod util;
 pub mod value;
@@ -71,8 +73,10 @@ pub use crate::error::{
 };
 pub use crate::extensions::Extensions;
 pub use crate::options::Options;
-pub use crate::ser::{PrettyConfig, Serializer};
 pub use crate::value::{Map, NamedContent, Number, StructFields, Value};
+
+// Re-export FormatConfig and PrettyConfig from ast::fmt
+pub use crate::ast::{FormatConfig, PrettyConfig};
 
 /// Deserialize a Value from a string.
 ///
@@ -106,66 +110,4 @@ pub fn from_bytes(s: &[u8]) -> SpannedResult<Value> {
 #[cfg(feature = "std")]
 pub fn from_reader<R: std::io::Read>(rdr: R) -> SpannedResult<Value> {
     Options::default().from_reader(rdr)
-}
-
-/// Serialize a Value to a String.
-///
-/// # Example
-///
-/// ```
-/// use ron2::{to_string, Value, Number};
-///
-/// let value = Value::Number(Number::U8(42));
-/// let output = to_string(&value).unwrap();
-/// assert_eq!(output, "42");
-/// ```
-pub fn to_string(value: &Value) -> error::Result<alloc::string::String> {
-    Options::default().to_string(value)
-}
-
-/// Serialize a Value to a String with pretty printing.
-///
-/// # Example
-///
-/// ```
-/// use ron2::{to_string_pretty, PrettyConfig, Value};
-///
-/// let value = Value::Seq(vec![Value::from(1_u8), Value::from(2_u8)]);
-/// let output = to_string_pretty(&value, PrettyConfig::new()).unwrap();
-/// ```
-pub fn to_string_pretty(
-    value: &Value,
-    config: PrettyConfig,
-) -> error::Result<alloc::string::String> {
-    Options::default().to_string_pretty(value, config)
-}
-
-/// Serialize a Value to a writer.
-pub fn to_writer<W: core::fmt::Write>(writer: W, value: &Value) -> error::Result<()> {
-    Options::default().to_writer(writer, value)
-}
-
-/// Serialize a Value to a writer with pretty printing.
-pub fn to_writer_pretty<W: core::fmt::Write>(
-    writer: W,
-    value: &Value,
-    config: PrettyConfig,
-) -> error::Result<()> {
-    Options::default().to_writer_pretty(writer, value, config)
-}
-
-/// Serialize a Value to an `io::Write` writer.
-#[cfg(feature = "std")]
-pub fn to_io_writer<W: std::io::Write>(writer: W, value: &Value) -> error::Result<()> {
-    Options::default().to_io_writer(writer, value)
-}
-
-/// Serialize a Value to an `io::Write` writer with pretty printing.
-#[cfg(feature = "std")]
-pub fn to_io_writer_pretty<W: std::io::Write>(
-    writer: W,
-    value: &Value,
-    config: PrettyConfig,
-) -> error::Result<()> {
-    Options::default().to_io_writer_pretty(writer, value, config)
 }
