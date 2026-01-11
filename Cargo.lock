@@ -996,6 +996,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ron-doc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ron-schema",
+ "ron2",
+ "serde_json",
+ "walkdir",
+]
+
+[[package]]
 name = "ron-error"
 version = "0.1.0"
 
