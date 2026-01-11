@@ -52,6 +52,7 @@
 extern crate std;
 
 extern crate alloc;
+extern crate self as ron2;
 
 pub mod ast;
 pub mod chars;

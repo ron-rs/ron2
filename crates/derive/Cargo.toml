@@ -9,8 +9,10 @@ description = "Derive macro for generating RON schemas at compile time"
 proc-macro = true
 
 [dependencies]
-ron2.workspace = true
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 dirs = "5"
+
+[dev-dependencies]
+ron2.workspace = true

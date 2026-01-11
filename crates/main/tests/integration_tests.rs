@@ -6,6 +6,7 @@
 //! - Complete workflows from schema definition to validation
 
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 
 use ron2::schema::{
@@ -17,6 +18,20 @@ use serial_test::serial;
 /// Create a temporary directory for testing.
 fn create_temp_dir() -> tempfile::TempDir {
     tempfile::tempdir().expect("Failed to create temp directory")
+}
+
+fn set_schema_dir(value: impl AsRef<OsStr>) {
+    // Safe in tests that run serially and don't spawn threads touching env vars.
+    unsafe {
+        env::set_var(SCHEMA_DIR_ENV, value);
+    }
+}
+
+fn clear_schema_dir() {
+    // Safe in tests that run serially and don't spawn threads touching env vars.
+    unsafe {
+        env::remove_var(SCHEMA_DIR_ENV);
+    }
 }
 
 // ============================================================================
@@ -223,7 +238,7 @@ fn test_schema_resolution_with_env_var() {
     let original = env::var(SCHEMA_DIR_ENV).ok();
 
     // Set env var to temp directory
-    env::set_var(SCHEMA_DIR_ENV, temp_dir.path());
+    set_schema_dir(temp_dir.path());
 
     // Write schema (should use env var directory)
     write_schema("env_test::Type", &schema, None).unwrap();
@@ -238,8 +253,8 @@ fn test_schema_resolution_with_env_var() {
 
     // Restore original env var
     match original {
-        Some(val) => env::set_var(SCHEMA_DIR_ENV, val),
-        None => env::remove_var(SCHEMA_DIR_ENV),
+        Some(val) => set_schema_dir(val),
+        None => clear_schema_dir(),
     }
 }
 
@@ -254,7 +269,7 @@ fn test_output_dir_takes_precedence_over_env_var() {
     let original = env::var(SCHEMA_DIR_ENV).ok();
 
     // Set env var to temp_dir1
-    env::set_var(SCHEMA_DIR_ENV, temp_dir1.path());
+    set_schema_dir(temp_dir1.path());
 
     // Write schema with explicit output_dir (temp_dir2)
     let path = write_schema("precedence::Type", &schema, Some(temp_dir2.path())).unwrap();
@@ -269,8 +284,8 @@ fn test_output_dir_takes_precedence_over_env_var() {
 
     // Restore original env var
     match original {
-        Some(val) => env::set_var(SCHEMA_DIR_ENV, val),
-        None => env::remove_var(SCHEMA_DIR_ENV),
+        Some(val) => set_schema_dir(val),
+        None => clear_schema_dir(),
     }
 }
 

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::Value;
 
-use crate::error::{Result, SchemaError, ValidationError, ValidationResult};
-use crate::{Field, Schema, TypeKind, VariantKind};
+use super::error::{Result, SchemaError, ValidationError, ValidationResult};
+use super::{Field, Schema, TypeKind, Variant, VariantKind};
 
 // =============================================================================
 // Schema Resolver Trait
@@ -89,9 +89,9 @@ impl Default for StorageResolver {
 impl SchemaResolver for StorageResolver {
     fn resolve(&self, type_path: &str) -> Option<Schema> {
         if let Some(ref dir) = self.search_dir {
-            crate::storage::find_schema_in(type_path, dir).ok()
+            super::storage::find_schema_in(type_path, dir).ok()
         } else {
-            crate::storage::find_schema(type_path).ok()
+            super::storage::find_schema(type_path).ok()
         }
     }
 }
@@ -392,7 +392,7 @@ fn validate_struct_internal<R: SchemaResolver>(
 #[allow(clippy::result_large_err)]
 fn validate_enum_internal<R: SchemaResolver>(
     value: &Value,
-    variants: &[crate::Variant],
+    variants: &[Variant],
     ctx: &mut ValidationContext<R>,
 ) -> ValidationResult<()> {
     use crate::value::NamedContent;
@@ -428,7 +428,7 @@ fn validate_enum_internal<R: SchemaResolver>(
         .ok_or_else(|| ValidationError::unknown_variant(variant_name.to_owned(), &[] as &[&str]))?;
 
     // Helper to validate struct fields
-    let validate_struct_fields = |fields: &[crate::Field],
+    let validate_struct_fields = |fields: &[Field],
                                   struct_fields: &[(String, Value)],
                                   ctx: &mut ValidationContext<R>|
      -> ValidationResult<()> {
@@ -532,7 +532,7 @@ fn type_mismatch(expected: &str, value: &Value) -> ValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Field, Schema, TypeKind, Variant};
+    use crate::schema::{Field, Schema, TypeKind, Variant};
 
     #[test]
     fn test_validate_primitives() {

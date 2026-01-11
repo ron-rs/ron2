@@ -98,7 +98,7 @@ pub trait RonSchemaType {
             ))
         })?;
         let schema = Self::schema();
-        crate::write_schema(type_path, &schema, output_dir)
+        super::write_schema(type_path, &schema, output_dir)
     }
 }
 

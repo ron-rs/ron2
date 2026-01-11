@@ -8,6 +8,7 @@
 //! - XDG fallback
 
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
 
@@ -20,6 +21,20 @@ use serial_test::serial;
 /// Create a temporary directory for testing.
 fn create_temp_dir() -> tempfile::TempDir {
     tempfile::tempdir().expect("Failed to create temp directory")
+}
+
+fn set_schema_dir(value: impl AsRef<OsStr>) {
+    // Safe in tests that run serially and don't spawn threads touching env vars.
+    unsafe {
+        env::set_var(SCHEMA_DIR_ENV, value);
+    }
+}
+
+fn clear_schema_dir() {
+    // Safe in tests that run serially and don't spawn threads touching env vars.
+    unsafe {
+        env::remove_var(SCHEMA_DIR_ENV);
+    }
 }
 
 // ============================================================================
@@ -210,15 +225,15 @@ fn test_resolve_schema_dir_with_env_var() {
     let original = env::var(SCHEMA_DIR_ENV).ok();
 
     // Set environment variable
-    env::set_var(SCHEMA_DIR_ENV, &temp_path);
+    set_schema_dir(&temp_path);
 
     let resolved = resolve_schema_dir().unwrap();
     assert_eq!(resolved, PathBuf::from(&temp_path));
 
     // Restore original value
     match original {
-        Some(val) => env::set_var(SCHEMA_DIR_ENV, val),
-        None => env::remove_var(SCHEMA_DIR_ENV),
+        Some(val) => set_schema_dir(val),
+        None => clear_schema_dir(),
     }
 }
 
@@ -229,7 +244,7 @@ fn test_resolve_schema_dir_without_env_var_uses_xdg() {
     let original = env::var(SCHEMA_DIR_ENV).ok();
 
     // Remove environment variable
-    env::remove_var(SCHEMA_DIR_ENV);
+    clear_schema_dir();
 
     let resolved = resolve_schema_dir();
 
@@ -246,7 +261,7 @@ fn test_resolve_schema_dir_without_env_var_uses_xdg() {
 
     // Restore original value
     if let Some(val) = original {
-        env::set_var(SCHEMA_DIR_ENV, val);
+        set_schema_dir(val);
     }
 }
 

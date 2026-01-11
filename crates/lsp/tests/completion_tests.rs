@@ -18,7 +18,7 @@ fn showcase_schemas_dir() -> PathBuf {
         .unwrap()
         .parent()
         .unwrap()
-        .join("examples/showcase/schemas")
+        .join("schemas")
 }
 
 mod completion_integration {
