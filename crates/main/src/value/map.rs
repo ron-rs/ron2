@@ -9,16 +9,11 @@ use super::Value;
 
 /// A [`Value`] to [`Value`] map.
 ///
-/// This structure uses [`IndexMap`](indexmap::IndexMap) internally when the `std`
-/// feature is enabled (preserving insertion order), or falls back to
-/// [`BTreeMap`](alloc::collections::BTreeMap) for `no_std` (sorted order).
+/// This structure uses [`IndexMap`](indexmap::IndexMap) internally to preserve insertion order.
 #[derive(Clone, Debug, Default)]
 pub struct Map(pub(crate) MapInner);
 
-#[cfg(feature = "std")]
 type MapInner = indexmap::IndexMap<Value, Value, std::collections::hash_map::RandomState>;
-#[cfg(not(feature = "std"))]
-type MapInner = alloc::collections::BTreeMap<Value, Value>;
 
 impl Map {
     /// Creates a new, empty [`Map`].
@@ -60,23 +55,9 @@ impl Map {
     ///
     /// # Implementation Note
     ///
-    /// With the `std` feature enabled, this uses `IndexMap::shift_remove()` which is O(n)
-    /// but preserves insertion order of remaining elements.
-    ///
-    /// Without `std`, this uses `BTreeMap::remove()` which is O(log n) but maintains
-    /// sorted order (not insertion order).
-    ///
-    /// This behavioral difference is intentional: each backing store provides its
-    /// natural removal semantics.
+    /// This uses `IndexMap::shift_remove()` to preserve insertion order when removing entries.
     pub fn remove(&mut self, key: &Value) -> Option<Value> {
-        #[cfg(feature = "std")]
-        {
-            self.0.shift_remove(key)
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            self.0.remove(key)
-        }
+        self.0.shift_remove(key)
     }
 
     /// Iterate all key-value pairs.
@@ -274,7 +255,6 @@ mod tests {
         assert_eq!(map.remove(&Value::from("a")), None);
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn map_hash() {
         assert_same_hash(&Map::new(), &Map::new());
@@ -288,7 +268,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "std")]
     fn assert_same_hash(a: &Map, b: &Map) {
         use core::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;

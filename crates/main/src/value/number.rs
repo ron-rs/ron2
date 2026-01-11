@@ -232,7 +232,6 @@ mod tests {
         assert_ne!(F32(f32::NAN), F32(-f32::NAN));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_nan_hash() {
         use core::hash::{Hash, Hasher};

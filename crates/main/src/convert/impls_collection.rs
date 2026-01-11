@@ -5,12 +5,8 @@ use alloc::{
     format,
     vec::Vec,
 };
-use core::hash::Hash;
+use core::hash::{BuildHasher, Hash};
 
-#[cfg(feature = "std")]
-use core::hash::BuildHasher;
-
-#[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Expr, synthetic_map, synthetic_seq};
@@ -43,7 +39,6 @@ impl<T: ToRon> ToRon for LinkedList<T> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<T: ToRon + Eq + Hash, S: BuildHasher> ToRon for HashSet<T, S> {
     fn to_ast(&self) -> Result<Expr<'static>> {
         let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
@@ -73,7 +68,6 @@ impl<T: ToRon> ToRon for [T] {
 }
 
 // Map types
-#[cfg(feature = "std")]
 impl<K: ToRon + Eq + Hash, V: ToRon, S: BuildHasher> ToRon for HashMap<K, V, S> {
     fn to_ast(&self) -> Result<Expr<'static>> {
         let entries: Result<Vec<_>> = self
@@ -153,7 +147,6 @@ impl<T: FromRon> FromRon for LinkedList<T> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<T: FromRon + Eq + Hash, S: BuildHasher + Default> FromRon for HashSet<T, S> {
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
         match extract_seq_elements(expr) {
@@ -205,7 +198,6 @@ impl<T: FromRon, const N: usize> FromRon for [T; N] {
 }
 
 // Map types
-#[cfg(feature = "std")]
 impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRon for HashMap<K, V, S> {
     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
         match expr {

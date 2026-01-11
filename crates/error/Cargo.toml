@@ -6,10 +6,5 @@ license.workspace = true
 description = "Error types for RON (Rusty Object Notation) - spans, validation errors, path context"
 rust-version = "1.90.0"
 
-[features]
-default = ["alloc"]
-alloc = []  # Enables Vec, String, Cow - required for ValidationError
-std = ["alloc"]  # Enables std::error::Error impl
-
 [dependencies]
 # Zero external dependencies

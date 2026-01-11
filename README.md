@@ -26,7 +26,7 @@ Unlike the main `ron` crate, ron2:
 - **Perfect round-trip**: Comments, whitespace, and formatting are preserved exactly
 - **Zero-copy**: Uses `Cow<'a, str>` for borrowing from source without allocation
 - **No serde dependency**: Lightweight, works without serde
-- **No-std compatible**: Disable `std` feature for embedded use
+- **Std-only**: Always relies on `std`/`alloc`, so no `no_std` build is provided
 
 ## Build Commands
 

@@ -46,9 +46,7 @@
 #![warn(clippy::alloc_instead_of_core)]
 #![warn(clippy::std_instead_of_alloc)]
 #![warn(clippy::std_instead_of_core)]
-#![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(feature = "std")]
 extern crate std;
 
 extern crate alloc;
@@ -66,7 +64,6 @@ pub mod token;
 mod util;
 pub mod value;
 
-#[cfg(feature = "std")]
 pub use crate::convert::{AstMapAccess, FromRonFields};
 pub use crate::convert::{FromRon, ParsedInt, ToRon, parse_int_raw};
 pub use crate::error::{
@@ -109,7 +106,6 @@ pub fn from_bytes(s: &[u8]) -> SpannedResult<Value> {
 }
 
 /// Deserialize a Value from a reader.
-#[cfg(feature = "std")]
 pub fn from_reader<R: std::io::Read>(rdr: R) -> SpannedResult<Value> {
     Options::default().from_reader(rdr)
 }

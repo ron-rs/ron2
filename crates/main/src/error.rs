@@ -16,7 +16,6 @@ use core::{fmt, str::Utf8Error};
 use crate::chars::{is_ident_first_char, is_ident_raw_char};
 use unicode_ident::is_xid_continue;
 
-#[cfg(feature = "std")]
 use std::io;
 
 // Re-export types from ron-error
@@ -419,10 +418,8 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl core::error::Error for SpannedError {}
 
-#[cfg(feature = "std")]
 impl core::error::Error for Error {}
 
 impl From<Utf8Error> for Error {
@@ -437,7 +434,6 @@ impl From<fmt::Error> for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Error::Io(e.to_string())

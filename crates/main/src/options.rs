@@ -7,7 +7,6 @@ use crate::{
     value::Value,
 };
 
-#[cfg(feature = "std")]
 use {alloc::vec::Vec, std::io};
 
 /// Roundtrip options for serialization and deserialization.
@@ -73,7 +72,6 @@ impl Options {
     /// This function contains an `expect()` call that cannot panic in practice:
     /// when UTF-8 validation fails, we slice up to `valid_up_to()` which is
     /// guaranteed to be valid UTF-8 by the `Utf8Error` contract.
-    #[cfg(feature = "std")]
     pub fn from_reader<R>(&self, mut rdr: R) -> SpannedResult<Value>
     where
         R: io::Read,

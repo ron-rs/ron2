@@ -12,18 +12,17 @@ categories = ["encoding"]
 rust-version = "1.90.0"
 
 [features]
-default = ["std"]
+default = []
 integer128 = []
-std = ["indexmap/std"]
 internal-span-substring-test = ["dep:unicode-segmentation"]
 
 [dependencies]
 bitflags = { version = "2.1", default-features = false }
 dirs = "6.0.0"
-indexmap = { version = "2.0", default-features = false }
-ron2-error = { workspace = true, default-features = false, features = ["alloc"] }
+indexmap = { version = "2.0", default-features = false, features = ["std"] }
+ron2-error = { workspace = true }
 ron2-derive = { path = "../derive" }
-serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
+serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 unicode-ident = { version = "1.0", default-features = false }
 unicode-segmentation = { version = "1.11", default-features = false, optional = true }
 

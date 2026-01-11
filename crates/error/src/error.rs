@@ -431,7 +431,6 @@ impl PartialEq for ValidationError {
 
 impl Eq for ValidationError {}
 
-#[cfg(feature = "std")]
 impl std::error::Error for ValidationError {}
 
 #[cfg(test)]

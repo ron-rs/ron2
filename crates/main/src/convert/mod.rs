@@ -25,16 +25,13 @@
 mod impls_collection;
 mod impls_primitive;
 mod impls_wrapper;
-#[cfg(feature = "std")]
 mod map_access;
 pub mod number;
 
-#[cfg(feature = "std")]
 pub use map_access::AstMapAccess;
 pub use number::{ParsedInt, parse_int_raw};
 
 use alloc::string::String;
-#[cfg(feature = "std")]
 use std::io::Read;
 
 use crate::{
@@ -134,7 +131,6 @@ pub trait FromRon: Sized {
     }
 
     /// Read RON from a reader and construct this type.
-    #[cfg(feature = "std")]
     fn from_ron_reader<R: Read>(mut reader: R) -> SpannedResult<Self> {
         let mut buf = String::new();
         reader
@@ -172,7 +168,6 @@ pub trait FromRon: Sized {
 /// // RON input: (name: "test", value: 42)
 /// // Not: (name: "test", inner: (value: 42))
 /// ```
-#[cfg(feature = "std")]
 pub trait FromRonFields: Sized {
     /// Consume fields from an existing map access to construct this type.
     ///
@@ -397,7 +392,6 @@ mod tests {
         assert!(u8::from_ron("-1").is_err());
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_ast_map_access() {
         use crate::ast::parse_document;
@@ -486,7 +480,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_indexmap() {
         use indexmap::IndexMap;
@@ -509,7 +502,6 @@ mod tests {
         assert_eq!(parsed.get("c"), Some(&3));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_indexset() {
         use indexmap::IndexSet;
