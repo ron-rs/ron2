@@ -5,8 +5,6 @@ bitflags::bitflags! {
         const UNWRAP_NEWTYPES = 0x1;
         const IMPLICIT_SOME = 0x2;
         const UNWRAP_VARIANT_NEWTYPES = 0x4;
-        /// During serialization, this extension emits struct names. See also [`PrettyConfig::struct_names`](crate::ser::PrettyConfig::struct_names) for the [`PrettyConfig`](crate::ser::PrettyConfig) equivalent.
-        ///
         /// During deserialization, this extension requires that structs' names are stated explicitly.
         const EXPLICIT_STRUCT_NAMES = 0x8;
     }

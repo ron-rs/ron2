@@ -92,7 +92,7 @@ enum TestEnum {
 fn test_enum_tofrom() {
     assert_eq!(
         TestEnum::Struct { x: 1.0, y: 2.0 }
-            .to_ron_with(&FormatConfig::Minimal)
+            .to_ron_with(&FormatConfig::minimal())
             .unwrap(),
         "Struct(x:1.0,y:2.0)"
     );

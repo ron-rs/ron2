@@ -20,7 +20,7 @@ fn bench_value_roundtrip_compact(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(name), &input, |b, input| {
             b.iter(|| {
                 let value = ron2::from_str(input).unwrap();
-                value.to_ron_with(&FormatConfig::Minimal).unwrap()
+                value.to_ron_with(&FormatConfig::minimal()).unwrap()
             });
         });
     }
@@ -96,7 +96,7 @@ fn bench_roundtrip_comparison(c: &mut Criterion) {
     group.bench_function("value_compact", |b| {
         b.iter(|| {
             let value = ron2::from_str(input).unwrap();
-            value.to_ron_with(&FormatConfig::Minimal).unwrap()
+            value.to_ron_with(&FormatConfig::minimal()).unwrap()
         });
     });
 
@@ -133,11 +133,11 @@ fn bench_multiple_roundtrips(c: &mut Criterion) {
     group.bench_function("value_3x", |b| {
         b.iter(|| {
             let v1 = ron2::from_str(input).unwrap();
-            let s1 = v1.to_ron_with(&FormatConfig::Minimal).unwrap();
+            let s1 = v1.to_ron_with(&FormatConfig::minimal()).unwrap();
             let v2 = ron2::from_str(&s1).unwrap();
-            let s2 = v2.to_ron_with(&FormatConfig::Minimal).unwrap();
+            let s2 = v2.to_ron_with(&FormatConfig::minimal()).unwrap();
             let v3 = ron2::from_str(&s2).unwrap();
-            v3.to_ron_with(&FormatConfig::Minimal).unwrap()
+            v3.to_ron_with(&FormatConfig::minimal()).unwrap()
         });
     });
 

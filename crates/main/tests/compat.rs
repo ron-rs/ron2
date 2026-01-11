@@ -743,7 +743,7 @@ mod struct_syntax {
     #[test]
     fn ron2_produces_standard_syntax() {
         let point = Point { x: 1, y: 2 };
-        let ron2_out = point.to_ron_with(&FormatConfig::Minimal).unwrap();
+        let ron2_out = point.to_ron_with(&FormatConfig::minimal()).unwrap();
 
         // ron2 with Minimal format produces compact output: Point(x:1,y:2)
         assert_eq!(ron2_out, "Point(x:1,y:2)");

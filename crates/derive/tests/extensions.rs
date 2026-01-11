@@ -400,7 +400,7 @@ mod combinations {
             id: UserId(100),
             name: "Bob".to_string(),
         };
-        let ron = user.to_ron_with(&FormatConfig::Minimal).unwrap();
+        let ron = user.to_ron_with(&FormatConfig::minimal()).unwrap();
         // id should be serialized as just the number (in minimal format: no spaces)
         assert!(ron.contains("id:100"), "Expected id:100 in {}", ron);
     }

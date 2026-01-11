@@ -3,11 +3,10 @@
 //! This module provides formatting of AST expressions and documents.
 //! All serialization flows through this module via [`format_expr`] or [`format_document`].
 //!
-//! # Format Modes
+//! # Configuration
 //!
-//! - [`FormatConfig::Minimal`]: No whitespace, no comments. Most compact output.
-//! - [`FormatConfig::Pretty`]: Multi-line with indentation, comment preservation, and
-//!   configurable compaction rules.
+//! Use [`FormatConfig::new()`] for pretty output with sensible defaults, or
+//! [`FormatConfig::minimal()`] for the most compact output (no whitespace, no comments).
 
 use alloc::string::String;
 
@@ -19,32 +18,42 @@ use crate::ast::{
 
 /// Controls how RON output is formatted.
 #[derive(Clone, Debug)]
-pub enum FormatConfig {
-    /// No whitespace, no comments. Most compact output.
-    ///
-    /// Output example: `Point(x:1,y:2)`
-    Minimal,
-
-    /// Pretty formatting with configurable compaction rules.
-    ///
-    /// Output example:
-    /// ```ron
-    /// Point(
-    ///     x: 1,
-    ///     y: 2,
-    /// )
-    /// ```
-    Pretty(PrettyConfig),
-}
-
-/// Configuration for pretty-printed output.
-#[derive(Clone, Debug)]
-pub struct PrettyConfig {
-    /// Indentation string (default: 4 spaces).
+pub struct FormatConfig {
+    /// Indentation string. Empty string = no indentation.
     pub indent: String,
 
-    /// Rules for when to use compact formatting within pretty output.
+    /// Spacing style for compact mode.
+    pub spacing: Spacing,
+
+    /// How to handle comments during formatting.
+    pub comments: CommentMode,
+
+    /// Rules for when to use compact (single-line) formatting.
     pub compaction: Compaction,
+}
+
+/// Spacing style for compact output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Spacing {
+    /// No spaces: `x:1,y:2`
+    None,
+    /// Normal spacing: `x: 1, y: 2`
+    #[default]
+    Normal,
+}
+
+/// How to handle comments during formatting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommentMode {
+    /// Delete all comments from output.
+    Delete,
+    /// Preserve comments. Line comments prevent ANY compaction.
+    Preserve,
+    /// Smart mode: preserve in multiline, convert `// foo` → `/* foo */`
+    /// only when depth/type rules force compaction. Length-based compaction
+    /// is still blocked by line comments.
+    #[default]
+    Auto,
 }
 
 /// Rules for when to switch from multiline to compact formatting.
@@ -92,14 +101,10 @@ pub struct CompactTypes {
 
 impl Default for FormatConfig {
     fn default() -> Self {
-        Self::Pretty(PrettyConfig::default())
-    }
-}
-
-impl Default for PrettyConfig {
-    fn default() -> Self {
         Self {
             indent: String::from("    "),
+            spacing: Spacing::Normal,
+            comments: CommentMode::Auto,
             compaction: Compaction::default(),
         }
     }
@@ -135,92 +140,71 @@ impl CompactTypes {
 }
 
 impl FormatConfig {
-    /// Create a new pretty `FormatConfig` with default settings.
+    /// Create a new `FormatConfig` with default pretty settings.
+    ///
+    /// Defaults: 4-space indent, normal spacing, auto comments, 80 char limit.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set the indentation string (only applies to Pretty mode).
+    /// Create a minimal `FormatConfig` for most compact output.
+    ///
+    /// No whitespace, no comments, fully compact.
+    /// Output example: `Point(x:1,y:2)`
     #[must_use]
-    pub fn indent(self, indent: impl Into<String>) -> Self {
-        match self {
-            Self::Pretty(mut config) => {
-                config.indent = indent.into();
-                Self::Pretty(config)
-            }
-            other @ Self::Minimal => other,
+    pub fn minimal() -> Self {
+        Self {
+            indent: String::new(),
+            spacing: Spacing::None,
+            comments: CommentMode::Delete,
+            compaction: Compaction {
+                char_limit: usize::MAX,
+                compact_from_depth: Some(0),
+                compact_types: CompactTypes::default(),
+            },
         }
-    }
-
-    /// Set the character limit for compact formatting (only applies to Pretty mode).
-    #[must_use]
-    pub fn char_limit(self, char_limit: usize) -> Self {
-        match self {
-            Self::Pretty(mut config) => {
-                config.compaction.char_limit = char_limit;
-                Self::Pretty(config)
-            }
-            other @ Self::Minimal => other,
-        }
-    }
-
-    /// Set the depth at which to start compacting (only applies to Pretty mode).
-    #[must_use]
-    pub fn compact_from_depth(self, depth: usize) -> Self {
-        match self {
-            Self::Pretty(mut config) => {
-                config.compaction.compact_from_depth = Some(depth);
-                Self::Pretty(config)
-            }
-            other @ Self::Minimal => other,
-        }
-    }
-
-    /// Set the collection types to always compact (only applies to Pretty mode).
-    #[must_use]
-    pub fn compact_types(self, types: CompactTypes) -> Self {
-        match self {
-            Self::Pretty(mut config) => {
-                config.compaction.compact_types = types;
-                Self::Pretty(config)
-            }
-            other @ Self::Minimal => other,
-        }
-    }
-}
-
-impl PrettyConfig {
-    /// Create a new `PrettyConfig` with default settings.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
     }
 
     /// Set the indentation string.
     #[must_use]
-    pub fn with_indent(mut self, indent: impl Into<String>) -> Self {
+    pub fn indent(mut self, indent: impl Into<String>) -> Self {
         self.indent = indent.into();
         self
     }
 
-    /// Set the character limit for compact formatting.
+    /// Set the spacing style.
     #[must_use]
-    pub fn with_char_limit(mut self, char_limit: usize) -> Self {
+    pub fn spacing(mut self, spacing: Spacing) -> Self {
+        self.spacing = spacing;
+        self
+    }
+
+    /// Set the comment handling mode.
+    #[must_use]
+    pub fn comments(mut self, comments: CommentMode) -> Self {
+        self.comments = comments;
+        self
+    }
+
+    /// Set the character limit for compact formatting.
+    /// Set to 0 to disable length-based compaction.
+    #[must_use]
+    pub fn char_limit(mut self, char_limit: usize) -> Self {
         self.compaction.char_limit = char_limit;
         self
     }
 
     /// Set the depth at which to start compacting.
     #[must_use]
-    pub fn with_compact_from_depth(mut self, depth: usize) -> Self {
+    pub fn compact_from_depth(mut self, depth: usize) -> Self {
         self.compaction.compact_from_depth = Some(depth);
         self
     }
 
     /// Set the collection types to always compact.
     #[must_use]
-    pub fn with_compact_types(mut self, types: CompactTypes) -> Self {
+    pub fn compact_types(mut self, types: CompactTypes) -> Self {
         self.compaction.compact_types = types;
         self
     }
@@ -266,15 +250,15 @@ pub fn format_document(doc: &Document<'_>, config: &FormatConfig) -> String {
 ///
 /// let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
 /// let expr = value_to_expr(value);
-/// let minimal = format_expr(&expr, &FormatConfig::Minimal);
+/// let minimal = format_expr(&expr, &FormatConfig::minimal());
 /// assert_eq!(minimal, "[1,2]");
 /// ```
 #[must_use]
 pub fn format_expr(expr: &Expr<'_>, config: &FormatConfig) -> String {
     let mut formatter = Formatter::new(config);
     // For standalone expression formatting, don't force root to be multiline
-    // unless we're in Pretty mode (handled by is_root flag)
-    formatter.is_root = matches!(config, FormatConfig::Pretty(_));
+    // Set is_root based on whether we have a non-empty indent (pretty mode behavior)
+    formatter.is_root = !config.indent.is_empty();
     formatter.format_expr(expr);
     formatter.output
 }
@@ -313,25 +297,17 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Returns the char limit, or MAX for non-Pretty modes (always compact).
+    /// Returns the char limit from config.
     fn char_limit(&self) -> usize {
-        match self.config {
-            FormatConfig::Pretty(config) => config.compaction.char_limit,
-            FormatConfig::Minimal => usize::MAX,
-        }
+        self.config.compaction.char_limit
     }
 
-    /// Determine if "hard" compaction is triggered (depth or type rules).
+    /// Determine if compaction is requested by depth or type rules.
     ///
-    /// Hard compaction converts line comments to block comments.
-    /// Length-based compaction is "soft" and handled separately.
-    fn should_compact_hard(&self, collection_type: CollectionType, depth: usize) -> bool {
-        let compaction = match self.config {
-            FormatConfig::Minimal => return true, // Always compact
-            FormatConfig::Pretty(cfg) => &cfg.compaction,
-        };
-
-        // OR logic: any condition triggers compaction
+    /// Returns true if depth-based or type-based compaction rules apply.
+    /// Length-based compaction is handled separately in `format_collection`.
+    fn wants_compact(&self, collection_type: CollectionType, depth: usize) -> bool {
+        let compaction = &self.config.compaction;
 
         // 1. Depth-based
         if let Some(threshold) = compaction.compact_from_depth
@@ -341,22 +317,21 @@ impl<'a> Formatter<'a> {
         }
 
         // 2. Type-based
-        let type_match = match collection_type {
+        match collection_type {
             CollectionType::Tuple => compaction.compact_types.tuples,
             CollectionType::Array => compaction.compact_types.arrays,
             CollectionType::Map => compaction.compact_types.maps,
             CollectionType::Struct => compaction.compact_types.structs,
-        };
-        if type_match {
-            return true;
         }
+    }
 
-        // Length-based compaction is handled in format_collection after measuring
-        false
+    /// Check if we're in "pretty" mode (non-empty indent).
+    fn is_pretty(&self) -> bool {
+        !self.config.indent.is_empty()
     }
 
     fn format_document(&mut self, doc: &Document<'_>) {
-        let is_pretty = matches!(self.config, FormatConfig::Pretty(_));
+        let is_pretty = self.is_pretty();
 
         // Format leading comments (before attributes) - Pretty mode only
         self.format_leading_comments(&doc.leading);
@@ -623,10 +598,10 @@ impl<'a> Formatter<'a> {
 
     /// Generic collection formatter that handles compact vs multiline.
     ///
-    /// Compaction rules (evaluated in order):
-    /// 1. **Hard** (depth/type-based): Forces compact, converts line comments to block
-    /// 2. **Root default**: Root collections are multiline unless hard compaction triggered
-    /// 3. **Soft** (length-based): Line comments prevent compaction; only compacts if fits
+    /// Compaction behavior depends on `CommentMode`:
+    /// - `Delete`: comments stripped, all compaction proceeds freely
+    /// - `Preserve`: line comments prevent ANY compaction
+    /// - `Auto`: line comments prevent length-based, but depth/type rules convert and compact
     #[allow(clippy::too_many_arguments)]
     fn format_collection<T, F, C>(
         &mut self,
@@ -651,9 +626,29 @@ impl<'a> Formatter<'a> {
             self.is_root = false;
         }
 
-        // 1. Check HARD compaction (depth/type rules) - overrides everything
-        let hard_compact = self.should_compact_hard(collection_type, current_depth);
-        if hard_compact {
+        // Check if depth/type rules want compaction
+        let wants_compact = self.wants_compact(collection_type, current_depth);
+
+        // Check for line comments
+        let has_line_comments = items.iter().any(&has_line_comment_fn)
+            || has_line_comment(leading)
+            || has_line_comment(trailing);
+
+        // Determine if we can actually compact based on comment mode
+        let can_compact = match self.config.comments {
+            CommentMode::Delete => true, // No comment constraints
+            CommentMode::Preserve => !has_line_comments, // Line comments prevent all compaction
+            CommentMode::Auto => {
+                if wants_compact {
+                    true // Depth/type rules: can compact (will convert comments)
+                } else {
+                    !has_line_comments // Length-based: line comments prevent
+                }
+            }
+        };
+
+        // 1. If depth/type rules want compaction AND we can compact
+        if wants_compact && can_compact {
             let compact =
                 self.try_format_compact_with_trivia(open, close, leading, trailing, items, &format_item);
             self.output.push_str(&compact);
@@ -661,24 +656,21 @@ impl<'a> Formatter<'a> {
             return;
         }
 
-        // 2. Root collections default to multiline (no hard compaction triggered)
+        // 2. Root collections default to multiline (unless compaction rule was triggered above)
         if is_root && !items.is_empty() {
             self.format_collection_multiline(open, close, leading, trailing, items, format_item);
             self.depth = current_depth;
             return;
         }
 
-        // 3. SOFT compaction: line comments prevent it
-        let has_line_comments = items.iter().any(&has_line_comment_fn);
-        let trivia_has_line_comments = has_line_comment(leading) || has_line_comment(trailing);
-
-        if has_line_comments || trivia_has_line_comments {
+        // 3. Can't compact due to comments - use multiline
+        if !can_compact {
             self.format_collection_multiline(open, close, leading, trailing, items, format_item);
             self.depth = current_depth;
             return;
         }
 
-        // 4. Try length-based compaction (soft - no comment conversion)
+        // 4. Try length-based compaction
         let compact =
             self.try_format_compact_with_trivia(open, close, leading, trailing, items, &format_item);
         if compact.len() <= self.char_limit() {
@@ -774,37 +766,33 @@ impl<'a> Formatter<'a> {
     }
 
     fn write_indent(&mut self) {
-        // No indentation in Minimal mode or compact mode
-        if matches!(self.config, FormatConfig::Minimal) || self.is_compact {
+        // No indentation in compact mode or if indent is empty
+        if self.is_compact || self.config.indent.is_empty() {
             return;
         }
-        let indent = match self.config {
-            FormatConfig::Pretty(config) => &config.indent,
-            FormatConfig::Minimal => return,
-        };
         for _ in 0..self.indent_level {
-            self.output.push_str(indent);
+            self.output.push_str(&self.config.indent);
         }
     }
 
     fn write_colon(&mut self) {
-        match self.config {
-            FormatConfig::Minimal => self.output.push(':'),
-            FormatConfig::Pretty(_) => self.output.push_str(": "),
+        match self.config.spacing {
+            Spacing::None => self.output.push(':'),
+            Spacing::Normal => self.output.push_str(": "),
         }
     }
 
     fn write_separator(&mut self) {
-        match self.config {
-            FormatConfig::Minimal => self.output.push(','),
-            FormatConfig::Pretty(_) => self.output.push_str(", "),
+        match self.config.spacing {
+            Spacing::None => self.output.push(','),
+            Spacing::Normal => self.output.push_str(", "),
         }
     }
 
     /// Format leading comments (comments that appear before an item on their own lines).
     fn format_leading_comments(&mut self, trivia: &Trivia<'_>) {
-        // Only Pretty mode preserves leading comments
-        if !matches!(self.config, FormatConfig::Pretty(_)) {
+        // Delete mode strips all comments
+        if self.config.comments == CommentMode::Delete {
             return;
         }
         if trivia.comments.is_empty() {
@@ -822,8 +810,8 @@ impl<'a> Formatter<'a> {
 
     /// Format leading comments inline (for comments after colons, don't add newlines).
     fn format_leading_comments_inline(&mut self, trivia: &Trivia<'_>) {
-        // No comments in Minimal mode
-        if matches!(self.config, FormatConfig::Minimal) {
+        // Delete mode strips all comments
+        if self.config.comments == CommentMode::Delete {
             return;
         }
         if trivia.comments.is_empty() {
@@ -843,8 +831,8 @@ impl<'a> Formatter<'a> {
                 }
                 CommentKind::Line => {
                     // Line comments can't really be inline, but if they're here,
-                    // they'll force a newline (only in Pretty mode)
-                    if matches!(self.config, FormatConfig::Pretty(_)) {
+                    // they'll force a newline (only if we're not in minimal-like mode)
+                    if self.is_pretty() {
                         self.output.push_str("  ");
                         self.output.push_str(&comment.text);
                     }
@@ -855,8 +843,8 @@ impl<'a> Formatter<'a> {
 
     /// Format trailing inline comments (comments on the same line after a value).
     fn format_trailing_inline_comment(&mut self, trivia: &Trivia<'_>) {
-        // No comments in Minimal mode
-        if matches!(self.config, FormatConfig::Minimal) {
+        // Delete mode strips all comments
+        if self.config.comments == CommentMode::Delete {
             return;
         }
         if trivia.comments.is_empty() {
@@ -870,8 +858,8 @@ impl<'a> Formatter<'a> {
         for comment in &trivia.comments {
             match comment.kind {
                 CommentKind::Line => {
-                    // Line comments only in Pretty mode (they need newlines)
-                    if matches!(self.config, FormatConfig::Pretty(_)) {
+                    // Line comments only in pretty mode (they need newlines)
+                    if self.is_pretty() {
                         self.output.push_str("  ");
                         self.output.push_str(&comment.text);
                     }
@@ -1438,7 +1426,7 @@ mod tests {
     fn test_minimal_no_whitespace() {
         // AR-1.1, AR-1.3, AR-1.4: No whitespace between tokens
         let source = "Point(x: 1, y: 2)";
-        let formatted = format_with(source, &FormatConfig::Minimal);
+        let formatted = format_with(source, &FormatConfig::minimal());
         assert_eq!(formatted, "Point(x:1,y:2)");
     }
 
@@ -1446,7 +1434,7 @@ mod tests {
     fn test_minimal_strips_comments() {
         // AR-1.2: Comments are stripped
         let source = "// header\nPoint(x: 1, /* inline */ y: 2)";
-        let formatted = format_with(source, &FormatConfig::Minimal);
+        let formatted = format_with(source, &FormatConfig::minimal());
         assert_eq!(formatted, "Point(x:1,y:2)");
     }
 
@@ -1454,7 +1442,7 @@ mod tests {
     fn test_minimal_nested_collections() {
         // AR-1.1: Nested collections also have no whitespace
         let source = "Config(items: [1, 2], point: (3, 4), map: {\"a\": 1})";
-        let formatted = format_with(source, &FormatConfig::Minimal);
+        let formatted = format_with(source, &FormatConfig::minimal());
         assert_eq!(formatted, "Config(items:[1,2],point:(3,4),map:{\"a\":1})");
     }
 
@@ -1787,7 +1775,7 @@ mod tests {
         1,
     ],
 )";
-        let formatted = format_with(source, &FormatConfig::Minimal);
+        let formatted = format_with(source, &FormatConfig::minimal());
         assert!(
             !formatted.contains("comment"),
             "No comments in minimal: {formatted:?}"

@@ -7,7 +7,7 @@
 //! - Schema generation for editor support
 //! - Extension attributes: `transparent`, `explicit`, implicit Some
 
-use ron2::ast::{FormatConfig, PrettyConfig};
+use ron2::ast::FormatConfig;
 use ron2_derive::Ron;
 use ron2_schema::{FromRon, ToRon};
 use std::collections::HashMap;
@@ -138,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n2. Pretty-printed RON output:");
     println!("{}", "─".repeat(50));
 
-    let pretty = FormatConfig::Pretty(PrettyConfig::default().with_indent("    "));
+    let pretty = FormatConfig::new().indent("    ");
 
     let output = config.to_ron_with(&pretty)?;
     println!("{}", output);

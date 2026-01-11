@@ -26,7 +26,7 @@
 //! // Pretty output (default)
 //! let pretty = value.to_ron().unwrap();
 //! // Compact output (no whitespace)
-//! let compact = value.to_ron_with(&FormatConfig::Minimal).unwrap();
+//! let compact = value.to_ron_with(&FormatConfig::minimal()).unwrap();
 //! ```
 
 #![deny(clippy::correctness)]
@@ -76,7 +76,7 @@ pub use crate::options::Options;
 pub use crate::value::{Map, NamedContent, Number, StructFields, Value};
 
 // Re-export formatting config types from ast::fmt
-pub use crate::ast::{Compaction, CompactTypes, FormatConfig, PrettyConfig};
+pub use crate::ast::{CommentMode, Compaction, CompactTypes, FormatConfig, Spacing};
 
 /// Deserialize a Value from a string.
 ///

@@ -189,7 +189,7 @@ fn serialize_named_unit() {
         content: NamedContent::Unit,
     };
     assert_eq!(
-        value.to_ron_with(&FormatConfig::Minimal).unwrap(),
+        value.to_ron_with(&FormatConfig::minimal()).unwrap(),
         "MyType"
     );
 }
@@ -204,7 +204,7 @@ fn serialize_named_tuple() {
         ]),
     };
     assert_eq!(
-        value.to_ron_with(&FormatConfig::Minimal).unwrap(),
+        value.to_ron_with(&FormatConfig::minimal()).unwrap(),
         "Point(1,2)"
     );
 }
@@ -219,7 +219,7 @@ fn serialize_named_struct() {
         ]),
     };
     assert_eq!(
-        value.to_ron_with(&FormatConfig::Minimal).unwrap(),
+        value.to_ron_with(&FormatConfig::minimal()).unwrap(),
         "Point(x:1,y:2)"
     );
 }
@@ -384,7 +384,7 @@ fn realistic_config_file() {
     )"#;
 
     let value = from_str(input).unwrap();
-    let serialized = value.to_ron_with(&FormatConfig::Minimal).unwrap();
+    let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
     let reparsed = from_str(&serialized).unwrap();
     assert_eq!(value, reparsed);
 }

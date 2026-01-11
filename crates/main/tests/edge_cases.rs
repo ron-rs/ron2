@@ -74,14 +74,14 @@ fn edge_i32_boundary() {
 fn edge_empty_seq() {
     let value = from_str("[]").unwrap();
     assert_eq!(value, Value::Seq(vec![]));
-    assert_eq!(value.to_ron_with(&FormatConfig::Minimal).unwrap(), "[]");
+    assert_eq!(value.to_ron_with(&FormatConfig::minimal()).unwrap(), "[]");
 }
 
 #[test]
 fn edge_empty_map() {
     let value = from_str("{}").unwrap();
     assert_eq!(value, Value::Map(Map::new()));
-    assert_eq!(value.to_ron_with(&FormatConfig::Minimal).unwrap(), "{}");
+    assert_eq!(value.to_ron_with(&FormatConfig::minimal()).unwrap(), "{}");
 }
 
 #[test]
@@ -662,14 +662,14 @@ fn edge_map_option_keys() {
 #[test]
 fn edge_serialize_special_chars_in_string() {
     let value = Value::String(String::from("tab:\there\nnewline"));
-    let serialized = value.to_ron_with(&FormatConfig::Minimal).unwrap();
+    let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
     assert_eq!(serialized, r#""tab:\there\nnewline""#);
 }
 
 #[test]
 fn edge_serialize_bytes_non_printable() {
     let value = Value::Bytes(vec![0, 1, 2, 127, 128, 255]);
-    let serialized = value.to_ron_with(&FormatConfig::Minimal).unwrap();
+    let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
     // Should use hex escapes for non-printable bytes
     assert!(serialized.starts_with("b\""));
     assert!(serialized.contains("\\x"));
@@ -679,7 +679,7 @@ fn edge_serialize_bytes_non_printable() {
 fn edge_serialize_float_whole_number() {
     // Float that looks like an integer should still have decimal point
     let value = Value::Number(Number::F64(ron2::value::F64::from(42.0)));
-    let serialized = value.to_ron_with(&FormatConfig::Minimal).unwrap();
+    let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
     assert!(
         serialized.contains('.'),
         "Float should have decimal point: {serialized}"

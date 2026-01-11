@@ -76,7 +76,7 @@ pub trait ToRon {
     /// use ron2::{ToRon, ast::FormatConfig};
     ///
     /// let value = vec![1, 2, 3];
-    /// let minimal = value.to_ron_with(&FormatConfig::Minimal).unwrap();
+    /// let minimal = value.to_ron_with(&FormatConfig::minimal()).unwrap();
     /// assert_eq!(minimal, "[1,2,3]");
     /// ```
     fn to_ron_with(&self, config: &FormatConfig) -> Result<String> {
@@ -301,7 +301,7 @@ mod tests {
 
     /// Helper to get minimal (compact) output
     fn minimal(v: &impl ToRon) -> String {
-        v.to_ron_with(&FormatConfig::Minimal).unwrap()
+        v.to_ron_with(&FormatConfig::minimal()).unwrap()
     }
 
     #[test]

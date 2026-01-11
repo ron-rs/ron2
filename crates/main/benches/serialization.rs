@@ -17,11 +17,11 @@ fn bench_value_compact(c: &mut Criterion) {
 
     for (name, input) in common::test_inputs() {
         let value: ron2::Value = ron2::from_str(&input).unwrap();
-        let output_size = value.to_ron_with(&FormatConfig::Minimal).unwrap().len();
+        let output_size = value.to_ron_with(&FormatConfig::minimal()).unwrap().len();
         group.throughput(Throughput::Bytes(output_size as u64));
 
         group.bench_with_input(BenchmarkId::from_parameter(name), &value, |b, value| {
-            b.iter(|| value.to_ron_with(&FormatConfig::Minimal).unwrap());
+            b.iter(|| value.to_ron_with(&FormatConfig::minimal()).unwrap());
         });
     }
 
@@ -74,7 +74,7 @@ fn bench_serialization_comparison(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(input.len() as u64));
 
     group.bench_function("value_compact", |b| {
-        b.iter(|| value.to_ron_with(&FormatConfig::Minimal).unwrap());
+        b.iter(|| value.to_ron_with(&FormatConfig::minimal()).unwrap());
     });
 
     group.bench_function("value_pretty", |b| {
