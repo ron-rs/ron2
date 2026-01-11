@@ -115,7 +115,7 @@ mod transparent {
     }
 
     // Schema tests for transparent types
-    use ron2_schema::{RonSchemaType, TypeKind};
+    use ron2::schema::{RonSchemaType, TypeKind};
 
     #[test]
     fn transparent_newtype_schema_is_inner_type() {

@@ -102,7 +102,7 @@ fn first_line(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ron2_schema::{Schema, TypeKind};
+    use ron2::schema::{Schema, TypeKind};
     use std::path::PathBuf;
 
     fn make_schema(type_path: &str, doc: Option<&str>) -> DiscoveredSchema {

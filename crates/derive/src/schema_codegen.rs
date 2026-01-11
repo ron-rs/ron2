@@ -35,23 +35,23 @@ pub fn impl_ron_schema(
     // Generate the schema construction code
     let schema_tokens = if let Some(doc_str) = doc {
         quote! {
-            ::ron2_schema::Schema::with_doc(#doc_str, #type_kind_tokens)
+            ::ron2::schema::Schema::with_doc(#doc_str, #type_kind_tokens)
         }
     } else {
         quote! {
-            ::ron2_schema::Schema::new(#type_kind_tokens)
+            ::ron2::schema::Schema::new(#type_kind_tokens)
         }
     };
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let expanded = quote! {
-        impl #impl_generics ::ron2_schema::RonSchemaType for #name #ty_generics #where_clause {
-            fn type_kind() -> ::ron2_schema::TypeKind {
+        impl #impl_generics ::ron2::schema::RonSchemaType for #name #ty_generics #where_clause {
+            fn type_kind() -> ::ron2::schema::TypeKind {
                 #type_kind_tokens
             }
 
-            fn schema() -> ::ron2_schema::Schema {
+            fn schema() -> ::ron2::schema::Schema {
                 #schema_tokens
             }
 
@@ -90,7 +90,7 @@ pub fn generate_struct_kind(
             }
 
             Ok(quote! {
-                ::ron2_schema::TypeKind::Struct {
+                ::ron2::schema::TypeKind::Struct {
                     fields: vec![#(#field_tokens),*],
                 }
             })
@@ -104,13 +104,13 @@ pub fn generate_struct_kind(
                 .collect();
 
             Ok(quote! {
-                ::ron2_schema::TypeKind::Tuple(vec![#(#type_tokens),*])
+                ::ron2::schema::TypeKind::Tuple(vec![#(#type_tokens),*])
             })
         }
         Fields::Unit => {
             // Unit struct -> empty struct
             Ok(quote! {
-                ::ron2_schema::TypeKind::Unit
+                ::ron2::schema::TypeKind::Unit
             })
         }
     }
@@ -169,7 +169,7 @@ pub fn generate_enum_kind(
         .collect::<syn::Result<Vec<_>>>()?;
 
     Ok(quote! {
-        ::ron2_schema::TypeKind::Enum {
+        ::ron2::schema::TypeKind::Enum {
             variants: vec![#(#variant_tokens),*],
         }
     })
@@ -199,7 +199,7 @@ fn generate_field(
     };
 
     Ok(quote! {
-        ::ron2_schema::Field {
+        ::ron2::schema::Field {
             name: #name.to_string(),
             ty: #type_kind,
             doc: #doc_tokens,
@@ -225,7 +225,7 @@ fn generate_variant(
     };
 
     let kind_tokens = match &variant.fields {
-        Fields::Unit => quote! { ::ron2_schema::VariantKind::Unit },
+        Fields::Unit => quote! { ::ron2::schema::VariantKind::Unit },
         Fields::Unnamed(unnamed) => {
             let type_tokens: Vec<TokenStream2> = unnamed
                 .unnamed
@@ -234,7 +234,7 @@ fn generate_variant(
                 .collect();
 
             quote! {
-                ::ron2_schema::VariantKind::Tuple(vec![#(#type_tokens),*])
+                ::ron2::schema::VariantKind::Tuple(vec![#(#type_tokens),*])
             }
         }
         Fields::Named(named) => {
@@ -252,13 +252,13 @@ fn generate_variant(
             }
 
             quote! {
-                ::ron2_schema::VariantKind::Struct(vec![#(#field_tokens),*])
+                ::ron2::schema::VariantKind::Struct(vec![#(#field_tokens),*])
             }
         }
     };
 
     Ok(quote! {
-        ::ron2_schema::Variant {
+        ::ron2::schema::Variant {
             name: #name.to_string(),
             doc: #doc_tokens,
             kind: #kind_tokens,

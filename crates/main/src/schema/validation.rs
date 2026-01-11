@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use ron2::Value;
+use crate::Value;
 
 use crate::error::{Result, SchemaError, ValidationError, ValidationResult};
 use crate::{Field, Schema, TypeKind, VariantKind};
@@ -20,7 +20,7 @@ use crate::{Field, Schema, TypeKind, VariantKind};
 ///
 /// ```rust
 /// use std::collections::HashMap;
-/// use ron2_schema::{Schema, SchemaResolver};
+/// use crate::schema::{Schema, SchemaResolver};
 ///
 /// struct MyResolver {
 ///     schemas: HashMap<String, Schema>,
@@ -159,7 +159,7 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
 /// # Example
 ///
 /// ```rust
-/// use ron2_schema::{Schema, TypeKind, Field, StorageResolver, validate_with_resolver};
+/// use crate::schema::{Schema, TypeKind, Field, StorageResolver, validate_with_resolver};
 ///
 /// let schema = Schema::new(TypeKind::Struct {
 ///     fields: vec![
@@ -168,7 +168,7 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
 /// });
 ///
 /// let resolver = StorageResolver::new();
-/// let value = ron2::from_str("(data: 42)").unwrap();
+/// let value = crate::from_str("(data: 42)").unwrap();
 ///
 /// // If "my::Type" schema is not found, accepts any value for 'data'
 /// let result = validate_with_resolver(&value, &schema, &resolver);
@@ -355,7 +355,7 @@ fn validate_struct_internal<R: SchemaResolver>(
         ),
         // Named struct: Point(x: 1, y: 2)
         Value::Named {
-            content: ron2::value::NamedContent::Struct(struct_fields),
+            content: crate::value::NamedContent::Struct(struct_fields),
             ..
         } => validate_struct_fields_inner(
             struct_fields.iter().map(|(k, v)| (k.as_str(), v)),
@@ -395,7 +395,7 @@ fn validate_enum_internal<R: SchemaResolver>(
     variants: &[crate::Variant],
     ctx: &mut ValidationContext<R>,
 ) -> ValidationResult<()> {
-    use ron2::value::NamedContent;
+    use crate::value::NamedContent;
 
     // Variant content can come from either NamedContent (for Named values)
     // or directly as a Value (for Map-based representation)
@@ -409,7 +409,7 @@ fn validate_enum_internal<R: SchemaResolver>(
     let (variant_name, content): (&str, VariantContent) = match value {
         // Unit variant as string
         Value::String(s) => (s.as_str(), VariantContent::None),
-        // Named variant (ron2 style): Name, Name(values), Name(x: y)
+        // Named variant (crate style): Name, Name(values), Name(x: y)
         Value::Named { name, content } => (name.as_str(), VariantContent::Named(content)),
         // Map with single string key: { "Variant": content }
         Value::Map(map) if map.len() == 1 => {
@@ -569,15 +569,15 @@ mod tests {
         });
 
         // Valid struct with all fields
-        let value: Value = ron2::from_str("(port: 8080, host: \"localhost\")").unwrap();
+        let value: Value = crate::from_str("(port: 8080, host: \"localhost\")").unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Valid struct with only required fields
-        let value: Value = ron2::from_str("(port: 8080)").unwrap();
+        let value: Value = crate::from_str("(port: 8080)").unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Missing required field
-        let value: Value = ron2::from_str("(host: \"localhost\")").unwrap();
+        let value: Value = crate::from_str("(host: \"localhost\")").unwrap();
         assert!(validate(&value, &schema).is_err());
     }
 
@@ -592,11 +592,11 @@ mod tests {
         });
 
         // Unit variant
-        let value: Value = ron2::from_str("\"None\"").unwrap();
+        let value: Value = crate::from_str("\"None\"").unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Unknown variant
-        let value: Value = ron2::from_str("\"Unknown\"").unwrap();
+        let value: Value = crate::from_str("\"Unknown\"").unwrap();
         assert!(validate(&value, &schema).is_err());
     }
 
@@ -610,7 +610,7 @@ mod tests {
         });
 
         // Error in nested structure should have path context
-        let value: Value = ron2::from_str("(items: [\"ok\", 42])").unwrap();
+        let value: Value = crate::from_str("(items: [\"ok\", 42])").unwrap();
         let err = validate(&value, &schema).unwrap_err();
 
         // Should contain path information

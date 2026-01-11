@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use ron2_schema::{Schema, TypeKind, Variant, VariantKind};
+use ron2::schema::{Schema, TypeKind, Variant, VariantKind};
 
 use crate::discovery::DiscoveredSchema;
 
@@ -178,7 +178,7 @@ pub fn build_schema_map(schemas: &[DiscoveredSchema]) -> HashMap<&str, &Schema> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ron2_schema::Field;
+    use ron2::schema::Field;
 
     #[test]
     fn test_generate_primitive_examples() {

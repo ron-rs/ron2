@@ -1,16 +1,17 @@
 use std::fmt;
 
-use ron2::ast::{expr_to_value, value_to_expr, Expr};
-use ron2::error::{Error, Result, SpannedError, SpannedResult};
-use ron2::value::{NamedContent, StructFields};
-use ron2::{FromRon, ToRon, Value};
-use serde::{Deserialize, Serialize};
+use crate::ast::{Expr, expr_to_value, value_to_expr};
+use crate::error::{Error, Result, SpannedError, SpannedResult};
+use crate::value::{NamedContent, StructFields};
+use crate::{FromRon, ToRon, Value};
+
+use ron2_derive::{FromRon, ToRon};
 
 /// Root schema definition for a Rust type.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, FromRon, ToRon)]
 pub struct Schema {
     /// Documentation from the Rust type's doc comments.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ron(default, skip_serializing_if = "Option::is_none")]
     pub doc: Option<String>,
     /// The kind of type this schema represents.
     pub kind: TypeKind,
@@ -55,12 +56,6 @@ pub enum TypeKind {
     ///
     /// This includes `Vec<T>`, `VecDeque<T>`, `HashSet<T>`, `BTreeSet<T>`,
     /// arrays, and any custom types implementing `RonList`.
-    ///
-    /// # Serde Compatibility
-    ///
-    /// For backwards compatibility, this variant also deserializes from "Vec"
-    /// in existing schema files.
-    #[serde(alias = "Vec")]
     List(Box<TypeKind>),
 
     /// Map/dictionary type - represents any type implementing `RonMap`.

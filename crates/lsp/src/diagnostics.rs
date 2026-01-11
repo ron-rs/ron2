@@ -3,7 +3,7 @@
 //! Validates RON files against their schemas and produces
 //! diagnostic messages for errors.
 
-use ron2_schema::{
+use ron2::schema::{
     validate_with_resolver, PathSegment, SchemaError, ValidationError, ValidationErrorKind,
 };
 use tower_lsp::lsp_types::*;

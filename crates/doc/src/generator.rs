@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use ron2_schema::{Field, Schema, TypeKind, Variant, VariantKind};
+use ron2::schema::{Field, Schema, TypeKind, Variant, VariantKind};
 
 use crate::config::{DocConfig, OutputFormat, OutputMode};
 use crate::discovery::DiscoveredSchema;

@@ -9,7 +9,7 @@ use std::fmt;
 use std::io;
 
 // Re-export validation error types from ron-error
-pub use ron2_error::{PathSegment, Position, Span, ValidationError, ValidationErrorKind};
+pub use crate::error::{PathSegment, Position, Span, ValidationError, ValidationErrorKind};
 
 /// Errors related to schema storage operations.
 #[derive(Debug, Clone)]
@@ -102,14 +102,14 @@ impl From<io::Error> for SchemaError {
     }
 }
 
-impl From<ron2::SpannedError> for SchemaError {
-    fn from(e: ron2::SpannedError) -> Self {
+impl From<crate::SpannedError> for SchemaError {
+    fn from(e: crate::SpannedError) -> Self {
         SchemaError::Storage(StorageError::Parse(e.to_string()))
     }
 }
 
-impl From<ron2::Error> for SchemaError {
-    fn from(e: ron2::Error) -> Self {
+impl From<crate::Error> for SchemaError {
+    fn from(e: crate::Error) -> Self {
         SchemaError::Storage(StorageError::Parse(e.to_string()))
     }
 }

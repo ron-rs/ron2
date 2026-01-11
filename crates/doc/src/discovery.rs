@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use ron2_schema::{storage::read_schema, Schema};
+use ron2::schema::{storage::read_schema, Schema};
 use walkdir::WalkDir;
 
 /// A discovered schema with its metadata.

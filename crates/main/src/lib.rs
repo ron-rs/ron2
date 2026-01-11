@@ -60,6 +60,7 @@ pub mod error;
 pub mod extensions;
 pub mod lexer;
 pub mod options;
+pub mod schema;
 pub mod token;
 mod util;
 pub mod value;
@@ -76,7 +77,7 @@ pub use crate::options::Options;
 pub use crate::value::{Map, NamedContent, Number, StructFields, Value};
 
 // Re-export formatting config types from ast::fmt
-pub use crate::ast::{CommentMode, Compaction, CompactTypes, FormatConfig, Spacing};
+pub use crate::ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing};
 
 /// Deserialize a Value from a string.
 ///

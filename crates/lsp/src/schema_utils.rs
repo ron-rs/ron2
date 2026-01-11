@@ -1,6 +1,6 @@
 //! Shared utilities for formatting schema types.
 
-use ron2_schema::{Field, TypeKind, Variant, VariantKind};
+use ron2::schema::{Field, TypeKind, Variant, VariantKind};
 
 /// Format a list of types as comma-separated strings.
 pub fn format_type_list(types: &[TypeKind]) -> String {

@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust
-//! use ron2_schema::{RonSchemaType, RonList, TypeKind};
+//! use crate::schema::{RonSchemaType, RonList, TypeKind};
 //!
 //! // A custom list type
 //! struct MyVec<T>(Vec<T>);
@@ -24,8 +24,8 @@
 //! }
 //! ```
 
-use crate::error::StorageError;
-use crate::{Schema, SchemaError, TypeKind};
+use crate::schema::StorageError;
+use crate::schema::{Schema, SchemaError, TypeKind};
 use std::path::PathBuf;
 
 /// Core trait for types that can be represented in the RON schema system.
@@ -43,7 +43,7 @@ use std::path::PathBuf;
 /// implement this trait manually:
 ///
 /// ```rust
-/// use ron2_schema::{RonSchemaType, TypeKind};
+/// use crate::schema::{RonSchemaType, TypeKind};
 ///
 /// struct UserId(u64);
 ///
@@ -111,7 +111,7 @@ pub trait RonSchemaType {
 /// # Example
 ///
 /// ```rust
-/// use ron2_schema::{RonSchemaType, RonList, TypeKind};
+/// use crate::schema::{RonSchemaType, RonList, TypeKind};
 ///
 /// struct SortedVec<T>(Vec<T>);
 ///
@@ -144,7 +144,7 @@ pub trait RonList: RonSchemaType {
 /// # Example
 ///
 /// ```rust
-/// use ron2_schema::{RonSchemaType, RonMap, TypeKind};
+/// use crate::schema::{RonSchemaType, RonMap, TypeKind};
 /// use std::collections::BTreeMap;
 ///
 /// struct OrderedMap<K, V>(BTreeMap<K, V>);
@@ -528,13 +528,8 @@ impl<T0: RonSchemaType, T1: RonSchemaType, T2: RonSchemaType, T3: RonSchemaType>
     }
 }
 
-impl<
-        T0: RonSchemaType,
-        T1: RonSchemaType,
-        T2: RonSchemaType,
-        T3: RonSchemaType,
-        T4: RonSchemaType,
-    > RonSchemaType for (T0, T1, T2, T3, T4)
+impl<T0: RonSchemaType, T1: RonSchemaType, T2: RonSchemaType, T3: RonSchemaType, T4: RonSchemaType>
+    RonSchemaType for (T0, T1, T2, T3, T4)
 {
     fn type_kind() -> TypeKind {
         TypeKind::Tuple(vec![
@@ -548,13 +543,13 @@ impl<
 }
 
 impl<
-        T0: RonSchemaType,
-        T1: RonSchemaType,
-        T2: RonSchemaType,
-        T3: RonSchemaType,
-        T4: RonSchemaType,
-        T5: RonSchemaType,
-    > RonSchemaType for (T0, T1, T2, T3, T4, T5)
+    T0: RonSchemaType,
+    T1: RonSchemaType,
+    T2: RonSchemaType,
+    T3: RonSchemaType,
+    T4: RonSchemaType,
+    T5: RonSchemaType,
+> RonSchemaType for (T0, T1, T2, T3, T4, T5)
 {
     fn type_kind() -> TypeKind {
         TypeKind::Tuple(vec![
@@ -569,14 +564,14 @@ impl<
 }
 
 impl<
-        T0: RonSchemaType,
-        T1: RonSchemaType,
-        T2: RonSchemaType,
-        T3: RonSchemaType,
-        T4: RonSchemaType,
-        T5: RonSchemaType,
-        T6: RonSchemaType,
-    > RonSchemaType for (T0, T1, T2, T3, T4, T5, T6)
+    T0: RonSchemaType,
+    T1: RonSchemaType,
+    T2: RonSchemaType,
+    T3: RonSchemaType,
+    T4: RonSchemaType,
+    T5: RonSchemaType,
+    T6: RonSchemaType,
+> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6)
 {
     fn type_kind() -> TypeKind {
         TypeKind::Tuple(vec![
@@ -592,15 +587,15 @@ impl<
 }
 
 impl<
-        T0: RonSchemaType,
-        T1: RonSchemaType,
-        T2: RonSchemaType,
-        T3: RonSchemaType,
-        T4: RonSchemaType,
-        T5: RonSchemaType,
-        T6: RonSchemaType,
-        T7: RonSchemaType,
-    > RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7)
+    T0: RonSchemaType,
+    T1: RonSchemaType,
+    T2: RonSchemaType,
+    T3: RonSchemaType,
+    T4: RonSchemaType,
+    T5: RonSchemaType,
+    T6: RonSchemaType,
+    T7: RonSchemaType,
+> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7)
 {
     fn type_kind() -> TypeKind {
         TypeKind::Tuple(vec![
@@ -617,16 +612,16 @@ impl<
 }
 
 impl<
-        T0: RonSchemaType,
-        T1: RonSchemaType,
-        T2: RonSchemaType,
-        T3: RonSchemaType,
-        T4: RonSchemaType,
-        T5: RonSchemaType,
-        T6: RonSchemaType,
-        T7: RonSchemaType,
-        T8: RonSchemaType,
-    > RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8)
+    T0: RonSchemaType,
+    T1: RonSchemaType,
+    T2: RonSchemaType,
+    T3: RonSchemaType,
+    T4: RonSchemaType,
+    T5: RonSchemaType,
+    T6: RonSchemaType,
+    T7: RonSchemaType,
+    T8: RonSchemaType,
+> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8)
 {
     fn type_kind() -> TypeKind {
         TypeKind::Tuple(vec![
@@ -644,17 +639,17 @@ impl<
 }
 
 impl<
-        T0: RonSchemaType,
-        T1: RonSchemaType,
-        T2: RonSchemaType,
-        T3: RonSchemaType,
-        T4: RonSchemaType,
-        T5: RonSchemaType,
-        T6: RonSchemaType,
-        T7: RonSchemaType,
-        T8: RonSchemaType,
-        T9: RonSchemaType,
-    > RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)
+    T0: RonSchemaType,
+    T1: RonSchemaType,
+    T2: RonSchemaType,
+    T3: RonSchemaType,
+    T4: RonSchemaType,
+    T5: RonSchemaType,
+    T6: RonSchemaType,
+    T7: RonSchemaType,
+    T8: RonSchemaType,
+    T9: RonSchemaType,
+> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)
 {
     fn type_kind() -> TypeKind {
         TypeKind::Tuple(vec![
@@ -673,18 +668,18 @@ impl<
 }
 
 impl<
-        T0: RonSchemaType,
-        T1: RonSchemaType,
-        T2: RonSchemaType,
-        T3: RonSchemaType,
-        T4: RonSchemaType,
-        T5: RonSchemaType,
-        T6: RonSchemaType,
-        T7: RonSchemaType,
-        T8: RonSchemaType,
-        T9: RonSchemaType,
-        T10: RonSchemaType,
-    > RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)
+    T0: RonSchemaType,
+    T1: RonSchemaType,
+    T2: RonSchemaType,
+    T3: RonSchemaType,
+    T4: RonSchemaType,
+    T5: RonSchemaType,
+    T6: RonSchemaType,
+    T7: RonSchemaType,
+    T8: RonSchemaType,
+    T9: RonSchemaType,
+    T10: RonSchemaType,
+> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)
 {
     fn type_kind() -> TypeKind {
         TypeKind::Tuple(vec![
@@ -704,19 +699,19 @@ impl<
 }
 
 impl<
-        T0: RonSchemaType,
-        T1: RonSchemaType,
-        T2: RonSchemaType,
-        T3: RonSchemaType,
-        T4: RonSchemaType,
-        T5: RonSchemaType,
-        T6: RonSchemaType,
-        T7: RonSchemaType,
-        T8: RonSchemaType,
-        T9: RonSchemaType,
-        T10: RonSchemaType,
-        T11: RonSchemaType,
-    > RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)
+    T0: RonSchemaType,
+    T1: RonSchemaType,
+    T2: RonSchemaType,
+    T3: RonSchemaType,
+    T4: RonSchemaType,
+    T5: RonSchemaType,
+    T6: RonSchemaType,
+    T7: RonSchemaType,
+    T8: RonSchemaType,
+    T9: RonSchemaType,
+    T10: RonSchemaType,
+    T11: RonSchemaType,
+> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)
 {
     fn type_kind() -> TypeKind {
         TypeKind::Tuple(vec![

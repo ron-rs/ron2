@@ -96,7 +96,6 @@
 
 mod attr;
 mod de;
-mod schema_build;
 mod schema_codegen;
 mod ser;
 mod type_mapper;
@@ -139,22 +138,22 @@ pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error().into(),
     };
 
-    // Compile-time schema generation
-    let schema_dir = std::env::var("RON_SCHEMA_DIR").ok();
-    let schema_global = std::env::var("RON_SCHEMA_GLOBAL")
-        .map(|v| v == "1")
-        .unwrap_or(false);
+    // // Compile-time schema generation
+    // let schema_dir = std::env::var("RON_SCHEMA_DIR").ok();
+    // let schema_global = std::env::var("RON_SCHEMA_GLOBAL")
+    //     .map(|v| v == "1")
+    //     .unwrap_or(false);
 
-    if schema_dir.is_some() || schema_global {
-        if let Some(schema) = schema_build::build_schema(&input, &container_attrs) {
-            // Ignore errors during compile-time schema writing - don't fail the build
-            let _ = schema_build::write_schema_at_compile_time(
-                &input.ident,
-                &schema,
-                schema_dir.as_deref(),
-            );
-        }
-    }
+    // if schema_dir.is_some() || schema_global {
+    //     if let Some(schema) = schema_build::build_schema(&input, &container_attrs) {
+    //         // Ignore errors during compile-time schema writing - don't fail the build
+    //         let _ = schema_build::write_schema_at_compile_time(
+    //             &input.ident,
+    //             &schema,
+    //             schema_dir.as_deref(),
+    //         );
+    //     }
+    // }
 
     // Code generation
     match schema_codegen::impl_ron_schema(&input, &container_attrs) {
@@ -246,21 +245,21 @@ pub fn derive_ron(input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error().into(),
     };
 
-    // Compile-time schema generation
-    let schema_dir = std::env::var("RON_SCHEMA_DIR").ok();
-    let schema_global = std::env::var("RON_SCHEMA_GLOBAL")
-        .map(|v| v == "1")
-        .unwrap_or(false);
+    // // Compile-time schema generation
+    // let schema_dir = std::env::var("RON_SCHEMA_DIR").ok();
+    // let schema_global = std::env::var("RON_SCHEMA_GLOBAL")
+    //     .map(|v| v == "1")
+    //     .unwrap_or(false);
 
-    if schema_dir.is_some() || schema_global {
-        if let Some(schema) = schema_build::build_schema(&input, &container_attrs) {
-            let _ = schema_build::write_schema_at_compile_time(
-                &input.ident,
-                &schema,
-                schema_dir.as_deref(),
-            );
-        }
-    }
+    // if schema_dir.is_some() || schema_global {
+    //     if let Some(schema) = schema_build::build_schema(&input, &container_attrs) {
+    //         let _ = schema_build::write_schema_at_compile_time(
+    //             &input.ident,
+    //             &schema,
+    //             schema_dir.as_deref(),
+    //         );
+    //     }
+    // }
 
     // Combine all three derives
     let schema_result = schema_codegen::impl_ron_schema(&input, &container_attrs);

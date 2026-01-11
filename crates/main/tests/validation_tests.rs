@@ -12,10 +12,10 @@
 use std::collections::HashMap;
 
 use ron2::Value;
-use ron2_schema::{
-    validate, validate_type, validate_type_with_resolver, validate_with_resolver, Field,
-    PathSegment, Schema, SchemaError, SchemaResolver, TypeKind, ValidationError,
-    ValidationErrorKind, Variant,
+use ron2::schema::{
+    Field, PathSegment, Schema, SchemaError, SchemaResolver, TypeKind, ValidationError,
+    ValidationErrorKind, Variant, validate, validate_type, validate_type_with_resolver,
+    validate_with_resolver,
 };
 
 /// Helper to parse RON string into Value
@@ -188,11 +188,13 @@ fn test_validate_char_mismatch() {
 fn test_validate_string() {
     assert!(validate_type(&Value::String("hello".into()), &TypeKind::String).is_ok());
     assert!(validate_type(&Value::String("".into()), &TypeKind::String).is_ok());
-    assert!(validate_type(
-        &Value::String("unicode: \u{1F600}".into()),
-        &TypeKind::String
-    )
-    .is_ok());
+    assert!(
+        validate_type(
+            &Value::String("unicode: \u{1F600}".into()),
+            &TypeKind::String
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -481,10 +483,11 @@ fn test_validate_map_wrong_value_type() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     if let Some(ve) = as_validation_error(&err) {
-        assert!(ve
-            .path
-            .iter()
-            .any(|seg| matches!(seg, PathSegment::MapValue(_))));
+        assert!(
+            ve.path
+                .iter()
+                .any(|seg| matches!(seg, PathSegment::MapValue(_)))
+        );
     } else {
         panic!("Expected validation error");
     }

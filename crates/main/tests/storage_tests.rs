@@ -11,9 +11,9 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use ron2_schema::{
-    find_schema_in, read_schema, resolve_schema_dir, write_schema, Field, Schema, TypeKind,
-    SCHEMA_DIR_ENV,
+use ron2::schema::{
+    Field, SCHEMA_DIR_ENV, Schema, TypeKind, find_schema_in, read_schema, resolve_schema_dir,
+    write_schema,
 };
 use serial_test::serial;
 
@@ -28,7 +28,7 @@ fn create_temp_dir() -> tempfile::TempDir {
 
 #[test]
 fn test_type_path_to_file_path_simple_type() {
-    use ron2_schema::storage::type_path_to_file_path;
+    use ron2::schema::storage::type_path_to_file_path;
 
     let path = type_path_to_file_path("MyType");
     assert_eq!(path, PathBuf::from("MyType.schema.ron"));
@@ -36,7 +36,7 @@ fn test_type_path_to_file_path_simple_type() {
 
 #[test]
 fn test_type_path_to_file_path_single_module() {
-    use ron2_schema::storage::type_path_to_file_path;
+    use ron2::schema::storage::type_path_to_file_path;
 
     let path = type_path_to_file_path("my_crate::MyType");
     assert_eq!(path, PathBuf::from("my_crate/MyType.schema.ron"));
@@ -44,7 +44,7 @@ fn test_type_path_to_file_path_single_module() {
 
 #[test]
 fn test_type_path_to_file_path_nested_modules() {
-    use ron2_schema::storage::type_path_to_file_path;
+    use ron2::schema::storage::type_path_to_file_path;
 
     let path = type_path_to_file_path("my_crate::config::AppConfig");
     assert_eq!(path, PathBuf::from("my_crate/config/AppConfig.schema.ron"));
@@ -52,7 +52,7 @@ fn test_type_path_to_file_path_nested_modules() {
 
 #[test]
 fn test_type_path_to_file_path_deeply_nested() {
-    use ron2_schema::storage::type_path_to_file_path;
+    use ron2::schema::storage::type_path_to_file_path;
 
     let path = type_path_to_file_path("a::b::c::d::e::Type");
     assert_eq!(path, PathBuf::from("a/b/c/d/e/Type.schema.ron"));
@@ -60,7 +60,7 @@ fn test_type_path_to_file_path_deeply_nested() {
 
 #[test]
 fn test_type_path_to_file_path_with_underscores() {
-    use ron2_schema::storage::type_path_to_file_path;
+    use ron2::schema::storage::type_path_to_file_path;
 
     let path = type_path_to_file_path("my_crate::my_module::MyType");
     assert_eq!(path, PathBuf::from("my_crate/my_module/MyType.schema.ron"));
@@ -68,7 +68,7 @@ fn test_type_path_to_file_path_with_underscores() {
 
 #[test]
 fn test_type_path_to_file_path_with_numbers() {
-    use ron2_schema::storage::type_path_to_file_path;
+    use ron2::schema::storage::type_path_to_file_path;
 
     let path = type_path_to_file_path("v2::api::Response");
     assert_eq!(path, PathBuf::from("v2/api/Response.schema.ron"));
@@ -329,7 +329,7 @@ fn test_schema_file_can_be_manually_edited_and_read() {
 
 #[test]
 fn test_type_path_with_empty_string() {
-    use ron2_schema::storage::type_path_to_file_path;
+    use ron2::schema::storage::type_path_to_file_path;
 
     // Edge case: empty string should produce just the extension
     let path = type_path_to_file_path("");
@@ -378,7 +378,7 @@ fn test_multiple_schemas_in_same_directory() {
 
 #[test]
 fn test_write_enum_schema() {
-    use ron2_schema::Variant;
+    use ron2::schema::Variant;
 
     let temp_dir = create_temp_dir();
     let schema = Schema::with_doc(

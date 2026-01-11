@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use crate::error::{Result, SchemaError};
-use crate::Schema;
-use ron2::{FromRon, ToRon};
+use crate::schema::Schema;
+use crate::schema::error::{Result, SchemaError};
+use crate::{FromRon, ToRon};
 
 /// Environment variable for schema directory override.
 pub const SCHEMA_DIR_ENV: &str = "RON_SCHEMA_DIR";
@@ -79,7 +79,7 @@ pub fn write_schema(
 /// Read a schema from a file path.
 pub fn read_schema(path: &Path) -> Result<Schema> {
     let contents = fs::read_to_string(path)?;
-    let value = ron2::from_str(&contents)?;
+    let value = crate::from_str(&contents)?;
     let schema = Schema::from_ron_value(value)?;
     Ok(schema)
 }

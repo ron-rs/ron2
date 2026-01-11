@@ -8,13 +8,13 @@
 //!
 //! # Serialization and Deserialization
 //!
-//! The [`ToRon`] and [`FromRon`] traits (re-exported from `ron2`) provide
+//! The [`ToRon`] and [`FromRon`] traits (re-exported from `crate`) provide
 //! serde-independent serialization and deserialization for RON format:
 //!
 //! ```rust
-//! use ron2_schema::{ToRon, FromRon};
+//! use crate::schema::{ToRon, FromRon};
 //!
-//! // Serialize (ron2 uses compact format without spaces)
+//! // Serialize (crate uses compact format without spaces)
 //! let values = vec![1, 2, 3];
 //! let ron_string = values.to_ron().unwrap();
 //! assert_eq!(ron_string, "[1,2,3]");
@@ -36,7 +36,7 @@
 //! ## Implementing Custom Types
 //!
 //! ```rust
-//! use ron2_schema::{RonSchemaType, RonList, TypeKind};
+//! use crate::schema::{RonSchemaType, RonList, TypeKind};
 //!
 //! // A custom list type
 //! struct MyVec<T>(Vec<T>);
@@ -56,7 +56,7 @@
 //! # Creating Schemas Manually
 //!
 //! ```rust
-//! use ron2_schema::{Schema, TypeKind, Field};
+//! use crate::schema::{Schema, TypeKind, Field};
 //!
 //! // Define a schema for a config struct
 //! let schema = Schema::with_doc(
@@ -70,7 +70,7 @@
 //! );
 //!
 //! // Serialize to RON using the ToRon trait
-//! use ron2_schema::ToRon;
+//! use crate::schema::ToRon;
 //! let ron_str = schema.to_ron().unwrap();
 //! println!("{}", ron_str);
 //! ```
@@ -81,20 +81,20 @@ pub mod traits;
 pub mod types;
 pub mod validation;
 
-// Re-export conversion traits from ron2
-pub use ron2::{AstMapAccess, FormatConfig, FromRon, ToRon};
+// Re-export conversion traits from crate
+pub use crate::{AstMapAccess, FormatConfig, FromRon, ToRon};
 
 pub use error::{
     PathSegment, Position, Result, SchemaError, Span, StorageError, ValidationError,
     ValidationErrorKind, ValidationResult,
 };
 pub use storage::{
-    find_schema, find_schema_in, read_schema, resolve_schema_dir, type_path_to_file_path,
-    write_schema, SCHEMA_DIR_ENV,
+    SCHEMA_DIR_ENV, find_schema, find_schema_in, read_schema, resolve_schema_dir,
+    type_path_to_file_path, write_schema,
 };
 pub use traits::{RonList, RonMap, RonOptional, RonSchemaType};
 pub use types::{Field, Schema, TypeKind, Variant, VariantKind};
 pub use validation::{
-    validate, validate_type, validate_type_with_resolver, validate_with_resolver,
-    AcceptAllResolver, SchemaResolver, StorageResolver,
+    AcceptAllResolver, SchemaResolver, StorageResolver, validate, validate_type,
+    validate_type_with_resolver, validate_with_resolver,
 };

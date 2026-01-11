@@ -3,7 +3,7 @@
 //! Shows documentation from the schema when hovering over
 //! field names or enum variants.
 
-use ron2_schema::{Field, Schema, TypeKind, Variant, VariantKind};
+use ron2::schema::{Field, Schema, TypeKind, Variant, VariantKind};
 use tower_lsp::lsp_types::*;
 
 use crate::document::Document;
@@ -202,7 +202,7 @@ fn format_variant_hover(variant: &Variant) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ron2_schema::{Field, TypeKind};
+    use ron2::schema::{Field, TypeKind};
 
     #[test]
     fn test_format_field_hover() {

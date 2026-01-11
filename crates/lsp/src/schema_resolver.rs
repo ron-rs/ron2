@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use ron2_schema::{
+use ron2::schema::{
     find_schema, find_schema_in, read_schema, Schema, SchemaResolver as SchemaResolverTrait,
 };
 
@@ -156,7 +156,7 @@ impl SchemaResolverTrait for SchemaResolver {
     }
 }
 
-/// Wrapper that implements ron2_schema::SchemaResolver for &SchemaResolver.
+/// Wrapper that implements ron2::schema::SchemaResolver for &SchemaResolver.
 ///
 /// This is needed because validate_with_resolver takes the resolver by reference,
 /// and we need to pass our SchemaResolver which is behind an Arc.

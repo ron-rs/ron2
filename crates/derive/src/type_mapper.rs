@@ -72,27 +72,6 @@ impl PrimitiveKind {
             Self::String => "String",
         }
     }
-
-    /// Convert to the corresponding `ron2_schema::TypeKind` value.
-    pub fn to_type_kind(self) -> ron2_schema::TypeKind {
-        match self {
-            Self::Bool => ron2_schema::TypeKind::Bool,
-            Self::I8 => ron2_schema::TypeKind::I8,
-            Self::I16 => ron2_schema::TypeKind::I16,
-            Self::I32 => ron2_schema::TypeKind::I32,
-            Self::I64 => ron2_schema::TypeKind::I64,
-            Self::I128 => ron2_schema::TypeKind::I128,
-            Self::U8 => ron2_schema::TypeKind::U8,
-            Self::U16 => ron2_schema::TypeKind::U16,
-            Self::U32 => ron2_schema::TypeKind::U32,
-            Self::U64 => ron2_schema::TypeKind::U64,
-            Self::U128 => ron2_schema::TypeKind::U128,
-            Self::F32 => ron2_schema::TypeKind::F32,
-            Self::F64 => ron2_schema::TypeKind::F64,
-            Self::Char => ron2_schema::TypeKind::Char,
-            Self::String => ron2_schema::TypeKind::String,
-        }
-    }
 }
 
 /// Trait for mapping Rust types to TypeKind representations.
@@ -119,25 +98,25 @@ impl TypeKindMapper for TokenMapper {
     type Output = TokenStream2;
 
     fn unit(&self) -> Self::Output {
-        quote! { ::ron2_schema::TypeKind::Unit }
+        quote! { ::ron2::schema::TypeKind::Unit }
     }
 
     fn primitive(&self, kind: PrimitiveKind) -> Self::Output {
         let variant = syn::Ident::new(kind.variant_name(), proc_macro2::Span::call_site());
-        quote! { ::ron2_schema::TypeKind::#variant }
+        quote! { ::ron2::schema::TypeKind::#variant }
     }
 
     fn option(&self, inner: Self::Output) -> Self::Output {
-        quote! { ::ron2_schema::TypeKind::Option(Box::new(#inner)) }
+        quote! { ::ron2::schema::TypeKind::Option(Box::new(#inner)) }
     }
 
     fn list(&self, inner: Self::Output) -> Self::Output {
-        quote! { ::ron2_schema::TypeKind::List(Box::new(#inner)) }
+        quote! { ::ron2::schema::TypeKind::List(Box::new(#inner)) }
     }
 
     fn map(&self, key: Self::Output, value: Self::Output) -> Self::Output {
         quote! {
-            ::ron2_schema::TypeKind::Map {
+            ::ron2::schema::TypeKind::Map {
                 key: Box::new(#key),
                 value: Box::new(#value),
             }
@@ -145,49 +124,11 @@ impl TypeKindMapper for TokenMapper {
     }
 
     fn tuple(&self, elements: Vec<Self::Output>) -> Self::Output {
-        quote! { ::ron2_schema::TypeKind::Tuple(vec![#(#elements),*]) }
+        quote! { ::ron2::schema::TypeKind::Tuple(vec![#(#elements),*]) }
     }
 
     fn type_ref(&self, path: String) -> Self::Output {
-        quote! { ::ron2_schema::TypeKind::TypeRef(#path.to_string()) }
-    }
-}
-
-/// Mapper that builds TypeKind values directly at compile time.
-pub struct ValueMapper;
-
-impl TypeKindMapper for ValueMapper {
-    type Output = ron2_schema::TypeKind;
-
-    fn unit(&self) -> Self::Output {
-        ron2_schema::TypeKind::Unit
-    }
-
-    fn primitive(&self, kind: PrimitiveKind) -> Self::Output {
-        kind.to_type_kind()
-    }
-
-    fn option(&self, inner: Self::Output) -> Self::Output {
-        ron2_schema::TypeKind::Option(Box::new(inner))
-    }
-
-    fn list(&self, inner: Self::Output) -> Self::Output {
-        ron2_schema::TypeKind::List(Box::new(inner))
-    }
-
-    fn map(&self, key: Self::Output, value: Self::Output) -> Self::Output {
-        ron2_schema::TypeKind::Map {
-            key: Box::new(key),
-            value: Box::new(value),
-        }
-    }
-
-    fn tuple(&self, elements: Vec<Self::Output>) -> Self::Output {
-        ron2_schema::TypeKind::Tuple(elements)
-    }
-
-    fn type_ref(&self, path: String) -> Self::Output {
-        ron2_schema::TypeKind::TypeRef(path)
+        quote! { ::ron2::schema::TypeKind::TypeRef(#path.to_string()) }
     }
 }
 
@@ -284,9 +225,4 @@ pub fn map_type<M: TypeKindMapper>(ty: &Type, mapper: &M) -> M::Output {
 /// Convert a Rust type to TypeKind tokens (for code generation).
 pub fn type_to_type_kind(ty: &Type) -> TokenStream2 {
     map_type(ty, &TokenMapper)
-}
-
-/// Convert a Rust type to a TypeKind value (for compile-time building).
-pub fn rust_type_to_type_kind(ty: &Type) -> ron2_schema::TypeKind {
-    map_type(ty, &ValueMapper)
 }

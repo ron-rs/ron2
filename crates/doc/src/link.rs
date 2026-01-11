@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use ron2_schema::TypeKind;
+use ron2::schema::TypeKind;
 
 use crate::discovery::DiscoveredSchema;
 
@@ -257,17 +257,17 @@ fn collect_type_refs<'a>(kind: &'a TypeKind, collector: &mut impl FnMut(&'a str)
         TypeKind::Enum { variants } => {
             for v in variants {
                 match &v.kind {
-                    ron2_schema::VariantKind::Tuple(types) => {
+                    ron2::schema::VariantKind::Tuple(types) => {
                         for t in types {
                             collect_type_refs(t, collector);
                         }
                     }
-                    ron2_schema::VariantKind::Struct(fields) => {
+                    ron2::schema::VariantKind::Struct(fields) => {
                         for f in fields {
                             collect_type_refs(&f.ty, collector);
                         }
                     }
-                    ron2_schema::VariantKind::Unit => {}
+                    ron2::schema::VariantKind::Unit => {}
                 }
             }
         }
@@ -292,7 +292,7 @@ pub fn type_path_short_name(type_path: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ron2_schema::Schema;
+    use ron2::schema::Schema;
     use std::path::PathBuf;
 
     fn make_schema(type_path: &str) -> DiscoveredSchema {

@@ -8,9 +8,9 @@
 use std::env;
 use std::fs;
 
-use ron2_schema::{
-    find_schema_in, read_schema, validate, write_schema, Field, FromRon, Schema, TypeKind, Variant,
-    SCHEMA_DIR_ENV,
+use ron2::schema::{
+    Field, FromRon, SCHEMA_DIR_ENV, Schema, TypeKind, Variant, find_schema_in, read_schema,
+    validate, write_schema,
 };
 use serial_test::serial;
 
