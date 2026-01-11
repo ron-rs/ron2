@@ -34,8 +34,8 @@ pub fn generate_single_page(schemas: &[DiscoveredSchema], config: &DocConfig) ->
             // Type heading with explicit anchor
             output.push_str(&format!("### {} {{#{}}}\n\n", display_name, anchor));
 
-            // Type content (description + fields/variants)
-            output.push_str(&generate_type_content(schema, &resolver, LinkMode::Anchor));
+            // Type content (description + fields/variants, heading level 4)
+            output.push_str(&generate_type_content(schema, &resolver, LinkMode::Anchor, 4));
 
             // Example
             output.push_str("**Example:**\n\n");

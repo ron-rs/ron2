@@ -47,13 +47,13 @@ pub fn generate_markdown(
         output.push_str("\n\n");
     }
 
-    // Main content based on TypeKind
+    // Main content based on TypeKind (level 2 headings for multi-page)
     match &schema.schema.kind {
         TypeKind::Struct { fields } => {
-            write_struct_docs(&mut output, fields, &resolver, link_mode);
+            write_struct_docs(&mut output, fields, &resolver, link_mode, 2);
         }
         TypeKind::Enum { variants } => {
-            write_enum_docs(&mut output, variants, &resolver, link_mode);
+            write_enum_docs(&mut output, variants, &resolver, link_mode, 2);
         }
         _ => {
             // For primitives, options, etc., just show the type
@@ -72,10 +72,15 @@ pub fn generate_markdown(
 
 /// Generate type content for a schema (description + fields/variants).
 /// Used by single-page generator to embed type docs.
+///
+/// `heading_level` is the level for section headings (Fields, Variants).
+/// - For multi-page mode: use 2 (## Fields)
+/// - For single-page mode: use 4 (#### Fields) since type is at level 3
 pub fn generate_type_content(
     schema: &DiscoveredSchema,
     resolver: &LinkResolver,
     link_mode: LinkMode,
+    heading_level: u8,
 ) -> String {
     let mut output = String::new();
 
@@ -88,10 +93,10 @@ pub fn generate_type_content(
     // Main content based on TypeKind
     match &schema.schema.kind {
         TypeKind::Struct { fields } => {
-            write_struct_docs(&mut output, fields, resolver, link_mode);
+            write_struct_docs(&mut output, fields, resolver, link_mode, heading_level);
         }
         TypeKind::Enum { variants } => {
-            write_enum_docs(&mut output, variants, resolver, link_mode);
+            write_enum_docs(&mut output, variants, resolver, link_mode, heading_level);
         }
         _ => {
             output.push_str("**Type:** ");
@@ -101,6 +106,12 @@ pub fn generate_type_content(
     }
 
     output
+}
+
+/// Generate a markdown heading at the given level.
+fn heading(level: u8, text: &str) -> String {
+    let hashes = "#".repeat(level as usize);
+    format!("{} {}\n\n", hashes, text)
 }
 
 /// Generate a RON example for a schema.
@@ -148,13 +159,14 @@ fn write_struct_docs(
     fields: &[Field],
     resolver: &LinkResolver,
     link_mode: LinkMode,
+    heading_level: u8,
 ) {
     if fields.is_empty() {
         output.push_str("This is a unit struct with no fields.\n\n");
         return;
     }
 
-    output.push_str("## Fields\n\n");
+    output.push_str(&heading(heading_level, "Fields"));
     output.push_str("| Field | Type | Required | Description |\n");
     output.push_str("|-------|------|----------|-------------|\n");
 
@@ -181,13 +193,14 @@ fn write_enum_docs(
     variants: &[Variant],
     resolver: &LinkResolver,
     link_mode: LinkMode,
+    heading_level: u8,
 ) {
     if variants.is_empty() {
         output.push_str("This enum has no variants.\n\n");
         return;
     }
 
-    output.push_str("## Variants\n\n");
+    output.push_str(&heading(heading_level, "Variants"));
 
     // Check if all variants are unit variants (simple enum)
     let all_unit = variants.iter().all(|v| matches!(v.kind, VariantKind::Unit));
@@ -240,7 +253,8 @@ fn write_enum_docs(
         }
         output.push('\n');
 
-        // Detailed sections only for complex variants
+        // Detailed sections only for complex variants (one level deeper)
+        let variant_heading_level = heading_level + 1;
         if has_complex {
             for variant in variants {
                 match &variant.kind {
@@ -248,7 +262,7 @@ fn write_enum_docs(
                         // Skip unit variants - already in table
                     }
                     VariantKind::Tuple(types) => {
-                        output.push_str(&format!("### `{}`\n\n", variant.name));
+                        output.push_str(&heading(variant_heading_level, &format!("`{}`", variant.name)));
                         if let Some(doc) = &variant.doc {
                             output.push_str(doc);
                             output.push_str("\n\n");
@@ -260,7 +274,10 @@ fn write_enum_docs(
                         output.push_str(&format!("**Type:** `({})`\n\n", type_strs.join(", ")));
                     }
                     VariantKind::Struct(fields) => {
-                        output.push_str(&format!("### `{}`\n\n", variant.name));
+                        output.push_str(&heading(
+                            variant_heading_level,
+                            &format!("`{}`", variant.name),
+                        ));
                         if let Some(doc) = &variant.doc {
                             output.push_str(doc);
                             output.push_str("\n\n");
@@ -331,7 +348,7 @@ mod tests {
         ];
         let schemas = vec![];
         let resolver = LinkResolver::new(&schemas, None);
-        write_struct_docs(&mut output, &fields, &resolver, LinkMode::File);
+        write_struct_docs(&mut output, &fields, &resolver, LinkMode::File, 2);
 
         assert!(output.contains("## Fields"));
         assert!(output.contains("| `name` |"));
