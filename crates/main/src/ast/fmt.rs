@@ -6,8 +6,8 @@
 //! # Format Modes
 //!
 //! - [`FormatConfig::Minimal`]: No whitespace, no comments. Most compact output.
-//! - [`FormatConfig::Compact`]: Single line with readable spacing.
-//! - [`FormatConfig::Pretty`]: Multi-line with indentation and comment preservation.
+//! - [`FormatConfig::Pretty`]: Multi-line with indentation, comment preservation, and
+//!   configurable compaction rules.
 
 use alloc::string::String;
 
@@ -25,12 +25,7 @@ pub enum FormatConfig {
     /// Output example: `Point(x:1,y:2)`
     Minimal,
 
-    /// Single line with readable spacing. No line wrapping.
-    ///
-    /// Output example: `Point(x: 1, y: 2)`
-    Compact,
-
-    /// Multi-line with indentation and line wrapping.
+    /// Pretty formatting with configurable compaction rules.
     ///
     /// Output example:
     /// ```ron
@@ -47,9 +42,52 @@ pub enum FormatConfig {
 pub struct PrettyConfig {
     /// Indentation string (default: 4 spaces).
     pub indent: String,
-    /// Line width before wrapping (default: 80).
-    /// Collections that fit within this limit are formatted on a single line.
+
+    /// Rules for when to use compact formatting within pretty output.
+    pub compaction: Compaction,
+}
+
+/// Rules for when to switch from multiline to compact formatting.
+///
+/// Compaction is triggered when ANY of these conditions is met (OR logic):
+/// - Collection depth >= `compact_from_depth`
+/// - Collection type is in `compact_types`
+/// - Collection fits within `char_limit`
+///
+/// In compact mode:
+/// - No newlines or indentation
+/// - Line comments converted to block: `// foo` → `/* foo */`
+#[derive(Clone, Debug)]
+pub struct Compaction {
+    /// Maximum line length before forcing multiline.
+    /// Set to 0 to disable length-based compaction.
+    /// Default: 80
     pub char_limit: usize,
+
+    /// Depth at which to start compacting collections.
+    /// - `None`: No depth-based compaction (default)
+    /// - `Some(0)`: Compact even root collections
+    /// - `Some(1)`: Compact first nesting level and deeper
+    /// - `Some(2)`: Compact second nesting level and deeper
+    pub compact_from_depth: Option<usize>,
+
+    /// Collection types to always compact regardless of length/depth.
+    /// Default: none
+    pub compact_types: CompactTypes,
+}
+
+/// Collection types that can be marked for automatic compaction.
+#[derive(Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct CompactTypes {
+    /// Compact tuple expressions: `(1, 2, 3)` and `Point(1, 2, 3)`
+    pub tuples: bool,
+    /// Compact array/sequence expressions: `[1, 2, 3]`
+    pub arrays: bool,
+    /// Compact map expressions: `{"a": 1}`
+    pub maps: bool,
+    /// Compact struct field expressions: `Point(x: 1, y: 2)` and `(x: 1, y: 2)`
+    pub structs: bool,
 }
 
 impl Default for FormatConfig {
@@ -62,8 +100,37 @@ impl Default for PrettyConfig {
     fn default() -> Self {
         Self {
             indent: String::from("    "),
-            char_limit: 80,
+            compaction: Compaction::default(),
         }
+    }
+}
+
+impl Default for Compaction {
+    fn default() -> Self {
+        Self {
+            char_limit: 80,
+            compact_from_depth: None,
+            compact_types: CompactTypes::default(),
+        }
+    }
+}
+
+impl CompactTypes {
+    /// Create `CompactTypes` with all types enabled.
+    #[must_use]
+    pub fn all() -> Self {
+        Self {
+            tuples: true,
+            arrays: true,
+            maps: true,
+            structs: true,
+        }
+    }
+
+    /// Create `CompactTypes` with no types enabled (default).
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
     }
 }
 
@@ -82,7 +149,7 @@ impl FormatConfig {
                 config.indent = indent.into();
                 Self::Pretty(config)
             }
-            other => other,
+            other @ Self::Minimal => other,
         }
     }
 
@@ -91,10 +158,34 @@ impl FormatConfig {
     pub fn char_limit(self, char_limit: usize) -> Self {
         match self {
             Self::Pretty(mut config) => {
-                config.char_limit = char_limit;
+                config.compaction.char_limit = char_limit;
                 Self::Pretty(config)
             }
-            other => other,
+            other @ Self::Minimal => other,
+        }
+    }
+
+    /// Set the depth at which to start compacting (only applies to Pretty mode).
+    #[must_use]
+    pub fn compact_from_depth(self, depth: usize) -> Self {
+        match self {
+            Self::Pretty(mut config) => {
+                config.compaction.compact_from_depth = Some(depth);
+                Self::Pretty(config)
+            }
+            other @ Self::Minimal => other,
+        }
+    }
+
+    /// Set the collection types to always compact (only applies to Pretty mode).
+    #[must_use]
+    pub fn compact_types(self, types: CompactTypes) -> Self {
+        match self {
+            Self::Pretty(mut config) => {
+                config.compaction.compact_types = types;
+                Self::Pretty(config)
+            }
+            other @ Self::Minimal => other,
         }
     }
 }
@@ -116,7 +207,21 @@ impl PrettyConfig {
     /// Set the character limit for compact formatting.
     #[must_use]
     pub fn with_char_limit(mut self, char_limit: usize) -> Self {
-        self.char_limit = char_limit;
+        self.compaction.char_limit = char_limit;
+        self
+    }
+
+    /// Set the depth at which to start compacting.
+    #[must_use]
+    pub fn with_compact_from_depth(mut self, depth: usize) -> Self {
+        self.compaction.compact_from_depth = Some(depth);
+        self
+    }
+
+    /// Set the collection types to always compact.
+    #[must_use]
+    pub fn with_compact_types(mut self, types: CompactTypes) -> Self {
+        self.compaction.compact_types = types;
         self
     }
 }
@@ -174,13 +279,26 @@ pub fn format_expr(expr: &Expr<'_>, config: &FormatConfig) -> String {
     formatter.output
 }
 
+/// Collection types for compaction decisions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CollectionType {
+    Tuple,
+    Array,
+    Map,
+    Struct,
+}
+
 /// Internal formatter state.
 struct Formatter<'a> {
     config: &'a FormatConfig,
     output: String,
     indent_level: usize,
+    /// Current nesting depth (0 = root level).
+    depth: usize,
     /// Whether we're formatting the root expression (forces multiline in Pretty mode).
     is_root: bool,
+    /// Whether we're in compact mode (single line, no indentation).
+    is_compact: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -189,16 +307,52 @@ impl<'a> Formatter<'a> {
             config,
             output: String::new(),
             indent_level: 0,
+            depth: 0,
             is_root: true,
+            is_compact: false,
         }
     }
 
     /// Returns the char limit, or MAX for non-Pretty modes (always compact).
     fn char_limit(&self) -> usize {
         match self.config {
-            FormatConfig::Pretty(config) => config.char_limit,
-            _ => usize::MAX,
+            FormatConfig::Pretty(config) => config.compaction.char_limit,
+            FormatConfig::Minimal => usize::MAX,
         }
+    }
+
+    /// Determine if "hard" compaction is triggered (depth or type rules).
+    ///
+    /// Hard compaction converts line comments to block comments.
+    /// Length-based compaction is "soft" and handled separately.
+    fn should_compact_hard(&self, collection_type: CollectionType, depth: usize) -> bool {
+        let compaction = match self.config {
+            FormatConfig::Minimal => return true, // Always compact
+            FormatConfig::Pretty(cfg) => &cfg.compaction,
+        };
+
+        // OR logic: any condition triggers compaction
+
+        // 1. Depth-based
+        if let Some(threshold) = compaction.compact_from_depth
+            && depth >= threshold
+        {
+            return true;
+        }
+
+        // 2. Type-based
+        let type_match = match collection_type {
+            CollectionType::Tuple => compaction.compact_types.tuples,
+            CollectionType::Array => compaction.compact_types.arrays,
+            CollectionType::Map => compaction.compact_types.maps,
+            CollectionType::Struct => compaction.compact_types.structs,
+        };
+        if type_match {
+            return true;
+        }
+
+        // Length-based compaction is handled in format_collection after measuring
+        false
     }
 
     fn format_document(&mut self, doc: &Document<'_>) {
@@ -313,6 +467,7 @@ impl<'a> Formatter<'a> {
 
     fn format_seq(&mut self, seq: &SeqExpr<'_>) {
         self.format_collection(
+            CollectionType::Array,
             '[',
             ']',
             &seq.leading,
@@ -332,6 +487,7 @@ impl<'a> Formatter<'a> {
 
     fn format_map(&mut self, map: &MapExpr<'_>) {
         self.format_collection(
+            CollectionType::Map,
             '{',
             '}',
             &map.leading,
@@ -364,6 +520,7 @@ impl<'a> Formatter<'a> {
 
     fn format_tuple(&mut self, tuple: &TupleExpr<'_>) {
         self.format_collection(
+            CollectionType::Tuple,
             '(',
             ')',
             &tuple.leading,
@@ -387,6 +544,7 @@ impl<'a> Formatter<'a> {
 
     fn format_anon_struct(&mut self, s: &AnonStructExpr<'_>) {
         self.format_collection(
+            CollectionType::Struct,
             '(',
             ')',
             &s.leading,
@@ -417,6 +575,7 @@ impl<'a> Formatter<'a> {
 
     fn format_tuple_body(&mut self, tuple: &TupleBody<'_>) {
         self.format_collection(
+            CollectionType::Tuple,
             '(',
             ')',
             &tuple.leading,
@@ -431,6 +590,7 @@ impl<'a> Formatter<'a> {
 
     fn format_fields_body(&mut self, fields: &FieldsBody<'_>) {
         self.format_collection(
+            CollectionType::Struct,
             '(',
             ')',
             &fields.leading,
@@ -462,9 +622,15 @@ impl<'a> Formatter<'a> {
     }
 
     /// Generic collection formatter that handles compact vs multiline.
+    ///
+    /// Compaction rules (evaluated in order):
+    /// 1. **Hard** (depth/type-based): Forces compact, converts line comments to block
+    /// 2. **Root default**: Root collections are multiline unless hard compaction triggered
+    /// 3. **Soft** (length-based): Line comments prevent compaction; only compacts if fits
     #[allow(clippy::too_many_arguments)]
     fn format_collection<T, F, C>(
         &mut self,
+        collection_type: CollectionType,
         open: char,
         close: char,
         leading: &Trivia<'_>,
@@ -476,37 +642,60 @@ impl<'a> Formatter<'a> {
         F: Fn(&mut Self, &T),
         C: Fn(&T) -> bool,
     {
-        // Root collections with items are always multiline (compact only for nested)
+        // Track depth for nested collections
+        let current_depth = self.depth;
+        self.depth += 1;
+
         let is_root = self.is_root;
         if is_root {
             self.is_root = false;
         }
 
-        // Check if any item has a line comment (forces multiline)
-        let has_line_comments = items.iter().any(&has_line_comment_fn);
-
-        // Check if leading/trailing trivia has line comments
-        let trivia_has_line_comments = has_line_comment(leading) || has_line_comment(trailing);
-
-        // Force multiline for root collections with items, or when comments are present
-        if (is_root && !items.is_empty()) || has_line_comments || trivia_has_line_comments {
-            self.format_collection_multiline(open, close, leading, trailing, items, format_item);
+        // 1. Check HARD compaction (depth/type rules) - overrides everything
+        let hard_compact = self.should_compact_hard(collection_type, current_depth);
+        if hard_compact {
+            let compact =
+                self.try_format_compact_with_trivia(open, close, leading, trailing, items, &format_item);
+            self.output.push_str(&compact);
+            self.depth = current_depth;
             return;
         }
 
-        // Try compact format (only for nested collections)
-        let compact = self.try_format_compact(open, close, items, &format_item);
+        // 2. Root collections default to multiline (no hard compaction triggered)
+        if is_root && !items.is_empty() {
+            self.format_collection_multiline(open, close, leading, trailing, items, format_item);
+            self.depth = current_depth;
+            return;
+        }
+
+        // 3. SOFT compaction: line comments prevent it
+        let has_line_comments = items.iter().any(&has_line_comment_fn);
+        let trivia_has_line_comments = has_line_comment(leading) || has_line_comment(trailing);
+
+        if has_line_comments || trivia_has_line_comments {
+            self.format_collection_multiline(open, close, leading, trailing, items, format_item);
+            self.depth = current_depth;
+            return;
+        }
+
+        // 4. Try length-based compaction (soft - no comment conversion)
+        let compact =
+            self.try_format_compact_with_trivia(open, close, leading, trailing, items, &format_item);
         if compact.len() <= self.char_limit() {
             self.output.push_str(&compact);
         } else {
             self.format_collection_multiline(open, close, leading, trailing, items, format_item);
         }
+        self.depth = current_depth;
     }
 
-    fn try_format_compact<T, F>(
+    /// Format a collection in compact mode, including trivia with comment conversion.
+    fn try_format_compact_with_trivia<T, F>(
         &self,
         open: char,
         close: char,
+        leading: &Trivia<'_>,
+        trailing: &Trivia<'_>,
         items: &[T],
         format_item: F,
     ) -> String
@@ -514,8 +703,13 @@ impl<'a> Formatter<'a> {
         F: Fn(&mut Self, &T),
     {
         let mut compact_formatter = Formatter::new(self.config);
-        compact_formatter.is_root = false; // Nested collections in compact mode
+        compact_formatter.is_root = false;
+        compact_formatter.is_compact = true;
+        compact_formatter.depth = self.depth;
         compact_formatter.output.push(open);
+
+        // Leading trivia (converted to compact format)
+        compact_formatter.format_trivia_compact(leading);
 
         for (i, item) in items.iter().enumerate() {
             if i > 0 {
@@ -523,6 +717,9 @@ impl<'a> Formatter<'a> {
             }
             format_item(&mut compact_formatter, item);
         }
+
+        // Trailing trivia (converted to compact format)
+        compact_formatter.format_trivia_compact(trailing);
 
         compact_formatter.output.push(close);
         compact_formatter.output
@@ -577,9 +774,13 @@ impl<'a> Formatter<'a> {
     }
 
     fn write_indent(&mut self) {
+        // No indentation in Minimal mode or compact mode
+        if matches!(self.config, FormatConfig::Minimal) || self.is_compact {
+            return;
+        }
         let indent = match self.config {
             FormatConfig::Pretty(config) => &config.indent,
-            _ => return, // No indentation in Minimal/Compact modes
+            FormatConfig::Minimal => return,
         };
         for _ in 0..self.indent_level {
             self.output.push_str(indent);
@@ -589,14 +790,14 @@ impl<'a> Formatter<'a> {
     fn write_colon(&mut self) {
         match self.config {
             FormatConfig::Minimal => self.output.push(':'),
-            FormatConfig::Compact | FormatConfig::Pretty(_) => self.output.push_str(": "),
+            FormatConfig::Pretty(_) => self.output.push_str(": "),
         }
     }
 
     fn write_separator(&mut self) {
         match self.config {
             FormatConfig::Minimal => self.output.push(','),
-            FormatConfig::Compact | FormatConfig::Pretty(_) => self.output.push_str(", "),
+            FormatConfig::Pretty(_) => self.output.push_str(", "),
         }
     }
 
@@ -604,6 +805,14 @@ impl<'a> Formatter<'a> {
     fn format_leading_comments(&mut self, trivia: &Trivia<'_>) {
         // Only Pretty mode preserves leading comments
         if !matches!(self.config, FormatConfig::Pretty(_)) {
+            return;
+        }
+        if trivia.comments.is_empty() {
+            return;
+        }
+        // In compact mode, format comments inline with conversion
+        if self.is_compact {
+            self.format_trivia_compact(trivia);
             return;
         }
         for comment in &trivia.comments {
@@ -615,6 +824,14 @@ impl<'a> Formatter<'a> {
     fn format_leading_comments_inline(&mut self, trivia: &Trivia<'_>) {
         // No comments in Minimal mode
         if matches!(self.config, FormatConfig::Minimal) {
+            return;
+        }
+        if trivia.comments.is_empty() {
+            return;
+        }
+        // In compact mode, use compact comment formatting
+        if self.is_compact {
+            self.format_trivia_compact(trivia);
             return;
         }
         for comment in &trivia.comments {
@@ -640,6 +857,14 @@ impl<'a> Formatter<'a> {
     fn format_trailing_inline_comment(&mut self, trivia: &Trivia<'_>) {
         // No comments in Minimal mode
         if matches!(self.config, FormatConfig::Minimal) {
+            return;
+        }
+        if trivia.comments.is_empty() {
+            return;
+        }
+        // In compact mode, use compact comment formatting
+        if self.is_compact {
+            self.format_trivia_compact(trivia);
             return;
         }
         for comment in &trivia.comments {
@@ -674,6 +899,39 @@ impl<'a> Formatter<'a> {
                 self.output.push_str(&comment.text);
                 self.output.push('\n');
             }
+        }
+    }
+
+    /// Format a comment in compact mode, converting line comments to block comments.
+    ///
+    /// Line comments `// foo\n` become `/* foo */` (no newline).
+    fn format_comment_compact(&mut self, comment: &Comment<'_>) {
+        match comment.kind {
+            CommentKind::Line => {
+                // Convert: "// foo\n" → "/* foo */"
+                let text = comment
+                    .text
+                    .trim_start_matches("//")
+                    .trim_end_matches('\n')
+                    .trim();
+                self.output.push_str("/* ");
+                self.output.push_str(text);
+                self.output.push_str(" */");
+            }
+            CommentKind::Block => {
+                self.output.push_str(&comment.text);
+            }
+        }
+    }
+
+    /// Format trivia (comments) in compact mode.
+    ///
+    /// All comments are formatted inline with space separators,
+    /// and line comments are converted to block comments.
+    fn format_trivia_compact(&mut self, trivia: &Trivia<'_>) {
+        for comment in &trivia.comments {
+            self.output.push(' ');
+            self.format_comment_compact(comment);
         }
     }
 }
@@ -1042,5 +1300,514 @@ mod tests {
         assert_eq!(format("[]"), "[]\n");
         assert_eq!(format("{}"), "{}\n");
         assert_eq!(format("()"), "()\n");
+    }
+
+    // =========================================================================
+    // Compaction - Depth-based
+    // =========================================================================
+
+    #[test]
+    fn test_compact_from_depth_0() {
+        // Compact from depth 0 means compact even the root (unless root which is always multiline)
+        let config = FormatConfig::new().compact_from_depth(0);
+        // Nested collections should be compacted
+        let source = "Config(items: [1, 2, 3], point: (1, 2))";
+        let formatted = format_with(source, &config);
+        // Root is still multiline, but nested should be compact
+        assert!(formatted.contains("[1, 2, 3]"));
+        assert!(formatted.contains("(1, 2)"));
+    }
+
+    #[test]
+    fn test_compact_from_depth_1() {
+        // Compact from depth 1 means first level nested compacts
+        let config = FormatConfig::new().compact_from_depth(1);
+        let source = "Config(items: [1, 2, 3])";
+        let formatted = format_with(source, &config);
+        // Root multiline, nested compact
+        assert!(
+            formatted.contains("items: [1, 2, 3]"),
+            "Expected compact array: {formatted:?}"
+        );
+    }
+
+    // =========================================================================
+    // Compaction - Type-based
+    // =========================================================================
+
+    #[test]
+    fn test_compact_types_arrays() {
+        let config = FormatConfig::new()
+            .char_limit(5) // Would normally expand due to length
+            .compact_types(CompactTypes { arrays: true, ..Default::default() });
+        let source = "Config(items: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])";
+        let formatted = format_with(source, &config);
+        // Arrays should be compact despite exceeding char limit
+        assert!(
+            formatted.contains("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]"),
+            "Expected compact array: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_compact_types_tuples() {
+        let config = FormatConfig::new()
+            .char_limit(5)
+            .compact_types(CompactTypes { tuples: true, ..Default::default() });
+        let source = "Config(point: (1, 2, 3, 4, 5, 6, 7, 8, 9, 10))";
+        let formatted = format_with(source, &config);
+        // Tuples should be compact
+        assert!(
+            formatted.contains("(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)"),
+            "Expected compact tuple: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_compact_types_structs() {
+        let config = FormatConfig::new()
+            .char_limit(5)
+            .compact_types(CompactTypes { structs: true, ..Default::default() });
+        let source = "Outer(inner: Inner(x: 1, y: 2, z: 3))";
+        let formatted = format_with(source, &config);
+        // Nested struct should be compact
+        assert!(
+            formatted.contains("Inner(x: 1, y: 2, z: 3)"),
+            "Expected compact struct: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_compact_types_all() {
+        let config = FormatConfig::new()
+            .char_limit(5)
+            .compact_types(CompactTypes::all());
+        let source = "Config(a: [1, 2], b: (3, 4), c: Point(x: 5))";
+        let formatted = format_with(source, &config);
+        assert!(formatted.contains("[1, 2]"));
+        assert!(formatted.contains("(3, 4)"));
+        assert!(formatted.contains("Point(x: 5)"));
+    }
+
+    // =========================================================================
+    // Compaction - Comment conversion
+    // =========================================================================
+
+    #[test]
+    fn test_compact_converts_line_comments_to_block() {
+        // When compacting with a line comment, it should convert to block comment
+        let config = FormatConfig::new().compact_from_depth(1);
+        let source = "Config(
+    items: [
+        // comment
+        1,
+        2,
+    ],
+)";
+        let formatted = format_with(source, &config);
+        // In compact mode, line comment should become block comment
+        assert!(
+            formatted.contains("/* comment */"),
+            "Expected block comment: {formatted:?}"
+        );
+        // Should not have newlines in the compact section
+        assert!(formatted.contains("items: ["));
+    }
+
+    #[test]
+    fn test_compact_preserves_block_comments() {
+        let config = FormatConfig::new().compact_from_depth(1);
+        let source = "Config(
+    items: [
+        /* existing block */
+        1,
+    ],
+)";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("/* existing block */"),
+            "Expected block comment preserved: {formatted:?}"
+        );
+    }
+
+    // =========================================================================
+    // AR-1: Minimal Mode
+    // =========================================================================
+
+    #[test]
+    fn test_minimal_no_whitespace() {
+        // AR-1.1, AR-1.3, AR-1.4: No whitespace between tokens
+        let source = "Point(x: 1, y: 2)";
+        let formatted = format_with(source, &FormatConfig::Minimal);
+        assert_eq!(formatted, "Point(x:1,y:2)");
+    }
+
+    #[test]
+    fn test_minimal_strips_comments() {
+        // AR-1.2: Comments are stripped
+        let source = "// header\nPoint(x: 1, /* inline */ y: 2)";
+        let formatted = format_with(source, &FormatConfig::Minimal);
+        assert_eq!(formatted, "Point(x:1,y:2)");
+    }
+
+    #[test]
+    fn test_minimal_nested_collections() {
+        // AR-1.1: Nested collections also have no whitespace
+        let source = "Config(items: [1, 2], point: (3, 4), map: {\"a\": 1})";
+        let formatted = format_with(source, &FormatConfig::Minimal);
+        assert_eq!(formatted, "Config(items:[1,2],point:(3,4),map:{\"a\":1})");
+    }
+
+    // =========================================================================
+    // AR-2: Root Collection Behavior
+    // =========================================================================
+
+    #[test]
+    fn test_root_multiline_by_default() {
+        // AR-2.1: Root collections are multiline by default
+        let config = FormatConfig::new(); // No compaction rules
+        let formatted = format_with("[1, 2, 3]", &config);
+        assert!(
+            formatted.contains('\n'),
+            "Root should be multiline: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_root_compacts_with_depth_0() {
+        // AR-2.2: compact_from_depth(0) forces root to be compact
+        let config = FormatConfig::new().compact_from_depth(0);
+        let formatted = format_with("[1, 2, 3]", &config);
+        assert_eq!(formatted, "[1, 2, 3]\n");
+    }
+
+    #[test]
+    fn test_root_compacts_with_matching_type() {
+        // AR-2.3: compact_types matching root forces root to be compact
+        let config = FormatConfig::new().compact_types(CompactTypes {
+            arrays: true,
+            ..Default::default()
+        });
+        let formatted = format_with("[1, 2, 3]", &config);
+        assert_eq!(formatted, "[1, 2, 3]\n");
+    }
+
+    // =========================================================================
+    // AR-3: Depth Counting
+    // =========================================================================
+
+    #[test]
+    fn test_depth_counting_nested() {
+        // AR-3.3, AR-3.4: Depth increments for each nested collection
+        // depth 0 = root, depth 1 = first nested, depth 2 = second nested
+        let config = FormatConfig::new().compact_from_depth(2).char_limit(0);
+        let source = "Outer(a: Inner(b: [1, 2, 3]))";
+        let formatted = format_with(source, &config);
+        // Root (depth 0): multiline
+        // Inner (depth 1): multiline (below threshold)
+        // Array (depth 2): compact (at threshold)
+        assert!(formatted.contains("[1, 2, 3]"), "Array should be compact: {formatted:?}");
+        assert!(formatted.contains("a: Inner("), "Should have newlines: {formatted:?}");
+    }
+
+    #[test]
+    fn test_compact_from_depth_2() {
+        // AR-3.1: compact_from_depth(N) compacts at depth >= N
+        let config = FormatConfig::new().compact_from_depth(2).char_limit(0);
+        let source = "Config(items: [1, 2, 3])";
+        let formatted = format_with(source, &config);
+        // Root (depth 0): multiline
+        // Array (depth 1): still multiline (1 < 2)
+        assert!(
+            formatted.contains("items: [\n"),
+            "Depth 1 should be multiline: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_compact_from_depth_3_deep_nesting() {
+        // AR-3.4: Deep nesting respects depth threshold
+        let config = FormatConfig::new().compact_from_depth(3).char_limit(0);
+        let source = "A(b: B(c: C(d: [1, 2])))";
+        let formatted = format_with(source, &config);
+        // Root A (depth 0): multiline
+        // B (depth 1): multiline
+        // C (depth 2): multiline
+        // Array (depth 3): compact
+        assert!(formatted.contains("[1, 2]"), "Depth 3 array should be compact: {formatted:?}");
+    }
+
+    // =========================================================================
+    // AR-4: Type-Based Compaction
+    // =========================================================================
+
+    #[test]
+    fn test_compact_types_maps() {
+        // AR-4.3: compact_types.maps compacts all {...} expressions
+        let config = FormatConfig::new()
+            .char_limit(0) // Disable length-based
+            .compact_types(CompactTypes {
+                maps: true,
+                ..Default::default()
+            });
+        let source = "Config(data: {\"a\": 1, \"b\": 2})";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("{\"a\": 1, \"b\": 2}"),
+            "Map should be compact: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_compact_types_anonymous_struct() {
+        // AR-4.4: compact_types.structs compacts (x: 1) anonymous structs
+        let config = FormatConfig::new()
+            .char_limit(0)
+            .compact_types(CompactTypes {
+                structs: true,
+                ..Default::default()
+            });
+        let source = "Config(point: (x: 1, y: 2))";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("(x: 1, y: 2)"),
+            "Anonymous struct should be compact: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_compact_types_ignores_char_limit() {
+        // AR-4.5: Type-based compaction ignores char_limit
+        let config = FormatConfig::new()
+            .char_limit(5) // Very small limit
+            .compact_types(CompactTypes {
+                arrays: true,
+                ..Default::default()
+            });
+        let source = "Config(items: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])";
+        let formatted = format_with(source, &config);
+        // Array should be compact despite exceeding char_limit
+        assert!(
+            formatted.contains("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]"),
+            "Type rule should override char_limit: {formatted:?}"
+        );
+    }
+
+    // =========================================================================
+    // AR-5: Length-Based Compaction
+    // =========================================================================
+
+    #[test]
+    fn test_char_limit_zero_disables() {
+        // AR-5.3: char_limit = 0 disables length-based compaction
+        let config = FormatConfig::new().char_limit(0);
+        let source = "Config(items: [1])"; // Very short
+        let formatted = format_with(source, &config);
+        // Nested should be multiline since no length-based compaction
+        assert!(
+            formatted.contains("items: [\n"),
+            "char_limit=0 should disable length-based: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_default_char_limit_80() {
+        // AR-5.4: Default char_limit is 80
+        let config = FormatConfig::default();
+        // 75 chars fits in 80
+        let short = "Config(items: [1, 2, 3, 4, 5])";
+        let formatted_short = format_with(short, &config);
+        assert!(
+            formatted_short.contains("[1, 2, 3, 4, 5]"),
+            "Should fit: {formatted_short:?}"
+        );
+    }
+
+    // =========================================================================
+    // AR-6: OR Logic (Rule Combination)
+    // =========================================================================
+
+    #[test]
+    fn test_or_logic_depth_triggers() {
+        // AR-6.1: Compaction triggers if depth rule matches
+        let config = FormatConfig::new()
+            .compact_from_depth(1)
+            .char_limit(0); // Disable length
+        let source = "Config(items: [1, 2, 3])";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("[1, 2, 3]"),
+            "Depth rule should trigger: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_or_logic_type_triggers() {
+        // AR-6.2: Compaction triggers if type rule matches
+        let config = FormatConfig::new()
+            .compact_types(CompactTypes {
+                arrays: true,
+                ..Default::default()
+            })
+            .char_limit(0); // Disable length
+        let source = "Config(items: [1, 2, 3])";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("[1, 2, 3]"),
+            "Type rule should trigger: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_or_logic_length_triggers() {
+        // AR-6.3: Compaction triggers if length rule matches
+        let config = FormatConfig::new().char_limit(100); // No depth/type rules
+        let source = "Config(items: [1, 2, 3])";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("[1, 2, 3]"),
+            "Length rule should trigger: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_rules_match_multiline() {
+        // AR-6.4: When NO rule matches, collection uses multiline
+        let config = FormatConfig::new().char_limit(0); // Disable all
+        let source = "Config(items: [1, 2, 3])";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("items: [\n"),
+            "No rules = multiline: {formatted:?}"
+        );
+    }
+
+    // =========================================================================
+    // AR-7: Soft/Hard Compaction & Comments
+    // =========================================================================
+
+    #[test]
+    fn test_length_based_soft_line_comments_prevent() {
+        // AR-7.1: Length-based compaction is "soft" - line comments prevent it
+        let config = FormatConfig::new().char_limit(1000); // Large limit
+        let source = "Config(
+    items: [
+        // comment
+        1,
+        2,
+    ],
+)";
+        let formatted = format_with(source, &config);
+        // Line comment should PREVENT compact mode (stay multiline)
+        assert!(
+            formatted.contains("// comment"),
+            "Line comment preserved: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("items: [\n"),
+            "Should stay multiline: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_depth_based_hard_converts_comments() {
+        // AR-7.2, AR-7.4: Depth-based is "hard" - converts line comments to block
+        let config = FormatConfig::new().compact_from_depth(1);
+        let source = "Config(
+    items: [
+        // comment
+        1,
+    ],
+)";
+        let formatted = format_with(source, &config);
+        // Hard compaction converts line comment to block
+        assert!(
+            formatted.contains("/* comment */"),
+            "Line → block: {formatted:?}"
+        );
+        assert!(
+            !formatted.contains("// comment"),
+            "No line comment: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_type_based_hard_converts_comments() {
+        // AR-7.3, AR-7.4: Type-based is "hard" - converts line comments to block
+        let config = FormatConfig::new()
+            .char_limit(0)
+            .compact_types(CompactTypes {
+                arrays: true,
+                ..Default::default()
+            });
+        let source = "Config(
+    items: [
+        // comment
+        1,
+    ],
+)";
+        let formatted = format_with(source, &config);
+        // Hard compaction converts line comment to block
+        assert!(
+            formatted.contains("/* comment */"),
+            "Line → block: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_compact_multiple_line_comments() {
+        // AR-7.7: Multiple comments in compact mode are space-separated
+        let config = FormatConfig::new().compact_from_depth(1);
+        let source = "Config(
+    items: [
+        // first
+        1,
+        // second
+        2,
+    ],
+)";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("/* first */"),
+            "First comment: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("/* second */"),
+            "Second comment: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_minimal_strips_all_comments() {
+        // AR-7.8: Minimal mode strips ALL comments
+        let source = "Config(
+    // line comment
+    items: [
+        /* block comment */
+        1,
+    ],
+)";
+        let formatted = format_with(source, &FormatConfig::Minimal);
+        assert!(
+            !formatted.contains("comment"),
+            "No comments in minimal: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn test_hard_compact_block_comments_preserved() {
+        // AR-7.5: Block comments are preserved unchanged in hard compact
+        let config = FormatConfig::new().compact_from_depth(1);
+        let source = "Config(
+    items: [
+        /* existing block */
+        1,
+    ],
+)";
+        let formatted = format_with(source, &config);
+        assert!(
+            formatted.contains("/* existing block */"),
+            "Block comment unchanged: {formatted:?}"
+        );
     }
 }

@@ -75,8 +75,8 @@ pub use crate::extensions::Extensions;
 pub use crate::options::Options;
 pub use crate::value::{Map, NamedContent, Number, StructFields, Value};
 
-// Re-export FormatConfig and PrettyConfig from ast::fmt
-pub use crate::ast::{FormatConfig, PrettyConfig};
+// Re-export formatting config types from ast::fmt
+pub use crate::ast::{Compaction, CompactTypes, FormatConfig, PrettyConfig};
 
 /// Deserialize a Value from a string.
 ///

@@ -45,7 +45,7 @@ pub use convert::{
     synthetic_integer, synthetic_map, synthetic_option, synthetic_seq, synthetic_string,
     synthetic_tuple, synthetic_unit, to_value, value_to_expr,
 };
-pub use fmt::{FormatConfig, PrettyConfig, format_document, format_expr};
+pub use fmt::{Compaction, CompactTypes, FormatConfig, PrettyConfig, format_document, format_expr};
 pub use parse::parse_document;
 pub use ser::{serialize_document, serialize_document_to};
 
