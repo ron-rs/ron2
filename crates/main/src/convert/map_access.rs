@@ -327,6 +327,31 @@ impl<'a> AstMapAccess<'a> {
     }
 }
 
+impl<T: FromRonFields> FromRonFields for Option<T> {
+    fn from_fields(access: &mut AstMapAccess<'_>) -> SpannedResult<Self> {
+        let consumed_before = access.consumed;
+
+        match T::from_fields(access) {
+            Ok(value) => {
+                if access.consumed == consumed_before {
+                    Ok(None)
+                } else {
+                    Ok(Some(value))
+                }
+            }
+            Err(err) => {
+                if access.consumed == consumed_before
+                    && matches!(err.code, Error::MissingStructField { .. })
+                {
+                    Ok(None)
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::fmt::Write;

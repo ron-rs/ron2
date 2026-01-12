@@ -915,14 +915,55 @@ mod field_flatten {
         assert_eq!(nested, parsed);
     }
 
-    // Flatten with Option - NOT CURRENTLY SUPPORTED
-    // Option<T> does not implement FromRonFields trait
-    // Acceptance criteria documents this should work, but implementation needed
+    // Flatten with Option
+    #[derive(Debug, Ron, PartialEq)]
+    struct OptionalInner {
+        x: i32,
+        y: i32,
+    }
+
+    #[derive(Debug, Ron, PartialEq)]
+    struct OuterWithOptionalFlatten {
+        name: String,
+        #[ron(flatten)]
+        inner: Option<OptionalInner>,
+    }
+
     #[test]
-    #[ignore = "Option<T> flatten not yet supported - needs FromRonFields impl"]
-    fn flatten_option_not_supported() {
-        // This test documents the desired behavior from acceptance criteria
-        // TODO: Implement FromRonFields for Option<T> where T: FromRonFields
+    fn flatten_option_serialization() {
+        let none = OuterWithOptionalFlatten {
+            name: "none".to_string(),
+            inner: None,
+        };
+        let none_ron = none.to_ron().unwrap();
+        assert!(none_ron.contains("name"));
+        assert!(!none_ron.contains("x"));
+        assert!(!none_ron.contains("y"));
+        assert!(!none_ron.contains("inner"));
+
+        let some = OuterWithOptionalFlatten {
+            name: "some".to_string(),
+            inner: Some(OptionalInner { x: 1, y: 2 }),
+        };
+        let some_ron = some.to_ron().unwrap();
+        assert!(some_ron.contains("name"));
+        assert!(some_ron.contains("x"));
+        assert!(some_ron.contains("y"));
+        assert!(!some_ron.contains("inner"));
+    }
+
+    #[test]
+    fn flatten_option_deserialization() {
+        let none_ron = r#"(name: "none")"#;
+        let none: OuterWithOptionalFlatten = OuterWithOptionalFlatten::from_ron(none_ron).unwrap();
+        assert_eq!(none.inner, None);
+
+        let some_ron = r#"(name: "some", x: 1, y: 2)"#;
+        let some: OuterWithOptionalFlatten = OuterWithOptionalFlatten::from_ron(some_ron).unwrap();
+        assert_eq!(some.inner, Some(OptionalInner { x: 1, y: 2 }));
+
+        let partial_ron = r#"(name: "partial", x: 1)"#;
+        assert!(OuterWithOptionalFlatten::from_ron(partial_ron).is_err());
     }
 
     // Flatten with rename_all
