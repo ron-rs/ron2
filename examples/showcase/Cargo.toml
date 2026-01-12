@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+default-run = "ron-showcase"
+
 [dependencies]
 ron2 = { path = "../../crates/main" }
 ron2-derive = { path = "../../crates/derive" }

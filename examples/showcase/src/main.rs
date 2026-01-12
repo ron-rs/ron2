@@ -3,130 +3,52 @@
 //! This example shows:
 //! - `#[derive(Ron)]` for automatic serialization/deserialization
 //! - Loading configuration from a `.ron` file
+//! - Validating against generated schemas
 //! - Pretty-printing with customizable formatting
-//! - Schema generation for editor support
-//! - Extension attributes: `transparent`, `explicit`, implicit Some
+//! - Schema-driven serialization output
 
-use std::{collections::HashMap, fs};
+use std::{collections::BTreeMap, fs};
 
 use ron2::{
     ast::FormatConfig,
-    schema::{FromRon, RonSchemaType, ToRon},
-};
-use ron2_derive::Ron;
-
-/// Main game configuration.
-#[derive(Debug, Clone, Ron)]
-pub struct GameConfig {
-    /// Game title displayed in the window.
-    title: String,
-    /// Version string.
-    version: String,
-    /// Window settings.
-    window: WindowConfig,
-    /// Graphics quality preset.
-    graphics: GraphicsQuality,
-    /// Audio settings.
-    audio: AudioConfig,
-    /// Key bindings (action -> key).
-    keybindings: HashMap<String, String>,
-    /// Player configuration.
-    player: PlayerConfig,
-}
-
-/// Window configuration.
-#[derive(Debug, Clone, Ron)]
-pub struct WindowConfig {
-    width: u32,
-    height: u32,
-    #[ron(default)]
-    fullscreen: bool,
-}
-
-/// Graphics quality presets.
-#[derive(Debug, Clone, Ron)]
-pub enum GraphicsQuality {
-    Low,
-    Medium,
-    High,
-    Ultra,
-}
-
-/// Audio configuration with volume controls.
-#[derive(Debug, Clone, Ron)]
-pub struct AudioConfig {
-    master_volume: f32,
-    #[ron(default = "default_volume")]
-    music_volume: f32,
-    #[ron(default = "default_volume")]
-    effects_volume: f32,
-}
-
-fn default_volume() -> f32 {
-    1.0
-}
-
-/// Player configuration.
-#[derive(Debug, Clone, Ron)]
-pub struct PlayerConfig {
-    name: String,
-    ship: ShipType,
-}
-
-/// Available ship types with their stats.
-#[derive(Debug, Clone, Ron)]
-pub enum ShipType {
-    /// Fast but fragile scout ship.
-    Scout,
-    /// Balanced fighter with weapon slots.
-    Fighter {
-        weapon_slots: u8,
-        shield_strength: f32,
+    schema::{
+        collect_schemas, validate_with_resolver, FromRon, RonSchemaType, Schema, SchemaResolver,
+        ToRon,
     },
-    /// Heavy cruiser with cargo space.
-    Cruiser { cargo_capacity: u32 },
+};
+use ron_showcase::GameConfig;
+
+struct CatalogResolver {
+    schemas: BTreeMap<String, Schema>,
 }
 
-// =============================================================================
-// Extension Attribute Examples
-// =============================================================================
-
-/// Transparent newtype - serializes as just the inner value.
-/// Instead of `PlayerId(42)`, this serializes as just `42`.
-#[derive(Debug, Clone, PartialEq, Ron)]
-#[ron(transparent)]
-pub struct PlayerId(u64);
-
-/// Score newtype - demonstrates transparent with named field.
-#[derive(Debug, Clone, PartialEq, Ron)]
-#[ron(transparent)]
-pub struct Score {
-    value: u32,
-}
-
-/// Settings with various Option handling.
-#[derive(Debug, Clone, PartialEq, Ron)]
-pub struct NotificationSettings {
-    /// Accepts: "email", Some("email"), or None (implicit Some is default)
-    email: Option<String>,
-
-    /// Requires explicit Some(...) or None - useful for nested Options
-    #[ron(explicit)]
-    push_enabled: Option<Option<bool>>,
-
-    /// Optional with default - missing = None
-    #[ron(default)]
-    slack_webhook: Option<String>,
+impl SchemaResolver for CatalogResolver {
+    fn resolve(&self, type_path: &str) -> Option<Schema> {
+        self.schemas.get(type_path).cloned()
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RON2 Showcase ===\n");
 
-    GameConfig::write_schema(None).unwrap();
-
-    println!("1. Loading config from file...");
-
     let ron_content = fs::read_to_string("data/game.ron")?;
+    let value = ron2::from_str(&ron_content)?;
+
+    println!("1. Loading and validating config...");
+
+    let catalog = collect_schemas::<GameConfig>()?;
+    let root_path = GameConfig::type_path().ok_or("missing GameConfig type path")?;
+    let root_schema = catalog
+        .schemas
+        .get(root_path)
+        .ok_or("missing GameConfig schema")?
+        .clone();
+    let resolver = CatalogResolver {
+        schemas: catalog.schemas,
+    };
+
+    validate_with_resolver(&value, &root_schema, &resolver)?;
+
     let config: GameConfig = GameConfig::from_ron(&ron_content)?;
 
     println!("   Loaded: {} v{}", config.title, config.version);
@@ -142,37 +64,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n2. Pretty-printed RON output:");
     println!("{}", "─".repeat(50));
 
-    let pretty = FormatConfig::new().indent("    ");
-
+    // don't do this at home
+    let pretty = FormatConfig::new().indent("\t");
     let output = config.to_ron_with(&pretty)?;
     println!("{}", output);
-
-    // Demonstrate extension attributes
-    println!("\n3. Extension Attributes Demo:");
-    println!("{}", "─".repeat(50));
-
-    // Transparent newtypes
-    let player_id: PlayerId = PlayerId::from_ron("42")?;
-    println!("   PlayerId from '42': {:?}", player_id);
-    println!("   Serialized: {}", player_id.to_ron()?);
-
-    let score: Score = Score::from_ron("1000")?;
-    println!("   Score from '1000': {:?}", score);
-
-    // Implicit Some (default behavior)
-    let settings: NotificationSettings = NotificationSettings::from_ron(
-        r#"(email: "user@example.com", push_enabled: Some(Some(true)))"#,
-    )?;
-    println!("\n   NotificationSettings with implicit Some:");
-    println!("   - email: {:?}", settings.email);
-    println!("   - push_enabled: {:?}", settings.push_enabled);
-    println!("   - slack_webhook: {:?}", settings.slack_webhook);
-
-    // Explicit Option - nested Options
-    let settings2: NotificationSettings =
-        NotificationSettings::from_ron(r#"(email: None, push_enabled: Some(None))"#)?;
-    println!("\n   With Some(None) for push_enabled:");
-    println!("   - push_enabled: {:?}", settings2.push_enabled);
 
     Ok(())
 }

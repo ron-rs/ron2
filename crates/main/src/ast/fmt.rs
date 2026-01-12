@@ -70,7 +70,7 @@ pub enum CommentMode {
 pub struct Compaction {
     /// Maximum line length before forcing multiline.
     /// Set to 0 to disable length-based compaction.
-    /// Default: 80
+    /// Default: 20
     pub char_limit: usize,
 
     /// Depth at which to start compacting collections.
@@ -113,7 +113,7 @@ impl Default for FormatConfig {
 impl Default for Compaction {
     fn default() -> Self {
         Self {
-            char_limit: 80,
+            char_limit: 20,
             compact_from_depth: None,
             compact_types: CompactTypes::default(),
         }
