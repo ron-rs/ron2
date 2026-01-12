@@ -966,6 +966,35 @@ mod field_flatten {
         assert!(OuterWithOptionalFlatten::from_ron(partial_ron).is_err());
     }
 
+    #[derive(Debug, Ron, PartialEq, Default)]
+    struct OptionalInnerWithDefaults {
+        #[ron(default)]
+        x: i32,
+        #[ron(default)]
+        y: i32,
+    }
+
+    #[derive(Debug, Ron, PartialEq)]
+    struct OuterWithOptionalDefaults {
+        name: String,
+        #[ron(flatten)]
+        inner: Option<OptionalInnerWithDefaults>,
+    }
+
+    #[test]
+    fn flatten_option_with_default_inner_is_presence_based() {
+        let none_ron = r#"(name: "none")"#;
+        let none: OuterWithOptionalDefaults = OuterWithOptionalDefaults::from_ron(none_ron).unwrap();
+        assert_eq!(none.inner, None);
+
+        let some_ron = r#"(name: "some", x: 5)"#;
+        let some: OuterWithOptionalDefaults = OuterWithOptionalDefaults::from_ron(some_ron).unwrap();
+        assert_eq!(
+            some.inner,
+            Some(OptionalInnerWithDefaults { x: 5, y: 0 })
+        );
+    }
+
     // Flatten with rename_all
     #[derive(Debug, Ron, PartialEq)]
     #[ron(rename_all = "camelCase")]

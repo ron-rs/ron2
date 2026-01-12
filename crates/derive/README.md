@@ -110,6 +110,37 @@ struct Config {
 (value: true)              // ERROR - bare value not allowed
 ```
 
+### Flattened Option Fields
+
+Flattened `Option<T>` fields are presence-based: if none of `T`'s fields are
+present in the parent struct, the value is `None`. If any inner field is
+present, the value is `Some(T)` (and missing inner fields use defaults).
+This means `None` and `Some(T::default())` are indistinguishable in input
+when `T` has defaults. Use a non-flattened `Option<T>` or an explicit marker
+field if you need to preserve that distinction.
+
+```rust
+#[derive(Ron)]
+struct Inner {
+    #[ron(default)]
+    x: i32,
+    #[ron(default)]
+    y: i32,
+}
+
+#[derive(Ron)]
+struct Outer {
+    name: String,
+    #[ron(flatten)]
+    inner: Option<Inner>,
+}
+```
+
+```ron
+(name: "none")        // inner = None
+(name: "some", x: 1)  // inner = Some(Inner { x: 1, y: 0 })
+```
+
 ### Transparent Newtypes
 
 Use `#[ron(transparent)]` to serialize as the inner type:
