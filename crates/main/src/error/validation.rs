@@ -401,10 +401,8 @@ impl ValidationError {
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Span prefix (if present and not synthetic)
-        if let Some(ref span) = self.span {
-            if !span.is_synthetic() {
-                write!(f, "{span}: ")?;
-            }
+        if let Some(ref span) = self.span && !span.is_synthetic() {
+            write!(f, "{span}: ")?;
         }
 
         // Path context (reversed - outermost first)
@@ -431,7 +429,7 @@ impl PartialEq for ValidationError {
 
 impl Eq for ValidationError {}
 
-impl std::error::Error for ValidationError {}
+impl core::error::Error for ValidationError {}
 
 #[cfg(test)]
 mod tests {
