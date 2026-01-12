@@ -229,6 +229,7 @@ fn test_type_path() {
 }
 
 /// Struct with nested custom type.
+#[derive(RonSchema)]
 struct CustomType {
     value: i32,
 }

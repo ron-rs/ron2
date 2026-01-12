@@ -40,7 +40,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::schema::{Schema, SchemaError, StorageError, TypeKind};
+use crate::schema::{Schema, SchemaEntry, SchemaError, StorageError, TypeKind};
 
 /// Core trait for types that can be represented in the RON schema system.
 ///
@@ -101,6 +101,15 @@ pub trait RonSchemaType {
         None
     }
 
+    /// Returns the direct child schemas referenced by this type.
+    ///
+    /// This is a non-recursive list; use `collect_schemas` or `write_schemas`
+    /// to traverse the full schema graph.
+    #[must_use]
+    fn child_schemas() -> &'static [&'static SchemaEntry] {
+        &[]
+    }
+
     /// Writes the schema to the specified output directory.
     ///
     /// If `output_dir` is `None`, the schema is written to the default location
@@ -116,6 +125,14 @@ pub trait RonSchemaType {
         })?;
         let schema = Self::schema();
         super::write_schema(type_path, &schema, output_dir)
+    }
+
+    /// Writes this type's schema and all child schemas recursively.
+    fn write_schemas(output_dir: Option<&str>) -> Result<Vec<PathBuf>, SchemaError>
+    where
+        Self: Sized,
+    {
+        super::write_schemas::<Self>(output_dir)
     }
 }
 

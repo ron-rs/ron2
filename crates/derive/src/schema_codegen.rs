@@ -1,12 +1,14 @@
 //! Schema code generation - generates TokenStream2 for runtime TypeKind construction.
 
+use std::collections::{BTreeSet, HashSet};
+
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{DeriveInput, Fields};
+use syn::{DeriveInput, Fields, GenericArgument, GenericParam, PathArguments, Type};
 
 use crate::{
     attr::{extract_doc_comment, ContainerAttrs, FieldAttrs, VariantAttrs},
-    type_mapper::type_to_type_kind,
+    type_mapper::{type_to_type_kind, PrimitiveKind},
 };
 
 /// Generate the RonSchemaType implementation for a type.
@@ -45,6 +47,8 @@ pub fn impl_ron_schema(
         }
     };
 
+    let child_schemas_tokens = generate_child_schemas(input, container_attrs)?;
+
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let expanded = quote! {
@@ -60,6 +64,19 @@ pub fn impl_ron_schema(
             fn type_path() -> Option<&'static str> {
                 Some(concat!(module_path!(), "::", #type_name))
             }
+
+            fn child_schemas() -> &'static [&'static ::ron2::schema::SchemaEntry] {
+                #child_schemas_tokens
+            }
+        }
+
+        impl #impl_generics #name #ty_generics #where_clause {
+            #[doc(hidden)]
+            pub const __RON_SCHEMA_ENTRY: ::ron2::schema::SchemaEntry = ::ron2::schema::SchemaEntry {
+                type_path: concat!(module_path!(), "::", #type_name),
+                schema: <Self as ::ron2::schema::RonSchemaType>::schema,
+                children: <Self as ::ron2::schema::RonSchemaType>::child_schemas,
+            };
         }
     };
 
@@ -266,4 +283,254 @@ fn generate_variant(
             kind: #kind_tokens,
         }
     })
+}
+
+fn generate_child_schemas(
+    input: &DeriveInput,
+    container_attrs: &ContainerAttrs,
+) -> syn::Result<TokenStream2> {
+    let generics = collect_generic_idents(&input.generics);
+    let mut child_paths = Vec::new();
+
+    match &input.data {
+        syn::Data::Struct(data_struct) => {
+            collect_struct_children(
+                &data_struct.fields,
+                container_attrs,
+                &generics,
+                &mut child_paths,
+            )?;
+        }
+        syn::Data::Enum(data_enum) => {
+            for variant in &data_enum.variants {
+                collect_variant_children(variant, &generics, &mut child_paths)?;
+            }
+        }
+        syn::Data::Union(_) => {}
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut entries = Vec::new();
+    for path in child_paths {
+        let key = quote!(#path).to_string();
+        if seen.insert(key) {
+            entries.push(quote! { &<#path>::__RON_SCHEMA_ENTRY });
+        }
+    }
+
+    if entries.is_empty() {
+        Ok(quote! { &[] })
+    } else {
+        Ok(quote! { &[#(#entries),*] })
+    }
+}
+
+fn collect_generic_idents(generics: &syn::Generics) -> HashSet<String> {
+    generics
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            GenericParam::Type(ty) => Some(ty.ident.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn collect_struct_children(
+    fields: &Fields,
+    container_attrs: &ContainerAttrs,
+    generics: &HashSet<String>,
+    out: &mut Vec<syn::Path>,
+) -> syn::Result<()> {
+    if container_attrs.transparent {
+        return collect_transparent_struct_children(fields, generics, out);
+    }
+
+    match fields {
+        Fields::Named(named) => {
+            for f in named.named.iter() {
+                let attrs = FieldAttrs::from_ast(&f.attrs)?;
+                if attrs.skip {
+                    continue;
+                }
+                collect_child_types_from_type(&f.ty, generics, out);
+            }
+        }
+        Fields::Unnamed(unnamed) => {
+            for f in &unnamed.unnamed {
+                collect_child_types_from_type(&f.ty, generics, out);
+            }
+        }
+        Fields::Unit => {}
+    }
+
+    Ok(())
+}
+
+fn collect_transparent_struct_children(
+    fields: &Fields,
+    generics: &HashSet<String>,
+    out: &mut Vec<syn::Path>,
+) -> syn::Result<()> {
+    match fields {
+        Fields::Named(named) => {
+            let mut active_fields = Vec::new();
+            for f in &named.named {
+                let attrs = FieldAttrs::from_ast(&f.attrs)?;
+                if !attrs.skip {
+                    active_fields.push(f);
+                }
+            }
+
+            if active_fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    &named.named,
+                    "#[ron(transparent)] requires exactly one non-skipped field",
+                ));
+            }
+
+            collect_child_types_from_type(&active_fields[0].ty, generics, out);
+        }
+        Fields::Unnamed(unnamed) => {
+            if unnamed.unnamed.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    unnamed,
+                    "#[ron(transparent)] requires exactly one field for tuple structs",
+                ));
+            }
+
+            collect_child_types_from_type(&unnamed.unnamed[0].ty, generics, out);
+        }
+        Fields::Unit => {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "#[ron(transparent)] cannot be used on unit structs",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_variant_children(
+    variant: &syn::Variant,
+    generics: &HashSet<String>,
+    out: &mut Vec<syn::Path>,
+) -> syn::Result<()> {
+    let _ = VariantAttrs::from_ast(&variant.attrs)?;
+    match &variant.fields {
+        Fields::Unit => {}
+        Fields::Unnamed(unnamed) => {
+            for f in &unnamed.unnamed {
+                collect_child_types_from_type(&f.ty, generics, out);
+            }
+        }
+        Fields::Named(named) => {
+            for f in named.named.iter() {
+                let attrs = FieldAttrs::from_ast(&f.attrs)?;
+                if attrs.skip {
+                    continue;
+                }
+                collect_child_types_from_type(&f.ty, generics, out);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_child_types_from_type(ty: &Type, generics: &HashSet<String>, out: &mut Vec<syn::Path>) {
+    match ty {
+        Type::Path(type_path) => {
+            if type_path.qself.is_some() {
+                return;
+            }
+
+            let path = &type_path.path;
+            let segment = match path.segments.last() {
+                Some(seg) => seg,
+                None => return,
+            };
+
+            let ident_str = segment.ident.to_string();
+
+            if path.segments.len() == 1 && generics.contains(&ident_str) {
+                return;
+            }
+
+            if PrimitiveKind::from_ident(&ident_str).is_some() {
+                return;
+            }
+
+            if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                let generic_args: Vec<_> = args
+                    .args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        GenericArgument::Type(t) => Some(t),
+                        _ => None,
+                    })
+                    .collect();
+
+                match ident_str.as_str() {
+                    "Option" if generic_args.len() == 1 => {
+                        collect_child_types_from_type(generic_args[0], generics, out);
+                        return;
+                    }
+                    "Vec" | "VecDeque" | "HashSet" | "BTreeSet" | "LinkedList"
+                        if generic_args.len() == 1 =>
+                    {
+                        collect_child_types_from_type(generic_args[0], generics, out);
+                        return;
+                    }
+                    "HashMap" | "BTreeMap" if generic_args.len() == 2 => {
+                        collect_child_types_from_type(generic_args[0], generics, out);
+                        collect_child_types_from_type(generic_args[1], generics, out);
+                        return;
+                    }
+                    "Box" if generic_args.len() == 1 => {
+                        collect_child_types_from_type(generic_args[0], generics, out);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            if is_std_like_path(path) {
+                return;
+            }
+
+            out.push(path.clone());
+        }
+        Type::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_child_types_from_type(elem, generics, out);
+            }
+        }
+        Type::Reference(reference) => {
+            collect_child_types_from_type(&reference.elem, generics, out);
+        }
+        Type::Array(array) => {
+            collect_child_types_from_type(&array.elem, generics, out);
+        }
+        Type::Slice(slice) => {
+            collect_child_types_from_type(&slice.elem, generics, out);
+        }
+        Type::Paren(paren) => {
+            collect_child_types_from_type(&paren.elem, generics, out);
+        }
+        Type::Group(group) => {
+            collect_child_types_from_type(&group.elem, generics, out);
+        }
+        _ => {}
+    }
+}
+
+fn is_std_like_path(path: &syn::Path) -> bool {
+    let first = match path.segments.first() {
+        Some(seg) => seg.ident.to_string(),
+        None => return false,
+    };
+
+    matches!(first.as_str(), "std" | "core" | "alloc")
 }

@@ -75,6 +75,7 @@
 //! println!("{}", ron_str);
 //! ```
 
+pub mod collect;
 pub mod error;
 pub mod storage;
 pub mod traits;
@@ -82,6 +83,7 @@ pub mod types;
 pub mod validation;
 
 // Re-export conversion traits from crate
+pub use collect::{SchemaCatalog, SchemaEntry, collect_schemas, write_schemas};
 pub use error::{
     PathSegment, Position, Result, SchemaError, Span, StorageError, ValidationError,
     ValidationErrorKind, ValidationResult,

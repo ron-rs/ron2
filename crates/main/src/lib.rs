@@ -65,8 +65,8 @@ mod util;
 pub mod value;
 
 // Re-export formatting config types from ast::fmt
-pub use crate::ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing};
 pub use crate::{
+    ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing},
     convert::{AstMapAccess, FromRon, FromRonFields, ParsedInt, ToRon, parse_int_raw},
     error::{
         Error, PathSegment, Position, Span, SpannedError, SpannedResult, ValidationError,

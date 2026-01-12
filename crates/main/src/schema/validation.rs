@@ -621,7 +621,7 @@ mod tests {
 
         // Should contain path information
         let msg = err.to_string();
-        assert!(msg.contains("field 'items'"), "Error: {}", msg);
-        assert!(msg.contains("element 1"), "Error: {}", msg);
+        assert!(msg.contains("field 'items'"), "Error: {msg}");
+        assert!(msg.contains("element 1"), "Error: {msg}");
     }
 }
