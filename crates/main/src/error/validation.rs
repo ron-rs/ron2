@@ -3,7 +3,7 @@
 use alloc::{borrow::Cow, string::String, vec::Vec};
 use core::fmt;
 
-use crate::{PathSegment, Span};
+use super::{PathSegment, Span};
 
 /// The specific kind of validation error that occurred.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,7 +168,7 @@ fn format_expected_list(
 /// # Example
 ///
 /// ```
-/// use ron2_error::{ValidationError, ValidationErrorKind, Span, Position};
+/// use ron2::{ValidationError, ValidationErrorKind, Span, Position};
 ///
 /// let error = ValidationError::type_mismatch("i32", "String")
 ///     .in_element(0)

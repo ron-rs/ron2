@@ -3,9 +3,9 @@
 //! This module provides error types for parsing and validation:
 //! - [`Error`] - All ron2 errors (parsing + validation)
 //! - [`SpannedError`] - Error with source location
-//! - [`Position`], [`Span`] - Source position types (from `ron-error`)
-//! - [`ValidationError`], [`ValidationErrorKind`] - Validation errors (from `ron-error`)
-//! - [`PathSegment`] - Path context for errors (from `ron-error`)
+//! - [`Position`], [`Span`] - Source position types
+//! - [`ValidationError`], [`ValidationErrorKind`] - Validation errors
+//! - [`PathSegment`] - Path context for errors
 
 use alloc::{
     borrow::Cow,
@@ -18,8 +18,13 @@ use unicode_ident::is_xid_continue;
 
 use std::io;
 
-// Re-export types from ron-error
-pub use ron2_error::{PathSegment, Position, Span, ValidationError, ValidationErrorKind};
+mod span;
+mod path;
+mod validation;
+
+pub use path::PathSegment;
+pub use span::{Position, Span};
+pub use validation::{ValidationError, ValidationErrorKind};
 
 /// This type represents all possible errors that can occur when
 /// serializing or deserializing RON data.
@@ -87,7 +92,7 @@ pub enum Error {
 
     /// Integer out of bounds with context about the value and target type.
     ///
-    /// Note: Consider using [`ValidationErrorKind::IntegerOutOfBounds`] from `ron-error`
+    /// Note: Consider using [`ValidationErrorKind::IntegerOutOfBounds`]
     /// and converting via [`Error::from_validation_kind`] for consistency.
     #[deprecated(
         since = "0.2.0",
@@ -116,7 +121,7 @@ pub enum Error {
 
     /// Type mismatch error.
     ///
-    /// Note: Consider using [`ValidationErrorKind::TypeMismatch`] from `ron-error`
+    /// Note: Consider using [`ValidationErrorKind::TypeMismatch`]
     /// and converting via [`Error::from_validation_kind`] for consistency.
     #[deprecated(
         since = "0.2.0",
@@ -132,7 +137,7 @@ pub enum Error {
     },
     /// Unknown enum variant error.
     ///
-    /// Note: Consider using [`ValidationErrorKind::UnknownVariant`] from `ron-error`
+    /// Note: Consider using [`ValidationErrorKind::UnknownVariant`]
     /// and converting via [`Error::from_validation_kind`] for consistency.
     #[deprecated(
         since = "0.2.0",
@@ -145,7 +150,7 @@ pub enum Error {
     },
     /// Unknown struct field error.
     ///
-    /// Note: Consider using [`ValidationErrorKind::UnknownField`] from `ron-error`
+    /// Note: Consider using [`ValidationErrorKind::UnknownField`]
     /// and converting via [`Error::from_validation_kind`] for consistency.
     #[deprecated(
         since = "0.2.0",
@@ -158,7 +163,7 @@ pub enum Error {
     },
     /// Missing struct field error.
     ///
-    /// Note: Consider using [`ValidationErrorKind::MissingField`] from `ron-error`
+    /// Note: Consider using [`ValidationErrorKind::MissingField`]
     /// and converting via [`Error::from_validation_kind`] for consistency.
     #[deprecated(
         since = "0.2.0",
@@ -170,7 +175,7 @@ pub enum Error {
     },
     /// Duplicate struct field error.
     ///
-    /// Note: Consider using [`ValidationErrorKind::DuplicateField`] from `ron-error`
+    /// Note: Consider using [`ValidationErrorKind::DuplicateField`]
     /// and converting via [`Error::from_validation_kind`] for consistency.
     #[deprecated(
         since = "0.2.0",
@@ -457,7 +462,7 @@ impl Error {
     ///
     /// ```
     /// use ron2::error::Error;
-    /// use ron2_error::ValidationErrorKind;
+    /// use ron2::ValidationErrorKind;
     ///
     /// let kind = ValidationErrorKind::TypeMismatch {
     ///     expected: "i32".into(),
@@ -665,7 +670,7 @@ mod tests {
 
     #[test]
     fn test_ron_error_reexports() {
-        // Verify all types from ron-error are accessible
+        // Verify helper error types are accessible
         let pos = Position { line: 1, col: 1 };
         assert_eq!(pos.line, 1);
         let span = Span::synthetic();

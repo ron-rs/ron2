@@ -1,14 +1,14 @@
 //! Unified error type for schema operations.
 //!
 //! This module provides error types for schema operations:
-//! - [`ValidationError`], [`ValidationErrorKind`], [`PathSegment`] - Re-exported from `ron-error`
+//! - [`ValidationError`], [`ValidationErrorKind`], [`PathSegment`] - Re-exported from `crate::error`
 //! - [`StorageError`] - Errors related to schema file I/O
 //! - [`SchemaError`] - Combined error type for all schema operations
 
 use std::io;
 use core::fmt;
 
-// Re-export validation error types from ron-error
+// Re-export validation error types from `crate::error`
 pub use crate::error::{PathSegment, Position, Span, ValidationError, ValidationErrorKind};
 
 /// Errors related to schema storage operations.

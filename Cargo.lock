@@ -1033,7 +1033,6 @@ dependencies = [
  "indexmap",
  "ron",
  "ron2-derive",
- "ron2-error",
  "serde",
  "serial_test",
  "tempfile",
@@ -1074,10 +1073,6 @@ dependencies = [
  "serde_json",
  "walkdir",
 ]
-
-[[package]]
-name = "ron2-error"
-version = "0.1.0"
 
 [[package]]
 name = "ron2-lsp"
