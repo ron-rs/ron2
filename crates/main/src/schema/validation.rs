@@ -316,46 +316,182 @@ fn validate_type_internal<R: SchemaResolver>(
     }
 }
 
+#[derive(Debug)]
+enum FlattenedTarget {
+    Struct {
+        fields: Vec<Field>,
+        presence_based: bool,
+    },
+    MapValue(TypeKind),
+}
+
+fn resolve_flattened_kind<R: SchemaResolver>(
+    kind: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+) -> Option<(TypeKind, bool)> {
+    let mut presence_based = false;
+    let mut current = kind.clone();
+    let mut seen_refs = HashSet::new();
+
+    for _ in 0..8 {
+        match current {
+            TypeKind::Option(inner) => {
+                presence_based = true;
+                current = *inner;
+            }
+            TypeKind::TypeRef(path) => {
+                if !seen_refs.insert(path.clone()) {
+                    return None;
+                }
+                match ctx.resolver.resolve(&path) {
+                    Some(schema) => {
+                        current = schema.kind;
+                    }
+                    None => return None,
+                }
+            }
+            _ => return Some((current, presence_based)),
+        }
+    }
+
+    Some((current, presence_based))
+}
+
+fn collect_flattened_targets<R: SchemaResolver>(
+    fields: &[Field],
+    ctx: &mut ValidationContext<R>,
+) -> Vec<FlattenedTarget> {
+    let mut targets = Vec::new();
+
+    for field in fields {
+        if !field.flattened {
+            continue;
+        }
+
+        let Some((kind, mut presence_based)) = resolve_flattened_kind(&field.ty, ctx) else {
+            continue;
+        };
+        presence_based |= field.optional;
+
+        match kind {
+            TypeKind::Struct { fields } => {
+                targets.push(FlattenedTarget::Struct {
+                    fields,
+                    presence_based,
+                });
+            }
+            TypeKind::Map { key, value } => {
+                if matches!(*key, TypeKind::String) {
+                    targets.push(FlattenedTarget::MapValue(*value));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    targets
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_struct_fields_inner<'a, R: SchemaResolver>(
+    field_iter: impl Iterator<Item = (&'a str, &'a Value)>,
+    fields: &[Field],
+    flattened_targets: &[FlattenedTarget],
+    map_value_type: Option<&TypeKind>,
+    has_field: impl Fn(&str) -> bool,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    let explicit_fields: Vec<_> = fields.iter().filter(|f| !f.flattened).collect();
+
+    // Check all provided fields are valid
+    for (key_str, val) in field_iter {
+        let field = explicit_fields.iter().find(|f| f.name == key_str);
+        if let Some(field) = field {
+            validate_type_internal(val, &field.ty, ctx).map_err(|e| e.in_field(key_str))?;
+        }
+
+        let mut matched_flattened_struct = false;
+        for target in flattened_targets {
+            if let FlattenedTarget::Struct { fields, .. } = target
+                && let Some(inner) = fields.iter().find(|f| f.name == key_str)
+            {
+                matched_flattened_struct = true;
+                validate_type_internal(val, &inner.ty, ctx)
+                    .map_err(|e| e.in_field(key_str))?;
+            }
+        }
+
+        if field.is_none() && !matched_flattened_struct {
+            if let Some(map_value_type) = map_value_type {
+                validate_type_internal(val, map_value_type, ctx)
+                    .map_err(|e| e.in_field(key_str))?;
+            } else {
+                return Err(ValidationError::unknown_field(key_str.to_owned(), &[] as &[&str]));
+            }
+        }
+    }
+
+    // Check all required fields are present
+    for field in &explicit_fields {
+        if !field.optional && !has_field(&field.name) {
+            return Err(ValidationError::missing_field(field.name.clone()));
+        }
+    }
+
+    for target in flattened_targets {
+        let FlattenedTarget::Struct {
+            fields,
+            presence_based,
+        } = target
+        else {
+            continue;
+        };
+
+        if *presence_based && !fields.iter().any(|field| has_field(&field.name)) {
+            continue;
+        }
+
+        for field in fields {
+            if !field.optional && !has_field(&field.name) {
+                return Err(ValidationError::missing_field(field.name.clone()));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[allow(clippy::result_large_err)]
 fn validate_struct_internal<R: SchemaResolver>(
     value: &Value,
     fields: &[Field],
     ctx: &mut ValidationContext<R>,
 ) -> ValidationResult<()> {
-    // Helper to validate struct fields from an iterator of (name, value) pairs
-    #[allow(clippy::result_large_err)]
-    fn validate_struct_fields_inner<'a, R: SchemaResolver>(
-        field_iter: impl Iterator<Item = (&'a str, &'a Value)>,
-        fields: &[Field],
-        has_field: impl Fn(&str) -> bool,
-        ctx: &mut ValidationContext<R>,
-    ) -> ValidationResult<()> {
-        // Check all provided fields are valid
-        for (key_str, val) in field_iter {
-            let field = fields.iter().find(|f| f.name == key_str).ok_or_else(|| {
-                ValidationError::unknown_field(key_str.to_owned(), &[] as &[&str])
-            })?;
-
-            validate_type_internal(val, &field.ty, ctx).map_err(|e| e.in_field(key_str))?;
+    let flattened_targets = collect_flattened_targets(fields, ctx);
+    let map_value_type = flattened_targets.iter().find_map(|target| {
+        if let FlattenedTarget::MapValue(value_type) = target {
+            Some(value_type)
+        } else {
+            None
         }
-
-        // Check all required fields are present
-        for field in fields {
-            if !field.optional && !has_field(&field.name) {
-                return Err(ValidationError::missing_field(field.name.clone()));
-            }
-        }
-
-        Ok(())
-    }
+    });
 
     match value {
         // Empty struct: () - parsed as Unit
-        Value::Unit => validate_struct_fields_inner(core::iter::empty(), fields, |_| false, ctx),
+        Value::Unit => validate_struct_fields_inner(
+            core::iter::empty(),
+            fields,
+            &flattened_targets,
+            map_value_type,
+            |_| false,
+            ctx,
+        ),
         // Anonymous struct: (x: 1, y: 2)
         Value::Struct(struct_fields) => validate_struct_fields_inner(
             struct_fields.iter().map(|(k, v)| (k.as_str(), v)),
             fields,
+            &flattened_targets,
+            map_value_type,
             |name| struct_fields.iter().any(|(k, _)| k == name),
             ctx,
         ),
@@ -366,6 +502,8 @@ fn validate_struct_internal<R: SchemaResolver>(
         } => validate_struct_fields_inner(
             struct_fields.iter().map(|(k, v)| (k.as_str(), v)),
             fields,
+            &flattened_targets,
+            map_value_type,
             |name| struct_fields.iter().any(|(k, _)| k == name),
             ctx,
         ),
@@ -384,6 +522,8 @@ fn validate_struct_internal<R: SchemaResolver>(
             validate_struct_fields_inner(
                 string_fields.iter().copied(),
                 fields,
+                &flattened_targets,
+                map_value_type,
                 |name| {
                     map.iter()
                         .any(|(k, _)| matches!(k, Value::String(s) if s == name))

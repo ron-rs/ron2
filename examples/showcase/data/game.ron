@@ -34,4 +34,6 @@
             shield_strength: 100.0,
         ),
     ),
+
+    some: "unknown field"
 )

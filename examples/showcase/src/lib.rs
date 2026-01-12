@@ -19,6 +19,9 @@ pub struct GameConfig {
     pub keybindings: HashMap<String, String>,
     /// Player configuration.
     pub player: PlayerConfig,
+    /// Settings not understood by us
+    #[ron(flatten)]
+    pub extension_settings: HashMap<String, String>,
 }
 
 /// Window configuration.

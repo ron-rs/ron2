@@ -78,9 +78,29 @@ fn derive_struct_ser(
                                     ::ron2::Value::Struct(nested_fields) => {
                                         fields.extend(nested_fields);
                                     }
+                                    ::ron2::Value::Map(map) => {
+                                        for (key, value) in map {
+                                            match key {
+                                                ::ron2::Value::String(name) => {
+                                                    fields.push((name, value));
+                                                }
+                                                _ => {
+                                                    return Err(::ron2::error::Error::Message(
+                                                        format!(
+                                                            "flatten field {} map keys must be strings",
+                                                            stringify!(#field_ident)
+                                                        ),
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
                                     _ => {
                                         return Err(::ron2::error::Error::Message(
-                                            format!("flatten field {} must serialize to a struct", stringify!(#field_ident))
+                                            format!(
+                                                "flatten field {} must serialize to a struct or map with string keys",
+                                                stringify!(#field_ident)
+                                            )
                                         ));
                                     }
                                 }
@@ -91,9 +111,29 @@ fn derive_struct_ser(
                             ::ron2::Value::Struct(nested_fields) => {
                                 fields.extend(nested_fields);
                             }
+                            ::ron2::Value::Map(map) => {
+                                for (key, value) in map {
+                                    match key {
+                                        ::ron2::Value::String(name) => {
+                                            fields.push((name, value));
+                                        }
+                                        _ => {
+                                            return Err(::ron2::error::Error::Message(
+                                                format!(
+                                                    "flatten field {} map keys must be strings",
+                                                    stringify!(#field_ident)
+                                                ),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
                             _ => {
                                 return Err(::ron2::error::Error::Message(
-                                    format!("flatten field {} must serialize to a struct", stringify!(#field_ident))
+                                    format!(
+                                        "flatten field {} must serialize to a struct or map with string keys",
+                                        stringify!(#field_ident)
+                                    )
                                 ));
                             }
                         }

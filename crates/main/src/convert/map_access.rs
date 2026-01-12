@@ -4,9 +4,11 @@ use alloc::borrow::Cow;
 
 use super::{FromRon, FromRonFields, expr_type_name};
 use crate::{
-    ast::{AnonStructExpr, Expr, FieldsBody, StructField},
+    ast::{AnonStructExpr, Expr, FieldsBody, StringExpr, StringKind, StructField},
     error::{Error, Span, SpannedError, SpannedResult},
 };
+use core::hash::{BuildHasher, Hash};
+use std::collections::HashMap;
 
 /// Maximum number of fields supported in a struct.
 ///
@@ -349,6 +351,41 @@ impl<T: FromRonFields> FromRonFields for Option<T> {
                 }
             }
         }
+    }
+}
+
+impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRonFields
+    for HashMap<K, V, S>
+{
+    fn from_fields(access: &mut AstMapAccess<'_>) -> SpannedResult<Self> {
+        let remaining = access
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| access.consumed & (1 << *i) == 0)
+            .count();
+        let mut map = HashMap::with_capacity_and_hasher(remaining, S::default());
+
+        for (i, field) in access.fields.iter().enumerate() {
+            if access.consumed & (1 << i) != 0 {
+                continue;
+            }
+
+            access.consumed |= 1 << i;
+
+            let key_expr = Expr::String(StringExpr {
+                span: field.name.span.clone(),
+                raw: Cow::Owned(format!("\"{}\"", field.name.name)),
+                value: field.name.name.to_string(),
+                kind: StringKind::Regular,
+            });
+
+            let key = K::from_ast(&key_expr)?;
+            let value = V::from_ast(&field.value)?;
+            map.insert(key, value);
+        }
+
+        Ok(map)
     }
 }
 
