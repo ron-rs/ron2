@@ -5,8 +5,8 @@
 //! - [`StorageError`] - Errors related to schema file I/O
 //! - [`SchemaError`] - Combined error type for all schema operations
 
-use std::io;
 use core::fmt;
+use std::io;
 
 // Re-export validation error types from `crate::error`
 pub use crate::error::{PathSegment, Position, Span, ValidationError, ValidationErrorKind};

@@ -8,8 +8,8 @@
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ron2::ast::FormatConfig;
 use ron2::ToRon;
+use ron2::ast::FormatConfig;
 
 /// Benchmark compact Value serialization using `to_ron_with(Minimal)`.
 fn bench_value_compact(c: &mut Criterion) {

@@ -636,7 +636,7 @@ impl<'a> Formatter<'a> {
 
         // Determine if we can actually compact based on comment mode
         let can_compact = match self.config.comments {
-            CommentMode::Delete => true, // No comment constraints
+            CommentMode::Delete => true,                 // No comment constraints
             CommentMode::Preserve => !has_line_comments, // Line comments prevent all compaction
             CommentMode::Auto => {
                 if wants_compact {
@@ -649,8 +649,14 @@ impl<'a> Formatter<'a> {
 
         // 1. If depth/type rules want compaction AND we can compact
         if wants_compact && can_compact {
-            let compact =
-                self.try_format_compact_with_trivia(open, close, leading, trailing, items, &format_item);
+            let compact = self.try_format_compact_with_trivia(
+                open,
+                close,
+                leading,
+                trailing,
+                items,
+                &format_item,
+            );
             self.output.push_str(&compact);
             self.depth = current_depth;
             return;
@@ -671,8 +677,14 @@ impl<'a> Formatter<'a> {
         }
 
         // 4. Try length-based compaction
-        let compact =
-            self.try_format_compact_with_trivia(open, close, leading, trailing, items, &format_item);
+        let compact = self.try_format_compact_with_trivia(
+            open,
+            close,
+            leading,
+            trailing,
+            items,
+            &format_item,
+        );
         if compact.len() <= self.char_limit() {
             self.output.push_str(&compact);
         } else {
@@ -1341,7 +1353,10 @@ mod tests {
     fn test_compact_types_tuples() {
         let config = FormatConfig::new()
             .char_limit(5)
-            .compact_types(CompactTypes { tuples: true, ..Default::default() });
+            .compact_types(CompactTypes {
+                tuples: true,
+                ..Default::default()
+            });
         let source = "Config(point: (1, 2, 3, 4, 5, 6, 7, 8, 9, 10))";
         let formatted = format_with(source, &config);
         // Tuples should be compact
@@ -1355,7 +1370,10 @@ mod tests {
     fn test_compact_types_structs() {
         let config = FormatConfig::new()
             .char_limit(5)
-            .compact_types(CompactTypes { structs: true, ..Default::default() });
+            .compact_types(CompactTypes {
+                structs: true,
+                ..Default::default()
+            });
         let source = "Outer(inner: Inner(x: 1, y: 2, z: 3))";
         let formatted = format_with(source, &config);
         // Nested struct should be compact
@@ -1494,8 +1512,14 @@ mod tests {
         // Root (depth 0): multiline
         // Inner (depth 1): multiline (below threshold)
         // Array (depth 2): compact (at threshold)
-        assert!(formatted.contains("[1, 2, 3]"), "Array should be compact: {formatted:?}");
-        assert!(formatted.contains("a: Inner("), "Should have newlines: {formatted:?}");
+        assert!(
+            formatted.contains("[1, 2, 3]"),
+            "Array should be compact: {formatted:?}"
+        );
+        assert!(
+            formatted.contains("a: Inner("),
+            "Should have newlines: {formatted:?}"
+        );
     }
 
     #[test]
@@ -1522,7 +1546,10 @@ mod tests {
         // B (depth 1): multiline
         // C (depth 2): multiline
         // Array (depth 3): compact
-        assert!(formatted.contains("[1, 2]"), "Depth 3 array should be compact: {formatted:?}");
+        assert!(
+            formatted.contains("[1, 2]"),
+            "Depth 3 array should be compact: {formatted:?}"
+        );
     }
 
     // =========================================================================
@@ -1618,9 +1645,7 @@ mod tests {
     #[test]
     fn test_or_logic_depth_triggers() {
         // AR-6.1: Compaction triggers if depth rule matches
-        let config = FormatConfig::new()
-            .compact_from_depth(1)
-            .char_limit(0); // Disable length
+        let config = FormatConfig::new().compact_from_depth(1).char_limit(0); // Disable length
         let source = "Config(items: [1, 2, 3])";
         let formatted = format_with(source, &config);
         assert!(

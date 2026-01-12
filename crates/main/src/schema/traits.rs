@@ -24,6 +24,8 @@
 //! }
 //! ```
 
+use crate::schema::StorageError;
+use crate::schema::{Schema, SchemaError, TypeKind};
 use alloc::borrow::Cow;
 use alloc::collections::{BTreeMap, BTreeSet, LinkedList, VecDeque};
 use alloc::rc::Rc;
@@ -31,8 +33,6 @@ use alloc::sync::Arc;
 use core::cell::{Cell, RefCell};
 use core::hash::BuildHasher;
 use core::marker::PhantomData;
-use crate::schema::StorageError;
-use crate::schema::{Schema, SchemaError, TypeKind};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 

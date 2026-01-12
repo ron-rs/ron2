@@ -18,8 +18,8 @@ use unicode_ident::is_xid_continue;
 
 use std::io;
 
-mod span;
 mod path;
+mod span;
 mod validation;
 
 pub use path::PathSegment;

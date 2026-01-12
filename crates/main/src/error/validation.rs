@@ -401,7 +401,9 @@ impl ValidationError {
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Span prefix (if present and not synthetic)
-        if let Some(ref span) = self.span && !span.is_synthetic() {
+        if let Some(ref span) = self.span
+            && !span.is_synthetic()
+        {
             write!(f, "{span}: ")?;
         }
 

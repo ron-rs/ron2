@@ -571,7 +571,9 @@ pub fn synthetic_unit() -> Expr<'static> {
 
 /// Create a synthetic integer expression.
 #[must_use]
-pub fn synthetic_integer<T: core::fmt::Display + PartialOrd + Default + Copy>(value: T) -> Expr<'static> {
+pub fn synthetic_integer<T: core::fmt::Display + PartialOrd + Default + Copy>(
+    value: T,
+) -> Expr<'static> {
     let kind = if value < T::default() {
         NumberKind::NegativeInteger
     } else {
