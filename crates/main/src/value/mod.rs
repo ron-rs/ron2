@@ -1,13 +1,18 @@
 //! Value module.
 
 use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
-use core::{cmp::Eq, hash::Hash};
+use core::{cmp::Eq, fmt::{self, Display, Formatter}, hash::Hash, str::FromStr};
 
 mod map;
 mod number;
 
 pub use map::Map;
 pub use number::{F32, F64, Number};
+
+use crate::{
+    Error, SpannedError,
+    ast::{parse_document, to_value},
+};
 
 /// Ordered list of struct fields (name-value pairs).
 ///
@@ -56,6 +61,40 @@ pub enum Value {
         /// The content of the named type
         content: NamedContent,
     },
+}
+
+impl FromStr for Value {
+    type Err = SpannedError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let doc = parse_document(s)?;
+
+        match to_value(&doc) {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(e)) => {
+                // Conversion error - e already contains span information
+                Err(e)
+            }
+            None => {
+                // Empty document - return EOF error (consistent with FromRon::from_ron)
+                Err(SpannedError::at_start(Error::Eof))
+            }
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        use crate::ast::{format_expr, value_to_expr, FormatConfig};
+
+        // Convert Value to AST expression (with synthetic spans)
+        let expr = value_to_expr(self.clone());
+
+        // Format using default config
+        let formatted = format_expr(&expr, &FormatConfig::default());
+
+        f.write_str(&formatted)
+    }
 }
 
 /// Content of a named type (struct or enum variant).
