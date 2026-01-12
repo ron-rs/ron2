@@ -3,9 +3,6 @@
 //! This module provides shared attribute parsing for `#[derive(RonSchema)]`,
 //! `#[derive(SerRon)]`, and `#[derive(DeRon)]`. All three derives use the
 //! `#[ron(...)]` attribute namespace.
-//!
-//! The legacy `#[ron_schema(...)]` attribute is still supported for backwards
-//! compatibility but is deprecated.
 
 use syn::{Attribute, Expr, ExprPath, Lit, Meta};
 
@@ -92,11 +89,9 @@ impl ContainerAttrs {
         let mut result = Self::default();
 
         for attr in attrs {
-            // Support both #[ron(...)] and legacy #[ron_schema(...)]
             let is_ron = attr.path().is_ident("ron");
-            let is_ron_schema = attr.path().is_ident("ron_schema");
 
-            if !is_ron && !is_ron_schema {
+            if !is_ron {
                 continue;
             }
 
@@ -209,11 +204,9 @@ impl FieldAttrs {
         let mut result = Self::default();
 
         for attr in attrs {
-            // Support both #[ron(...)] and legacy #[ron_schema(...)]
             let is_ron = attr.path().is_ident("ron");
-            let is_ron_schema = attr.path().is_ident("ron_schema");
 
-            if !is_ron && !is_ron_schema {
+            if !is_ron {
                 continue;
             }
 
@@ -298,9 +291,8 @@ impl VariantAttrs {
 
         for attr in attrs {
             let is_ron = attr.path().is_ident("ron");
-            let is_ron_schema = attr.path().is_ident("ron_schema");
 
-            if !is_ron && !is_ron_schema {
+            if !is_ron {
                 continue;
             }
 

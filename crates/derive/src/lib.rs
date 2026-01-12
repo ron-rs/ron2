@@ -89,11 +89,6 @@
 //! // Not as: UserId(42)
 //! ```
 //!
-//! # Legacy Support
-//!
-//! The `#[ron_schema(...)]` attribute is still supported for backwards compatibility
-//! but is deprecated in favor of `#[ron(...)]`.
-
 mod attr;
 mod de;
 mod schema_codegen;
@@ -127,7 +122,7 @@ use syn::parse_macro_input;
 /// Schemas are written at compile time when either:
 /// - `RON_SCHEMA_DIR` environment variable is set (schemas written to that directory)
 /// - `RON_SCHEMA_GLOBAL=1` environment variable is set (schemas written to XDG data dir)
-#[proc_macro_derive(RonSchema, attributes(ron, ron_schema))]
+#[proc_macro_derive(RonSchema, attributes(ron))]
 pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
 
@@ -178,7 +173,7 @@ pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
 /// let point = Point { x: 1.0, y: 2.0 };
 /// let ron = point.to_ron().unwrap();
 /// ```
-#[proc_macro_derive(ToRon, attributes(ron, ron_schema))]
+#[proc_macro_derive(ToRon, attributes(ron))]
 pub fn derive_to_ron(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
 
@@ -204,7 +199,7 @@ pub fn derive_to_ron(input: TokenStream) -> TokenStream {
 ///
 /// let point: Point = Point::from_ron("(x: 1.0, y: 2.0)").unwrap();
 /// ```
-#[proc_macro_derive(FromRon, attributes(ron, ron_schema))]
+#[proc_macro_derive(FromRon, attributes(ron))]
 pub fn derive_from_ron(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
 
@@ -234,7 +229,7 @@ pub fn derive_from_ron(input: TokenStream) -> TokenStream {
 /// let parsed: Point = Point::from_ron(&ron).unwrap();
 /// let schema = Point::schema();
 /// ```
-#[proc_macro_derive(Ron, attributes(ron, ron_schema))]
+#[proc_macro_derive(Ron, attributes(ron))]
 pub fn derive_ron(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
 

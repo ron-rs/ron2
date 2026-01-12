@@ -48,7 +48,7 @@ struct StructWithOptional {
     /// Required field.
     required: i32,
     /// Optional field with default.
-    #[ron_schema(default)]
+    #[ron(default)]
     optional: Option<String>,
 }
 
@@ -367,7 +367,7 @@ struct BaseConfig {
 #[derive(RonSchema)]
 struct ExtendedConfig {
     /// Base configuration (flattened).
-    #[ron_schema(flatten)]
+    #[ron(flatten)]
     base: BaseConfig,
     /// Additional setting.
     extra: String,
@@ -399,7 +399,7 @@ struct WithSkippedField {
     /// Visible field.
     visible: String,
     /// Internal field (skipped).
-    #[ron_schema(skip)]
+    #[ron(skip)]
     internal: i32,
     /// Another visible field.
     another: bool,
@@ -426,7 +426,7 @@ struct WithMultipleAttrs {
     /// Normal field.
     normal: String,
     /// Optional flattened field.
-    #[ron_schema(default, flatten)]
+    #[ron(default, flatten)]
     optional_nested: BaseConfig,
 }
 
@@ -464,7 +464,7 @@ enum EnumWithSkippedField {
         /// Public data.
         public: String,
         /// Internal cache (skipped).
-        #[ron_schema(skip)]
+        #[ron(skip)]
         cache: Vec<u8>,
     },
 }
