@@ -49,7 +49,7 @@ fn main() {
 | `deny_unknown_fields` | Error on unknown fields |
 | `transparent` | Serialize as the single inner field |
 
-Rename rules: `camelCase`, `snake_case`, `PascalCase`, `SCREAMING_SNAKE_CASE`, `kebab-case`, `lowercase`, `UPPERCASE`
+Rename rules: `camelCase`, `snake_case`, `PascalCase`, `SCREAMING_SNAKE_CASE`, `lowercase`, `UPPERCASE`
 
 ## Field Attributes
 

@@ -18,8 +18,6 @@ pub enum RenameRule {
     PascalCase,
     /// SCREAMING_SNAKE_CASE
     ScreamingSnakeCase,
-    /// kebab-case
-    KebabCase,
     /// lowercase
     LowerCase,
     /// UPPERCASE
@@ -34,7 +32,6 @@ impl RenameRule {
             "snake_case" => Some(RenameRule::SnakeCase),
             "PascalCase" => Some(RenameRule::PascalCase),
             "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnakeCase),
-            "kebab-case" => Some(RenameRule::KebabCase),
             "lowercase" => Some(RenameRule::LowerCase),
             "UPPERCASE" => Some(RenameRule::UpperCase),
             _ => None,
@@ -48,9 +45,8 @@ impl RenameRule {
             RenameRule::SnakeCase => to_snake_case(s),
             RenameRule::PascalCase => to_pascal_case(s),
             RenameRule::ScreamingSnakeCase => to_screaming_snake_case(s),
-            RenameRule::KebabCase => to_kebab_case(s),
-            RenameRule::LowerCase => s.to_lowercase(),
-            RenameRule::UpperCase => s.to_uppercase(),
+            RenameRule::LowerCase => s.replace('_', "").to_lowercase(),
+            RenameRule::UpperCase => s.replace('_', "").to_uppercase(),
         }
     }
 }
@@ -457,10 +453,6 @@ fn to_screaming_snake_case(s: &str) -> String {
     to_snake_case(s).to_uppercase()
 }
 
-fn to_kebab_case(s: &str) -> String {
-    to_snake_case(s).replace('_', "-")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,8 +463,9 @@ mod tests {
         assert_eq!(RenameRule::SnakeCase.apply("MyField"), "my_field");
         assert_eq!(RenameRule::PascalCase.apply("my_field"), "MyField");
         assert_eq!(RenameRule::ScreamingSnakeCase.apply("MyField"), "MY_FIELD");
-        assert_eq!(RenameRule::KebabCase.apply("MyField"), "my-field");
         assert_eq!(RenameRule::LowerCase.apply("MyField"), "myfield");
+        assert_eq!(RenameRule::LowerCase.apply("my_field"), "myfield");
         assert_eq!(RenameRule::UpperCase.apply("MyField"), "MYFIELD");
+        assert_eq!(RenameRule::UpperCase.apply("my_field"), "MYFIELD");
     }
 }

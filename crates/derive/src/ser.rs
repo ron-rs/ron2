@@ -65,6 +65,27 @@ fn derive_struct_ser(
                 let field_name =
                     field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
+                // Handle flatten: merge fields from nested struct
+                if field_attrs.flatten {
+                    let serialize_expr = quote! {
+                        match ::ron2::ToRon::to_ron_value(&self.#field_ident)? {
+                            ::ron2::Value::Named { content: ::ron2::NamedContent::Struct(nested_fields), .. } => {
+                                fields.extend(nested_fields);
+                            }
+                            ::ron2::Value::Struct(nested_fields) => {
+                                fields.extend(nested_fields);
+                            }
+                            _ => {
+                                return Err(::ron2::error::Error::Message(
+                                    format!("flatten field {} must serialize to a struct", stringify!(#field_ident))
+                                ));
+                            }
+                        }
+                    };
+                    field_serializations.push(serialize_expr);
+                    continue;
+                }
+
                 let serialize_expr = quote! {
                     ::ron2::ToRon::to_ron_value(&self.#field_ident)?
                 };

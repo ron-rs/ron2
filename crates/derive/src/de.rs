@@ -113,8 +113,8 @@ fn derive_struct_de(
 
     match fields {
         Fields::Named(named) => derive_named_struct_de(name, named, container_attrs),
-        Fields::Unnamed(unnamed) => derive_tuple_struct_de(name, unnamed),
-        Fields::Unit => derive_unit_struct_de(name),
+        Fields::Unnamed(unnamed) => derive_tuple_struct_de(name, unnamed, container_attrs),
+        Fields::Unit => derive_unit_struct_de(name, container_attrs),
     }
 }
 
@@ -124,10 +124,14 @@ fn derive_named_struct_de(
     named: &syn::FieldsNamed,
     container_attrs: &ContainerAttrs,
 ) -> syn::Result<TokenStream2> {
-    let struct_name = name.to_string();
+    let struct_name = container_attrs
+        .rename
+        .clone()
+        .unwrap_or_else(|| name.to_string());
     let mut field_extractions = Vec::new();
     let mut field_names = Vec::new();
     let mut known_fields = Vec::new();
+    let mut all_fields_have_defaults = true;
 
     for field in &named.named {
         let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
@@ -151,11 +155,64 @@ fn derive_named_struct_de(
             known_fields.push(ron_name.clone());
         }
 
+        // Check if field has a default
+        if !matches!(field_attrs.default, FieldDefault::Default | FieldDefault::Path(_)) && !field_attrs.flatten {
+            all_fields_have_defaults = false;
+        }
+
         // Generate field extraction using the shared helper
         let extraction =
             generate_field_extraction(field_ident, field_ty, &ron_name, &field_attrs, field)?;
         field_extractions.push(extraction);
     }
+    
+    // Generate Unit case only if all fields have defaults
+    let unit_case = if all_fields_have_defaults {
+        // Build unit extractions using defaults
+        let mut unit_extractions = Vec::new();
+        for field in &named.named {
+            let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
+            let field_ident = field.ident.as_ref().unwrap();
+            let field_ty = &field.ty;
+            
+            if field_attrs.should_skip_deserializing() {
+                unit_extractions.push(quote! {
+                    let #field_ident: #field_ty = ::std::default::Default::default();
+                });
+                continue;
+            }
+            
+            let unit_extraction = match &field_attrs.default {
+                FieldDefault::Default => {
+                    quote! {
+                        let #field_ident: #field_ty = ::std::default::Default::default();
+                    }
+                }
+                FieldDefault::Path(path) => {
+                    quote! {
+                        let #field_ident: #field_ty = #path();
+                    }
+                }
+                FieldDefault::None if field_attrs.flatten => {
+                    quote! {
+                        let #field_ident: #field_ty = ::std::default::Default::default();
+                    }
+                }
+                _ => quote! {}
+            };
+            unit_extractions.push(unit_extraction);
+        }
+        
+        quote! {
+            // Unit: () - accept for structs with all fields having defaults
+            ::ron2::ast::Expr::Unit(_) => {
+                #(#unit_extractions)*
+                Ok(#name { #(#field_names),* })
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     let deny_unknown = if container_attrs.deny_unknown_fields {
         let known_fields_slice: Vec<_> = known_fields.iter().map(|s| quote! { #s }).collect();
@@ -168,6 +225,7 @@ fn derive_named_struct_de(
 
     Ok(quote! {
         match expr {
+            #unit_case
             // Anonymous struct: (field: val, ...)
             ::ron2::ast::Expr::AnonStruct(s) => {
                 let mut access = ::ron2::AstMapAccess::from_anon(s, Some(stringify!(#name)))?;
@@ -235,8 +293,15 @@ fn derive_named_struct_de(
 }
 
 /// Generate deserialization for a tuple struct.
-fn derive_tuple_struct_de(name: &Ident, unnamed: &syn::FieldsUnnamed) -> syn::Result<TokenStream2> {
-    let struct_name = name.to_string();
+fn derive_tuple_struct_de(
+    name: &Ident,
+    unnamed: &syn::FieldsUnnamed,
+    container_attrs: &ContainerAttrs,
+) -> syn::Result<TokenStream2> {
+    let struct_name = container_attrs
+        .rename
+        .clone()
+        .unwrap_or_else(|| name.to_string());
     let field_count = unnamed.unnamed.len();
 
     // Generate field extraction by index
@@ -323,8 +388,11 @@ fn derive_tuple_struct_de(name: &Ident, unnamed: &syn::FieldsUnnamed) -> syn::Re
 }
 
 /// Generate deserialization for a unit struct.
-fn derive_unit_struct_de(name: &Ident) -> syn::Result<TokenStream2> {
-    let struct_name = name.to_string();
+fn derive_unit_struct_de(name: &Ident, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
+    let struct_name = container_attrs
+        .rename
+        .clone()
+        .unwrap_or_else(|| name.to_string());
 
     Ok(quote! {
         match expr {
