@@ -325,6 +325,23 @@ line2"#"##,
     assert_eq!(value, Value::String(String::from("line1\nline2")));
 }
 
+#[test]
+fn roundtrip_string_raw_triple_hash_multiline() {
+    let input = concat!(
+        "r###\"\n",
+        "hello \"world\"\n",
+        "wowweee\"' r##\"\"##\n",
+        "lol\"###",
+    );
+    let value = roundtrip(input);
+    assert_eq!(
+        value,
+        Value::String(String::from(
+            "\nhello \"world\"\nwowweee\"' r##\"\"##\nlol"
+        ))
+    );
+}
+
 // =============================================================================
 // Bytes
 // =============================================================================

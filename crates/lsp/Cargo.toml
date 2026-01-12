@@ -9,9 +9,9 @@ description = "Language server providing auto-completions for RON files"
 name = "ron-lsp"
 path = "src/main.rs"
 
-[[bin]]
-name = "ron2-lsp"
-path = "src/main.rs"
+# [[bin]]
+# name = "ron2-lsp"
+# path = "src/main.rs"
 
 [dependencies]
 ron2.workspace = true

@@ -219,6 +219,50 @@ fn edge_raw_string_with_hash() {
     assert_eq!(value, Value::String(String::from("hello #world")));
 }
 
+#[test]
+fn edge_raw_string_with_triple_hash_in_contexts() {
+    let raw_literal = concat!(
+        "r###\"\n",
+        "hello \"world\"\n",
+        "wowweee\"' r##\"\"##\n",
+        "lol\"###",
+    );
+    let raw_text = String::from("\nhello \"world\"\nwowweee\"' r##\"\"##\nlol");
+    let raw_value = Value::String(raw_text);
+    let input = format!(
+        "(value: {raw}, seq: [{raw}], tuple: ({raw},), map: {{ {raw}: {raw} }}, \
+named_tuple: Wrapper({raw}), named_struct: Wrapper(value: {raw}),)",
+        raw = raw_literal,
+    );
+    let value: Value = input.parse().unwrap();
+
+    let mut expected_map = Map::new();
+    expected_map.insert(raw_value.clone(), raw_value.clone());
+
+    let expected = Value::Struct(vec![
+        (String::from("value"), raw_value.clone()),
+        (String::from("seq"), Value::Seq(vec![raw_value.clone()])),
+        (String::from("tuple"), Value::Tuple(vec![raw_value.clone()])),
+        (String::from("map"), Value::Map(expected_map)),
+        (
+            String::from("named_tuple"),
+            Value::Named {
+                name: String::from("Wrapper"),
+                content: NamedContent::Tuple(vec![raw_value.clone()]),
+            },
+        ),
+        (
+            String::from("named_struct"),
+            Value::Named {
+                name: String::from("Wrapper"),
+                content: NamedContent::Struct(vec![(String::from("value"), raw_value)]),
+            },
+        ),
+    ]);
+
+    assert_eq!(value, expected);
+}
+
 // =============================================================================
 // Char Edge Cases
 // =============================================================================
