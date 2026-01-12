@@ -19,7 +19,7 @@ fn bench_value_roundtrip_compact(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(name), &input, |b, input| {
             b.iter(|| {
-                let value = ron2::from_str(input).unwrap();
+                let value = input.parse::<ron2::Value>().unwrap();
                 value.to_ron_with(&FormatConfig::minimal()).unwrap()
             });
         });
@@ -37,7 +37,7 @@ fn bench_value_roundtrip_pretty(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(name), &input, |b, input| {
             b.iter(|| {
-                let value = ron2::from_str(input).unwrap();
+                let value = input.parse::<ron2::Value>().unwrap();
                 value.to_ron().unwrap()
             });
         });
@@ -95,14 +95,14 @@ fn bench_roundtrip_comparison(c: &mut Criterion) {
 
     group.bench_function("value_compact", |b| {
         b.iter(|| {
-            let value = ron2::from_str(input).unwrap();
+            let value = input.parse::<ron2::Value>().unwrap();
             value.to_ron_with(&FormatConfig::minimal()).unwrap()
         });
     });
 
     group.bench_function("value_pretty", |b| {
         b.iter(|| {
-            let value = ron2::from_str(input).unwrap();
+            let value = input.parse::<ron2::Value>().unwrap();
             value.to_ron().unwrap()
         });
     });
@@ -132,11 +132,11 @@ fn bench_multiple_roundtrips(c: &mut Criterion) {
 
     group.bench_function("value_3x", |b| {
         b.iter(|| {
-            let v1 = ron2::from_str(input).unwrap();
+            let v1 = input.parse::<ron2::Value>().unwrap();
             let s1 = v1.to_ron_with(&FormatConfig::minimal()).unwrap();
-            let v2 = ron2::from_str(&s1).unwrap();
+            let v2 = &s1.parse::<ron2::Value>().unwrap();
             let s2 = v2.to_ron_with(&FormatConfig::minimal()).unwrap();
-            let v3 = ron2::from_str(&s2).unwrap();
+            let v3 = &s2.parse::<ron2::Value>().unwrap();
             v3.to_ron_with(&FormatConfig::minimal()).unwrap()
         });
     });

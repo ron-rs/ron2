@@ -87,6 +87,7 @@ pub use crate::{
 /// let value = from_str("42").unwrap();
 /// assert_eq!(value, Value::Number(Number::U8(42)));
 /// ```
+#[deprecated]
 pub fn from_str(s: &str) -> SpannedResult<Value> {
     Options::default().from_str(s)
 }
@@ -101,11 +102,13 @@ pub fn from_str(s: &str) -> SpannedResult<Value> {
 /// let value = from_bytes(b"42").unwrap();
 /// assert_eq!(value, Value::Number(Number::U8(42)));
 /// ```
+#[deprecated]
 pub fn from_bytes(s: &[u8]) -> SpannedResult<Value> {
     Options::default().from_bytes(s)
 }
 
 /// Deserialize a Value from a reader.
+#[deprecated]
 pub fn from_reader<R: std::io::Read>(rdr: R) -> SpannedResult<Value> {
     Options::default().from_reader(rdr)
 }

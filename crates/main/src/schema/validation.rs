@@ -174,7 +174,7 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
 /// });
 ///
 /// let resolver = StorageResolver::new();
-/// let value = crate::from_str("(data: 42)").unwrap();
+/// let value = "(data: 42)".parse::<Value>().unwrap();
 ///
 /// // If "my::Type" schema is not found, accepts any value for 'data'
 /// let result = validate_with_resolver(&value, &schema, &resolver);
@@ -715,15 +715,15 @@ mod tests {
         });
 
         // Valid struct with all fields
-        let value: Value = crate::from_str("(port: 8080, host: \"localhost\")").unwrap();
+        let value: Value = "(port: 8080, host: \"localhost\")".parse::<Value>().unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Valid struct with only required fields
-        let value: Value = crate::from_str("(port: 8080)").unwrap();
+        let value: Value = "(port: 8080)".parse::<Value>().unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Missing required field
-        let value: Value = crate::from_str("(host: \"localhost\")").unwrap();
+        let value: Value = "(host: \"localhost\")".parse::<Value>().unwrap();
         assert!(validate(&value, &schema).is_err());
     }
 
@@ -738,11 +738,11 @@ mod tests {
         });
 
         // Unit variant
-        let value: Value = crate::from_str("\"None\"").unwrap();
+        let value: Value = "\"None\"".parse::<Value>().unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Unknown variant
-        let value: Value = crate::from_str("\"Unknown\"").unwrap();
+        let value: Value = "\"Unknown\"".parse::<Value>().unwrap();
         assert!(validate(&value, &schema).is_err());
     }
 
@@ -756,7 +756,7 @@ mod tests {
         });
 
         // Error in nested structure should have path context
-        let value: Value = crate::from_str("(items: [\"ok\", 42])").unwrap();
+        let value: Value = "(items: [\"ok\", 42])".parse::<Value>().unwrap();
         let err = validate(&value, &schema).unwrap_err();
 
         // Should contain path information

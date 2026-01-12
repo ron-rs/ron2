@@ -3,7 +3,7 @@
 //! These tests ensure that errors provide precise location information
 //! and helpful messages that enable rustc-like diagnostics.
 
-use ron2::{SpannedResult, Value, error::Error, from_str};
+use ron2::{SpannedResult, Value, error::Error};
 
 // =============================================================================
 // Span Accuracy Tests - Parsing Errors
@@ -47,7 +47,7 @@ fn verify_span_position(
 fn span_points_to_invalid_token() {
     // Invalid character in number - should point to the 'G'
     let source = "0xGGG";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // The error should be at the invalid digit
@@ -62,7 +62,7 @@ fn span_points_to_invalid_token() {
 #[test]
 fn span_points_to_unclosed_bracket_content() {
     let source = "[1, 2, 3";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Error should be at end of file
@@ -83,7 +83,7 @@ fn span_multiline_points_to_correct_line() {
 ]"#;
 
     // Parsing succeeds - bare identifiers are valid RON
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result);
 
     // Deserialization to Vec<i32> should fail with correct span
@@ -101,7 +101,7 @@ fn span_multiline_points_to_correct_line() {
 #[test]
 fn span_points_to_unclosed_string() {
     let source = "\"hello world";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Should point to the string start or end
@@ -111,7 +111,7 @@ fn span_points_to_unclosed_string() {
 #[test]
 fn span_points_to_invalid_escape_sequence() {
     let source = r#""hello\qworld""#;
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Error should be in the string where \q appears
@@ -127,7 +127,7 @@ fn span_points_to_invalid_escape_sequence() {
 #[test]
 fn span_points_to_map_missing_colon() {
     let source = r#"{ "key" "value" }"#;
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     assert_eq!(err.span.start.line, 1);
@@ -142,7 +142,7 @@ fn span_points_to_map_missing_colon() {
 #[test]
 fn span_points_to_trailing_junk() {
     let source = "42 junk";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     assert_eq!(err.span.start.line, 1);
@@ -155,7 +155,7 @@ fn span_points_to_trailing_junk() {
 #[test]
 fn span_byte_offsets_enable_slicing() {
     let source = "[1, 2, }";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Verify byte offsets are valid for slicing
@@ -202,7 +202,7 @@ fn span_deeply_nested_error() {
 }"#;
 
     // Parsing succeeds - bare identifiers are valid RON
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     assert!(result.is_ok(), "Parsing should succeed: {:?}", result);
 
     // Deserialization should fail with correct span
@@ -225,7 +225,7 @@ fn span_deeply_nested_error() {
 #[test]
 fn error_message_includes_context_for_comma() {
     let source = "[1 2]";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
     let msg = err.to_string();
 
@@ -240,7 +240,7 @@ fn error_message_includes_context_for_comma() {
 #[test]
 fn error_message_shows_position() {
     let source = "[1, 2, }";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
     let msg = err.to_string();
 
@@ -255,7 +255,7 @@ fn error_message_shows_position() {
 #[test]
 fn error_message_eof_is_clear() {
     let source = "[1, 2,";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
     let msg = err.to_string();
 
@@ -274,12 +274,12 @@ fn type_bounds_checked_at_deserialization_not_parsing() {
     // Type bounds like u8 are checked during deserialization, not parsing
     // 256 is fine for i64 (default integer storage) but too big for u8
     let source = "256";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     assert!(result.is_ok(), "256 should parse as a generic number");
 
     // i64::MAX is valid
     let source = "9223372036854775807";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     assert!(result.is_ok(), "i64::MAX should parse successfully");
 }
 
@@ -287,11 +287,11 @@ fn type_bounds_checked_at_deserialization_not_parsing() {
 fn error_distinguishes_bracket_types() {
     // Mismatched brackets
     let source1 = "[1, 2}";
-    let result1: SpannedResult<Value> = from_str(source1);
+    let result1: SpannedResult<Value> = source1.parse();
     let err1 = result1.unwrap_err();
 
     let source2 = "{1: 2]";
-    let result2: SpannedResult<Value> = from_str(source2);
+    let result2: SpannedResult<Value> = source2.parse();
     let err2 = result2.unwrap_err();
 
     // Errors should be different or at least specific
@@ -310,7 +310,7 @@ fn error_distinguishes_bracket_types() {
 #[test]
 fn error_code_for_unclosed_string() {
     let source = "\"hello";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     assert!(
@@ -323,7 +323,7 @@ fn error_code_for_unclosed_string() {
 #[test]
 fn error_code_for_invalid_escape() {
     let source = r#""\q""#;
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     assert!(
@@ -336,7 +336,7 @@ fn error_code_for_invalid_escape() {
 #[test]
 fn error_code_for_trailing_characters() {
     let source = "42 extra";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     assert!(
@@ -353,7 +353,7 @@ fn error_code_for_trailing_characters() {
 #[test]
 fn empty_input_has_sensible_error() {
     let source = "";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Should report EOF at position 1:1
@@ -365,7 +365,7 @@ fn empty_input_has_sensible_error() {
 #[test]
 fn whitespace_only_has_sensible_error() {
     let source = "   \n\n   ";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Should report EOF
@@ -376,7 +376,7 @@ fn whitespace_only_has_sensible_error() {
 fn unicode_positions_are_character_based() {
     // Unicode: "日本語" = 3 characters but 9 bytes
     let source = "\"日本語\" junk";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // The error should be at "junk"
@@ -396,12 +396,12 @@ fn very_long_line_has_correct_position() {
     let long_prefix = "x".repeat(1000);
     let source = format!("[{}]", long_prefix);
     // This should parse fine
-    let result: SpannedResult<Value> = from_str(&source);
+    let result: SpannedResult<Value> = source.parse();
     assert!(result.is_ok());
 
     // Now with error at end
     let source_err = format!("[{}", long_prefix);
-    let result_err: SpannedResult<Value> = from_str(&source_err);
+    let result_err: SpannedResult<Value> = source_err.parse();
     let err = result_err.unwrap_err();
 
     assert_eq!(err.span.start.line, 1);
@@ -419,7 +419,7 @@ fn very_long_line_has_correct_position() {
 #[test]
 fn span_slice_method_works() {
     let source = "{ \"key\" value }";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Use the span to extract text
@@ -441,7 +441,7 @@ fn span_slice_method_works() {
 fn error_after_comment_has_correct_position() {
     let source = r#"// This is a comment
 [1, 2, }"#;
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Error should be on line 2
@@ -454,7 +454,7 @@ fn error_after_comment_has_correct_position() {
 #[test]
 fn error_inside_block_comment() {
     let source = "/* unclosed comment";
-    let result: SpannedResult<Value> = from_str(source);
+    let result: SpannedResult<Value> = source.parse();
     let err = result.unwrap_err();
 
     // Should report unclosed block comment

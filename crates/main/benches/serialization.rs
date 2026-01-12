@@ -15,7 +15,7 @@ fn bench_value_compact(c: &mut Criterion) {
     let mut group = c.benchmark_group("serialization/value_compact");
 
     for (name, input) in common::test_inputs() {
-        let value: ron2::Value = ron2::from_str(&input).unwrap();
+        let value: ron2::Value = input.parse::<ron2::Value>().unwrap();
         let output_size = value.to_ron_with(&FormatConfig::minimal()).unwrap().len();
         group.throughput(Throughput::Bytes(output_size as u64));
 
@@ -32,7 +32,7 @@ fn bench_value_pretty(c: &mut Criterion) {
     let mut group = c.benchmark_group("serialization/value_pretty");
 
     for (name, input) in common::test_inputs() {
-        let value: ron2::Value = ron2::from_str(&input).unwrap();
+        let value: ron2::Value = input.parse::<ron2::Value>().unwrap();
         let output_size = value.to_ron().unwrap().len();
         group.throughput(Throughput::Bytes(output_size as u64));
 
@@ -66,7 +66,7 @@ fn bench_serialization_comparison(c: &mut Criterion) {
 
     // Use medium config for comparison
     let input = common::MEDIUM_CONFIG;
-    let value: ron2::Value = ron2::from_str(input).unwrap();
+    let value: ron2::Value = input.parse::<ron2::Value>().unwrap();
     let doc = ron2::ast::parse_document(input).unwrap();
 
     // Use input size as throughput baseline

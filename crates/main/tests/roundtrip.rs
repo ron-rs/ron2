@@ -2,15 +2,15 @@
 //!
 //! These tests verify that parsing and serialization are consistent.
 
-use ron2::{FormatConfig, Map, NamedContent, Number, ToRon, Value, from_str};
+use ron2::{FormatConfig, Map, NamedContent, Number, ToRon, Value};
 
 /// Helper: parse, serialize, parse again, and verify values match.
 fn roundtrip(input: &str) -> Value {
-    let value = from_str(input).unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
+    let value: Value = input.parse().unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
     let serialized = value
         .to_ron_with(&FormatConfig::minimal())
         .unwrap_or_else(|e| panic!("Failed to serialize: {e}"));
-    let reparsed = from_str(&serialized)
+    let reparsed: Value = serialized.parse()
         .unwrap_or_else(|e| panic!("Failed to reparse '{serialized}' (from '{input}'): {e}"));
     assert_eq!(value, reparsed, "Roundtrip mismatch for '{input}'");
     value
@@ -18,11 +18,11 @@ fn roundtrip(input: &str) -> Value {
 
 /// Helper: roundtrip with pretty printing.
 fn roundtrip_pretty(input: &str) -> Value {
-    let value = from_str(input).unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
+    let value: Value = input.parse().unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
     let serialized = value
         .to_ron()
         .unwrap_or_else(|e| panic!("Failed to serialize: {e}"));
-    let reparsed = from_str(&serialized)
+    let reparsed: Value = serialized.parse()
         .unwrap_or_else(|e| panic!("Failed to reparse '{serialized}' (from '{input}'): {e}"));
     assert_eq!(value, reparsed, "Roundtrip mismatch for '{input}'");
     value
@@ -1105,21 +1105,21 @@ fn roundtrip_raw_identifier() {
 #[test]
 fn roundtrip_empty_document() {
     // Empty input is an error (not silently Unit)
-    let result = from_str("");
+    let result: Result<Value, _> = "".parse();
     assert!(result.is_err(), "Empty input should be an error");
 }
 
 #[test]
 fn roundtrip_whitespace_only() {
     // Whitespace-only input is an error (not silently Unit)
-    let result = from_str("   \n   \t   ");
+    let result: Result<Value, _> = "   \n   \t   ".parse();
     assert!(result.is_err(), "Whitespace-only input should be an error");
 }
 
 #[test]
 fn roundtrip_comment_only() {
     // Comment-only input is an error (not silently Unit)
-    let result = from_str("// just a comment\n");
+    let result: Result<Value, _> = "// just a comment\n".parse();
     assert!(result.is_err(), "Comment-only input should be an error");
 }
 
@@ -1234,7 +1234,7 @@ fn roundtrip_anon_struct_multiline() {
 #[test]
 fn struct_serializes_with_parentheses() {
     // Parse using correct parenthesis syntax
-    let value = from_str("Point(x: 1, y: 2)").unwrap();
+    let value: Value = "Point(x: 1, y: 2)".parse().unwrap();
 
     // Serialize and verify output uses parentheses
     let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
@@ -1246,7 +1246,7 @@ fn struct_serializes_with_parentheses() {
 /// Verify that the standard parenthesis syntax parses correctly.
 #[test]
 fn struct_parses_with_parentheses() {
-    let value = from_str("Point(x: 1, y: 2)").unwrap();
+    let value: Value = "Point(x: 1, y: 2)".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -1264,7 +1264,7 @@ fn struct_parses_with_parentheses() {
 fn brace_syntax_after_ident_is_rejected() {
     // Brace syntax for structs is NOT valid: Point { x: 1, y: 2 }
     // This parses "Point" as a unit struct, then "{" starts a map which expects string keys
-    let result = from_str("Point { x: 1, y: 2 }");
+    let result: Result<Value, _> = "Point { x: 1, y: 2 }".parse();
     assert!(
         result.is_err(),
         "Brace syntax after identifier should be rejected"
@@ -1274,7 +1274,7 @@ fn brace_syntax_after_ident_is_rejected() {
 /// Verify nested structs serialize with parentheses.
 #[test]
 fn nested_struct_serializes_with_parentheses() {
-    let value = from_str("Outer(inner: Inner(x: 1))").unwrap();
+    let value: Value = "Outer(inner: Inner(x: 1))".parse().unwrap();
     let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
     assert_eq!(serialized, "Outer(inner:Inner(x:1))");
 }

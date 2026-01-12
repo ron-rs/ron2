@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RON2 Showcase ===\n");
 
     let ron_content = fs::read_to_string("data/game.ron")?;
-    let value = ron2::from_str(&ron_content)?;
+    let value: ron2::Value = ron_content.parse()?;
 
     println!("1. Loading and validating config...");
 

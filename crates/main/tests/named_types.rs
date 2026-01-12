@@ -9,7 +9,7 @@
 //! - Struct fields use PARENTHESES: `Point(x: 1, y: 2)`
 //! - Curly braces are for MAPS only: `{ "key": value }`
 
-use ron2::{FormatConfig, NamedContent, Number, ToRon, Value, from_str};
+use ron2::{FormatConfig, NamedContent, Number, ToRon, Value};
 
 // =============================================================================
 // Unit Named Types - Edge Cases
@@ -18,7 +18,7 @@ use ron2::{FormatConfig, NamedContent, Number, ToRon, Value, from_str};
 
 #[test]
 fn named_unit_single_char() {
-    let value = from_str("A").unwrap();
+    let value: Value = "A".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -30,7 +30,7 @@ fn named_unit_single_char() {
 
 #[test]
 fn named_unit_with_underscore() {
-    let value = from_str("my_type").unwrap();
+    let value: Value = "my_type".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -42,7 +42,7 @@ fn named_unit_with_underscore() {
 
 #[test]
 fn named_unit_leading_underscore() {
-    let value = from_str("_private").unwrap();
+    let value: Value = "_private".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -54,7 +54,7 @@ fn named_unit_leading_underscore() {
 
 #[test]
 fn named_unit_with_numbers() {
-    let value = from_str("Type2D").unwrap();
+    let value: Value = "Type2D".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -67,7 +67,7 @@ fn named_unit_with_numbers() {
 #[test]
 fn named_unit_raw_identifier() {
     // Raw identifiers preserve the r# prefix in the parsed name
-    let value = from_str("r#type").unwrap();
+    let value: Value = "r#type".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -79,7 +79,7 @@ fn named_unit_raw_identifier() {
 
 #[test]
 fn named_unit_raw_identifier_match() {
-    let value = from_str("r#match").unwrap();
+    let value: Value = "r#match".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -97,7 +97,7 @@ fn named_unit_raw_identifier_match() {
 #[test]
 fn named_tuple_empty() {
     // Empty parens are an empty tuple (not the same as unit)
-    let value = from_str("Empty()").unwrap();
+    let value: Value = "Empty()".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -109,7 +109,7 @@ fn named_tuple_empty() {
 
 #[test]
 fn named_tuple_with_seq() {
-    let value = from_str("Container([1, 2, 3])").unwrap();
+    let value: Value = "Container([1, 2, 3])".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -125,7 +125,7 @@ fn named_tuple_with_seq() {
 
 #[test]
 fn named_tuple_with_option() {
-    let value = from_str("Wrapper(Some(42))").unwrap();
+    let value: Value = "Wrapper(Some(42))".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -144,7 +144,7 @@ fn named_tuple_with_option() {
 
 #[test]
 fn named_struct_with_none_field() {
-    let value = from_str("Config(value: None)").unwrap();
+    let value: Value = "Config(value: None)".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -161,7 +161,7 @@ fn named_struct_multiline() {
         port: 8080,
         debug: true
     )"#;
-    let value = from_str(input).unwrap();
+    let value: Value = input.parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
@@ -246,14 +246,14 @@ fn serialize_named_struct_pretty() {
 #[test]
 fn option_none_is_special() {
     // None is parsed as Value::Option(None), not Named { name: "None", ... }
-    let value = from_str("None").unwrap();
+    let value: Value = "None".parse().unwrap();
     assert_eq!(value, Value::Option(None));
 }
 
 #[test]
 fn option_some_is_special() {
     // Some(x) is parsed as Value::Option(Some(x)), not Named { name: "Some", ... }
-    let value = from_str("Some(42)").unwrap();
+    let value: Value = "Some(42)".parse().unwrap();
     assert_eq!(
         value,
         Value::Option(Some(Box::new(Value::Number(Number::U8(42)))))
@@ -262,7 +262,7 @@ fn option_some_is_special() {
 
 #[test]
 fn option_none_in_struct() {
-    let value = from_str("Config(value: None)").unwrap();
+    let value: Value = "Config(value: None)".parse().unwrap();
     match value {
         Value::Named {
             content: NamedContent::Struct(fields),
@@ -276,7 +276,7 @@ fn option_none_in_struct() {
 
 #[test]
 fn option_some_in_struct() {
-    let value = from_str("Config(value: Some(42))").unwrap();
+    let value: Value = "Config(value: Some(42))".parse().unwrap();
     match value {
         Value::Named {
             content: NamedContent::Struct(fields),
@@ -297,8 +297,7 @@ fn option_some_in_struct() {
 
 #[test]
 fn realistic_game_entity() {
-    let value = from_str(
-        r#"Entity(
+    let value: Value = r#"Entity(
         id: 12345,
         name: "Player",
         position: Vec3(10.5, 0.0, -3.2),
@@ -308,8 +307,7 @@ fn realistic_game_entity() {
             Transform(1.0, Quaternion(0.0, 0.0, 0.0, 1.0))
         ],
         active: true
-    )"#,
-    )
+    )"#.parse()
     .unwrap();
 
     match value {
@@ -333,8 +331,7 @@ fn realistic_game_entity() {
 
 #[test]
 fn realistic_api_response() {
-    let value = from_str(
-        r#"Response(
+    let value: Value = r#"Response(
         status: Ok,
         data: Some(User(
             id: 1,
@@ -346,8 +343,7 @@ fn realistic_api_response() {
             "request_id": "abc123",
             "timestamp": 1234567890
         }
-    )"#,
-    )
+    )"#.parse()
     .unwrap();
 
     // Just verify it parses correctly
@@ -383,8 +379,8 @@ fn realistic_config_file() {
         log_level: Info
     )"#;
 
-    let value = from_str(input).unwrap();
+    let value: Value = input.parse().unwrap();
     let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
-    let reparsed = from_str(&serialized).unwrap();
+    let reparsed: Value = serialized.parse().unwrap();
     assert_eq!(value, reparsed);
 }

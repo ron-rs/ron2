@@ -86,8 +86,7 @@ pub fn write_schema(
 /// Read a schema from a file path.
 pub fn read_schema(path: &Path) -> Result<Schema> {
     let contents = fs::read_to_string(path)?;
-    let value = crate::from_str(&contents)?;
-    let schema = Schema::from_ron_value(value)?;
+    let schema = Schema::from_ron(&contents)?;
     Ok(schema)
 }
 

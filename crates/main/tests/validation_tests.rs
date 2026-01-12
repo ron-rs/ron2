@@ -22,7 +22,7 @@ use ron2::{
 
 /// Helper to parse RON string into Value
 fn parse_ron(s: &str) -> Value {
-    ron2::from_str(s).expect("Failed to parse RON")
+    s.parse::<ron2::Value>().expect("Failed to parse RON")
 }
 
 /// Helper to extract the ValidationError from a SchemaError, if it is one.
