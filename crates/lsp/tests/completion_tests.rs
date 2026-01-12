@@ -152,6 +152,156 @@ fn write_showcase_schemas(dir: &Path) -> ron2::schema::Result<()> {
     Ok(())
 }
 
+mod hover_integration {
+    use ron2_lsp::{Document, SchemaResolver};
+
+    use super::*;
+
+    /// Helper to create a document with content.
+    fn make_doc(content: &str) -> Document {
+        Document::new(
+            Url::parse("file:///test.ron").unwrap(),
+            content.to_string(),
+            1,
+        )
+    }
+
+    /// Helper to create a resolver with showcase schemas.
+    fn make_resolver() -> SchemaResolver {
+        let resolver = SchemaResolver::new();
+        resolver.set_schema_dirs(vec![showcase_schemas_dir()]);
+        resolver
+    }
+
+    #[test]
+    fn test_hover_on_root_field() {
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    title: "Test",
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        // Hover over "title" field
+        let hover = ron2_lsp::hover::provide_hover(&doc, Position::new(3, 6), &resolver);
+        assert!(hover.is_some(), "Should have hover for 'title' field");
+
+        let hover = hover.unwrap();
+        let content = match hover.contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            _ => panic!("Expected markup content"),
+        };
+        assert!(
+            content.contains("title"),
+            "Hover should mention field name: {}",
+            content
+        );
+        assert!(
+            content.contains("String"),
+            "Hover should mention type: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_hover_on_nested_typeref_field() {
+        // This is the bug: hovering over fields in a nested TypeRef doesn't work
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    window: (
+        width: 1920,
+        height: 1080,
+    ),
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        // Hover over "width" field inside window (which is a TypeRef to WindowConfig)
+        let hover = ron2_lsp::hover::provide_hover(&doc, Position::new(4, 10), &resolver);
+        assert!(
+            hover.is_some(),
+            "Should have hover for 'width' field inside TypeRef"
+        );
+
+        let hover = hover.unwrap();
+        let content = match hover.contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            _ => panic!("Expected markup content"),
+        };
+        assert!(
+            content.contains("width"),
+            "Hover should mention field name: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_hover_on_deeply_nested_typeref() {
+        // Test deeply nested TypeRef: GameConfig -> PlayerConfig -> ShipType
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    player: (
+        name: "Player1",
+        ship: Fighter(
+            weapon_slots: 4,
+        ),
+    ),
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        // Hover over "weapon_slots" field inside Fighter variant of ShipType
+        let hover = ron2_lsp::hover::provide_hover(&doc, Position::new(6, 16), &resolver);
+        assert!(
+            hover.is_some(),
+            "Should have hover for 'weapon_slots' in deeply nested TypeRef"
+        );
+
+        let hover = hover.unwrap();
+        let content = match hover.contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            _ => panic!("Expected markup content"),
+        };
+        assert!(
+            content.contains("weapon_slots"),
+            "Hover should mention field name: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_hover_on_enum_variant_in_typeref() {
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    graphics: High,
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        // Hover over "High" variant (GraphicsQuality is a TypeRef)
+        let hover = ron2_lsp::hover::provide_hover(&doc, Position::new(3, 16), &resolver);
+        assert!(
+            hover.is_some(),
+            "Should have hover for enum variant in TypeRef"
+        );
+
+        let hover = hover.unwrap();
+        let content = match hover.contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            _ => panic!("Expected markup content"),
+        };
+        assert!(
+            content.contains("High"),
+            "Hover should mention variant name: {}",
+            content
+        );
+    }
+}
+
 mod completion_integration {
     use ron2_lsp::{Document, SchemaResolver};
 

@@ -21,7 +21,7 @@ pub fn provide_hover(
     let schema = resolver.resolve_schema(doc)?;
 
     // Try to find documentation for this word in the schema
-    let info = find_hover_info(word, &schema)?;
+    let info = find_hover_info(word, &schema, resolver)?;
 
     // Try to get a precise range from AST
     let range = find_word_range_from_ast(doc, word);
@@ -36,18 +36,41 @@ pub fn provide_hover(
 }
 
 /// Find hover information for a word in the schema.
-fn find_hover_info(word: &str, schema: &Schema) -> Option<String> {
+fn find_hover_info(word: &str, schema: &Schema, resolver: &SchemaResolver) -> Option<String> {
     // First check if the word matches the root type
-    if let Some(info) = hover_for_type_kind(word, &schema.kind, schema.doc.as_deref()) {
+    if let Some(info) = hover_for_type_kind(word, &schema.kind, schema.doc.as_deref(), resolver) {
         return Some(info);
     }
 
     // Search within the schema for matching fields or variants
-    search_in_type_kind(word, &schema.kind)
+    search_in_type_kind(word, &schema.kind, resolver)
 }
 
 /// Generate hover info if the word matches something at this type level.
-fn hover_for_type_kind(word: &str, kind: &TypeKind, doc: Option<&str>) -> Option<String> {
+fn hover_for_type_kind(
+    word: &str,
+    kind: &TypeKind,
+    doc: Option<&str>,
+    resolver: &SchemaResolver,
+) -> Option<String> {
+    // Resolve TypeRef if present
+    if let TypeKind::TypeRef(type_path) = kind {
+        if let Some(ref_schema) = resolver.load_schema_by_type(type_path) {
+            return hover_for_type_kind(
+                word,
+                &ref_schema.kind,
+                ref_schema.doc.as_deref(),
+                resolver,
+            );
+        }
+        // TypeRef couldn't be resolved - check if word matches the type name
+        let type_name = type_path.rsplit("::").next().unwrap_or(type_path);
+        if type_name == word {
+            return doc.map(|d| format!("**{}**\n\n{}", type_name, d));
+        }
+        return None;
+    }
+
     // Check if word matches a struct field
     if let Some(fields) = kind.struct_fields() {
         for field in fields {
@@ -68,26 +91,26 @@ fn hover_for_type_kind(word: &str, kind: &TypeKind, doc: Option<&str>) -> Option
         return None;
     }
 
-    // Check if word matches a TypeRef type name
-    if let Some(path) = kind.type_ref_path() {
-        let type_name = path.rsplit("::").next().unwrap_or(path);
-        if type_name == word {
-            return doc.map(|d| format!("**{}**\n\n{}", type_name, d));
-        }
-    }
-
     None
 }
 
 /// Recursively search for hover info in nested types.
-fn search_in_type_kind(word: &str, kind: &TypeKind) -> Option<String> {
+fn search_in_type_kind(word: &str, kind: &TypeKind, resolver: &SchemaResolver) -> Option<String> {
+    // Resolve TypeRef if present
+    if let TypeKind::TypeRef(type_path) = kind {
+        if let Some(ref_schema) = resolver.load_schema_by_type(type_path) {
+            return search_in_type_kind(word, &ref_schema.kind, resolver);
+        }
+        return None;
+    }
+
     // Check struct fields
     if let Some(fields) = kind.struct_fields() {
         for field in fields {
             if field.name == word {
                 return Some(format_field_hover(field));
             }
-            if let Some(info) = search_in_type_kind(word, &field.ty) {
+            if let Some(info) = search_in_type_kind(word, &field.ty, resolver) {
                 return Some(info);
             }
         }
@@ -100,7 +123,7 @@ fn search_in_type_kind(word: &str, kind: &TypeKind) -> Option<String> {
             if variant.name == word {
                 return Some(format_variant_hover(variant));
             }
-            if let Some(info) = search_in_variant(word, variant) {
+            if let Some(info) = search_in_variant(word, variant, resolver) {
                 return Some(info);
             }
         }
@@ -109,16 +132,17 @@ fn search_in_type_kind(word: &str, kind: &TypeKind) -> Option<String> {
 
     // Recurse into container types
     if let Some(inner) = kind.inner_type() {
-        return search_in_type_kind(word, inner);
+        return search_in_type_kind(word, inner, resolver);
     }
 
     if let Some((key, value)) = kind.map_types() {
-        return search_in_type_kind(word, key).or_else(|| search_in_type_kind(word, value));
+        return search_in_type_kind(word, key, resolver)
+            .or_else(|| search_in_type_kind(word, value, resolver));
     }
 
     if let Some(types) = kind.tuple_types() {
         for ty in types {
-            if let Some(info) = search_in_type_kind(word, ty) {
+            if let Some(info) = search_in_type_kind(word, ty, resolver) {
                 return Some(info);
             }
         }
@@ -128,12 +152,12 @@ fn search_in_type_kind(word: &str, kind: &TypeKind) -> Option<String> {
 }
 
 /// Search for hover info within an enum variant.
-fn search_in_variant(word: &str, variant: &Variant) -> Option<String> {
+fn search_in_variant(word: &str, variant: &Variant, resolver: &SchemaResolver) -> Option<String> {
     match &variant.kind {
         VariantKind::Unit => None,
         VariantKind::Tuple(types) => {
             for ty in types {
-                if let Some(info) = search_in_type_kind(word, ty) {
+                if let Some(info) = search_in_type_kind(word, ty, resolver) {
                     return Some(info);
                 }
             }
@@ -144,7 +168,7 @@ fn search_in_variant(word: &str, variant: &Variant) -> Option<String> {
                 if field.name == word {
                     return Some(format_field_hover(field));
                 }
-                if let Some(info) = search_in_type_kind(word, &field.ty) {
+                if let Some(info) = search_in_type_kind(word, &field.ty, resolver) {
                     return Some(info);
                 }
             }
