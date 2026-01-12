@@ -40,6 +40,8 @@ mod parse;
 mod ser;
 mod unescape;
 
+use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
+
 pub use convert::{
     expr_to_value, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
     synthetic_map, synthetic_option, synthetic_seq, synthetic_string, synthetic_tuple,
@@ -50,8 +52,6 @@ pub use fmt::{
 };
 pub use parse::parse_document;
 pub use ser::{serialize_document, serialize_document_to};
-
-use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
 use crate::error::Span;
 

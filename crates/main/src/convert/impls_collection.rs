@@ -6,13 +6,13 @@ use alloc::{
     vec::Vec,
 };
 use core::hash::{BuildHasher, Hash};
-
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, synthetic_map, synthetic_seq};
-use crate::error::{Error, Result, SpannedResult};
-
 use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
+use crate::{
+    ast::{Expr, synthetic_map, synthetic_seq},
+    error::{Error, Result, SpannedResult},
+};
 
 // =============================================================================
 // ToRon implementations

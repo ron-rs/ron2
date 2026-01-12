@@ -5,9 +5,11 @@
 //! - **Skip trivia mode** (default): Whitespace is skipped, suitable for value parsing
 //! - **Emit trivia mode**: All tokens including whitespace are emitted, suitable for AST parsing
 
-use crate::chars::{is_ident_first_char, is_ident_raw_char, is_whitespace_char};
-use crate::error::{Position, Span};
-use crate::token::{Token, TokenKind};
+use crate::{
+    chars::{is_ident_first_char, is_ident_raw_char, is_whitespace_char},
+    error::{Position, Span},
+    token::{Token, TokenKind},
+};
 
 extern crate alloc;
 

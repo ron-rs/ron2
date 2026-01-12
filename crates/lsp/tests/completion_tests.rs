@@ -22,8 +22,9 @@ fn showcase_schemas_dir() -> PathBuf {
 }
 
 mod completion_integration {
-    use super::*;
     use ron2_lsp::{Document, SchemaResolver};
+
+    use super::*;
 
     /// Helper to create a document with content.
     fn make_doc(content: &str) -> Document {

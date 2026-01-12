@@ -177,8 +177,9 @@ pub fn build_schema_map(schemas: &[DiscoveredSchema]) -> HashMap<&str, &Schema> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ron2::schema::Field;
+
+    use super::*;
 
     #[test]
     fn test_generate_primitive_examples() {

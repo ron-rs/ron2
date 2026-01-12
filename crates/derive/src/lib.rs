@@ -101,11 +101,10 @@ mod ser;
 mod type_mapper;
 mod util;
 
+use attr::ContainerAttrs;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
-
-use attr::ContainerAttrs;
 
 /// Derive macro for generating RON schemas at compile time.
 ///

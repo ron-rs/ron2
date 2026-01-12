@@ -24,17 +24,23 @@
 //! }
 //! ```
 
-use crate::schema::StorageError;
-use crate::schema::{Schema, SchemaError, TypeKind};
-use alloc::borrow::Cow;
-use alloc::collections::{BTreeMap, BTreeSet, LinkedList, VecDeque};
-use alloc::rc::Rc;
-use alloc::sync::Arc;
-use core::cell::{Cell, RefCell};
-use core::hash::BuildHasher;
-use core::marker::PhantomData;
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use alloc::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet, LinkedList, VecDeque},
+    rc::Rc,
+    sync::Arc,
+};
+use core::{
+    cell::{Cell, RefCell},
+    hash::BuildHasher,
+    marker::PhantomData,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
+
+use crate::schema::{Schema, SchemaError, StorageError, TypeKind};
 
 /// Core trait for types that can be represented in the RON schema system.
 ///

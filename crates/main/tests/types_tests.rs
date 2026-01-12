@@ -6,8 +6,10 @@
 //! - Field and Variant builders
 //! - Nested types (Vec of Option of Struct, etc.)
 
-use ron2::ast::FormatConfig;
-use ron2::schema::{Field, FromRon, Schema, ToRon, TypeKind, Variant, VariantKind};
+use ron2::{
+    ast::FormatConfig,
+    schema::{Field, FromRon, Schema, ToRon, TypeKind, Variant, VariantKind},
+};
 
 // ============================================================================
 // Schema tests

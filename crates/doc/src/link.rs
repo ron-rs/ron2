@@ -291,9 +291,11 @@ pub fn type_path_short_name(type_path: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ron2::schema::Schema;
     use std::path::PathBuf;
+
+    use ron2::schema::Schema;
+
+    use super::*;
 
     fn make_schema(type_path: &str) -> DiscoveredSchema {
         DiscoveredSchema {

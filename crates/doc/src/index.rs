@@ -2,9 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::OutputFormat;
-use crate::discovery::DiscoveredSchema;
-use crate::link::{type_path_short_name, type_path_to_md_path};
+use crate::{
+    config::OutputFormat,
+    discovery::DiscoveredSchema,
+    link::{type_path_short_name, type_path_to_md_path},
+};
 
 /// Generate an index page listing all types.
 pub fn generate_index(schemas: &[DiscoveredSchema], format: OutputFormat) -> String {
@@ -101,9 +103,11 @@ fn first_line(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ron2::schema::{Schema, TypeKind};
     use std::path::PathBuf;
+
+    use ron2::schema::{Schema, TypeKind};
+
+    use super::*;
 
     fn make_schema(type_path: &str, doc: Option<&str>) -> DiscoveredSchema {
         DiscoveredSchema {

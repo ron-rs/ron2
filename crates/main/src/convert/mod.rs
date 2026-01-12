@@ -28,11 +28,11 @@ mod impls_wrapper;
 mod map_access;
 pub mod number;
 
-pub use map_access::AstMapAccess;
-pub use number::{ParsedInt, parse_int_raw};
-
 use alloc::string::String;
 use std::io::Read;
+
+pub use map_access::AstMapAccess;
+pub use number::{ParsedInt, parse_int_raw};
 
 use crate::{
     Value,
@@ -288,11 +288,10 @@ impl ToRon for Value {
 
 #[cfg(test)]
 mod tests {
+    use alloc::{collections::BTreeMap, vec, vec::Vec};
+
     use super::*;
     use crate::ast::FormatConfig;
-    use alloc::collections::BTreeMap;
-    use alloc::vec;
-    use alloc::vec::Vec;
 
     /// Helper to get minimal (compact) output
     fn minimal(v: &impl ToRon) -> String {

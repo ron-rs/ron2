@@ -2,10 +2,12 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::DocConfig;
-use crate::discovery::DiscoveredSchema;
-use crate::generator::{generate_type_content, generate_type_example, LinkMode};
-use crate::link::LinkResolver;
+use crate::{
+    config::DocConfig,
+    discovery::DiscoveredSchema,
+    generator::{generate_type_content, generate_type_example, LinkMode},
+    link::LinkResolver,
+};
 
 /// Generate a single markdown document containing all type documentation.
 pub fn generate_single_page(schemas: &[DiscoveredSchema], config: &DocConfig) -> String {
@@ -120,9 +122,11 @@ fn write_toc(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ron2::schema::{Schema, TypeKind};
     use std::path::PathBuf;
+
+    use ron2::schema::{Schema, TypeKind};
+
+    use super::*;
 
     fn make_schema(type_path: &str, doc: Option<&str>) -> DiscoveredSchema {
         let schema = if let Some(d) = doc {

@@ -1,13 +1,14 @@
 //! Roundtrip Options module.
 
+use alloc::vec::Vec;
+use std::io;
+
 use crate::{
     ast::{parse_document, to_value},
     error::{Error, SpannedError, SpannedResult},
     extensions::Extensions,
     value::Value,
 };
-
-use {alloc::vec::Vec, std::io};
 
 /// Roundtrip options for serialization and deserialization.
 #[derive(Clone, Debug)]

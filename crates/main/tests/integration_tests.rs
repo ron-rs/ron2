@@ -5,9 +5,7 @@
 //! - Schema resolution precedence
 //! - Complete workflows from schema definition to validation
 
-use std::env;
-use std::ffi::OsStr;
-use std::fs;
+use std::{env, ffi::OsStr, fs};
 
 use ron2::schema::{
     Field, FromRon, SCHEMA_DIR_ENV, Schema, TypeKind, Variant, find_schema_in, read_schema,

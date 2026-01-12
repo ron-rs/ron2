@@ -1,14 +1,12 @@
 //! Generate Markdown documentation from RON schema files.
 
-use std::fs;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Args;
-use ron2_doc::link::type_path_to_md_path;
 use ron2_doc::{
     discover_schemas, generate_index, generate_markdown, generate_sidebar, generate_single_page,
-    DocConfig, OutputFormat, OutputMode,
+    link::type_path_to_md_path, DocConfig, OutputFormat, OutputMode,
 };
 
 /// Generate documentation from RON schema files

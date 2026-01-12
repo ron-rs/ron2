@@ -3,10 +3,11 @@
 use alloc::{borrow::Cow, boxed::Box, rc::Rc, sync::Arc};
 use core::cell::{Cell, RefCell};
 
-use crate::ast::{Expr, synthetic_option, synthetic_tuple};
-use crate::error::{Error, Result, SpannedResult};
-
 use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
+use crate::{
+    ast::{Expr, synthetic_option, synthetic_tuple},
+    error::{Error, Result, SpannedResult},
+};
 
 // =============================================================================
 // Option

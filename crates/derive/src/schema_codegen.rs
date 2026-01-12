@@ -4,8 +4,10 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{DeriveInput, Fields};
 
-use crate::attr::{extract_doc_comment, ContainerAttrs, FieldAttrs, VariantAttrs};
-use crate::type_mapper::type_to_type_kind;
+use crate::{
+    attr::{extract_doc_comment, ContainerAttrs, FieldAttrs, VariantAttrs},
+    type_mapper::type_to_type_kind,
+};
 
 /// Generate the RonSchemaType implementation for a type.
 pub fn impl_ron_schema(

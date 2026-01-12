@@ -6,10 +6,10 @@
 use ron2::schema::{Field, Schema, TypeKind, Variant, VariantKind};
 use tower_lsp::lsp_types::*;
 
-use crate::document::Document;
-use crate::lsp_utils::find_word_range_from_ast;
-use crate::schema_resolver::SchemaResolver;
-use crate::schema_utils::VariantParts;
+use crate::{
+    document::Document, lsp_utils::find_word_range_from_ast, schema_resolver::SchemaResolver,
+    schema_utils::VariantParts,
+};
 
 /// Provide hover information for a position in the document.
 pub fn provide_hover(
@@ -201,8 +201,9 @@ fn format_variant_hover(variant: &Variant) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ron2::schema::{Field, TypeKind};
+
+    use super::*;
 
     #[test]
     fn test_format_field_hover() {

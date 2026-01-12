@@ -7,8 +7,7 @@
 
 #![allow(dead_code)]
 
-use ron2::ast::FormatConfig;
-use ron2::{FromRon, ToRon};
+use ron2::{ast::FormatConfig, FromRon, ToRon};
 use ron2_derive::Ron;
 
 // =============================================================================

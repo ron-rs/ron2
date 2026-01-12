@@ -2,14 +2,18 @@
 
 use alloc::string::String;
 
-use crate::ast::{
-    Expr, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
-    synthetic_string, synthetic_unit,
+use super::{
+    FromRon, ToRon,
+    number::{parse_float_from_raw, parse_integer_from_raw},
+    spanned_err, spanned_type_mismatch,
 };
-use crate::error::{Error, Result, SpannedResult};
-
-use super::number::{parse_float_from_raw, parse_integer_from_raw};
-use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
+use crate::{
+    ast::{
+        Expr, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
+        synthetic_string, synthetic_unit,
+    },
+    error::{Error, Result, SpannedResult},
+};
 
 // =============================================================================
 // ToRon implementations

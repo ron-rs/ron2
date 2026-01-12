@@ -4,9 +4,8 @@
 
 use alloc::{string::String, vec::Vec};
 
-use crate::error::{Error, Result};
-
 use super::{BytesKind, StringKind};
+use crate::error::{Error, Result};
 
 /// Decode a string literal.
 /// Returns `(value, kind)` on success, or `(Error, byte_offset_in_raw)` on failure.

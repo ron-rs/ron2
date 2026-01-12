@@ -17,15 +17,17 @@
 use alloc::{borrow::Cow, boxed::Box, format, string::String, vec::Vec};
 use core::fmt::Write;
 
-use crate::ast::{
-    AnonStructExpr, BoolExpr, BytesExpr, BytesKind, CharExpr, Document, Expr, FieldsBody, Ident,
-    MapEntry, MapExpr, NumberExpr, NumberKind, OptionExpr, OptionValue, SeqExpr, SeqItem,
-    StringExpr, StringKind, StructBody, StructExpr, StructField, Trivia, TupleBody, TupleElement,
-    TupleExpr, UnitExpr,
+use crate::{
+    ast::{
+        AnonStructExpr, BoolExpr, BytesExpr, BytesKind, CharExpr, Document, Expr, FieldsBody,
+        Ident, MapEntry, MapExpr, NumberExpr, NumberKind, OptionExpr, OptionValue, SeqExpr,
+        SeqItem, StringExpr, StringKind, StructBody, StructExpr, StructField, Trivia, TupleBody,
+        TupleElement, TupleExpr, UnitExpr,
+    },
+    convert::parse_int_raw,
+    error::{Error, Result, Span, SpannedError, SpannedResult},
+    value::{F64, NamedContent, Number, StructFields, Value},
 };
-use crate::convert::parse_int_raw;
-use crate::error::{Error, Result, Span, SpannedError, SpannedResult};
-use crate::value::{F64, NamedContent, Number, StructFields, Value};
 
 /// Extension trait to attach span information to `Result` errors.
 trait SpanExt<T> {

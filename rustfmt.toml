@@ -1,4 +1,6 @@
 hard_tabs = false
 use_field_init_shorthand = true
 use_try_shorthand = true
-edition = "2021"
+edition = "2024"
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"

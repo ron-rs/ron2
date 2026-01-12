@@ -3,14 +3,18 @@
 //! Provides auto-completion for struct fields and enum variants
 //! based on the schema.
 
-use ron2::schema::{Field, Schema, TypeKind, Variant};
-use ron2::Value;
+use ron2::{
+    schema::{Field, Schema, TypeKind, Variant},
+    Value,
+};
 use tower_lsp::lsp_types::*;
 
-use crate::document::{CompletionContext, Document};
-use crate::lsp_utils::find_field_at_cursor;
-use crate::schema_resolver::SchemaResolver;
-use crate::schema_utils::VariantParts;
+use crate::{
+    document::{CompletionContext, Document},
+    lsp_utils::find_field_at_cursor,
+    schema_resolver::SchemaResolver,
+    schema_utils::VariantParts,
+};
 
 /// Provide completions for a document at a given position.
 pub fn provide_completions(

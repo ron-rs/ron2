@@ -64,18 +64,18 @@ pub mod token;
 mod util;
 pub mod value;
 
-pub use crate::convert::{AstMapAccess, FromRonFields};
-pub use crate::convert::{FromRon, ParsedInt, ToRon, parse_int_raw};
-pub use crate::error::{
-    Error, PathSegment, Position, Span, SpannedError, SpannedResult, ValidationError,
-    ValidationErrorKind,
-};
-pub use crate::extensions::Extensions;
-pub use crate::options::Options;
-pub use crate::value::{Map, NamedContent, Number, StructFields, Value};
-
 // Re-export formatting config types from ast::fmt
 pub use crate::ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing};
+pub use crate::{
+    convert::{AstMapAccess, FromRon, FromRonFields, ParsedInt, ToRon, parse_int_raw},
+    error::{
+        Error, PathSegment, Position, Span, SpannedError, SpannedResult, ValidationError,
+        ValidationErrorKind,
+    },
+    extensions::Extensions,
+    options::Options,
+    value::{Map, NamedContent, Number, StructFields, Value},
+};
 
 /// Deserialize a Value from a string.
 ///

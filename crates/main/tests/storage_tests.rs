@@ -7,10 +7,7 @@
 //! - Environment variable override
 //! - XDG fallback
 
-use std::env;
-use std::ffi::OsStr;
-use std::fs;
-use std::path::PathBuf;
+use std::{env, ffi::OsStr, fs, path::PathBuf};
 
 use ron2::schema::{
     Field, SCHEMA_DIR_ENV, Schema, TypeKind, find_schema_in, read_schema, resolve_schema_dir,

@@ -183,8 +183,9 @@ fn span_byte_offsets_enable_slicing() {
 
 #[test]
 fn span_deeply_nested_error() {
-    use ron2::FromRon;
     use std::collections::HashMap;
+
+    use ron2::FromRon;
 
     // Bare identifiers are valid RON at the parsing level.
     // The error occurs during deserialization when we try to convert to the target type.

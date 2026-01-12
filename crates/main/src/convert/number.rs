@@ -1,7 +1,9 @@
 //! Number parsing helpers for `FromRon` implementations.
 
-use crate::ast::NumberKind;
-use crate::error::{Error, Result};
+use crate::{
+    ast::NumberKind,
+    error::{Error, Result},
+};
 
 /// Result of parsing an integer from its raw string representation.
 #[derive(Debug, Clone, Copy)]

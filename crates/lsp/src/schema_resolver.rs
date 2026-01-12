@@ -3,9 +3,11 @@
 //! This module handles loading and caching schemas based on
 //! document attributes.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::RwLock,
+};
 
 use ron2::schema::{
     find_schema, find_schema_in, read_schema, Schema, SchemaResolver as SchemaResolverTrait,

@@ -8,9 +8,11 @@ use ron2::schema::{
 };
 use tower_lsp::lsp_types::*;
 
-use crate::document::Document;
-use crate::lsp_utils::{find_field_position, find_text_position};
-use crate::schema_resolver::SchemaResolver;
+use crate::{
+    document::Document,
+    lsp_utils::{find_field_position, find_text_position},
+    schema_resolver::SchemaResolver,
+};
 
 /// Validate a document and return diagnostics.
 pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagnostic> {
@@ -273,8 +275,9 @@ fn find_field_insert_position(doc: &Document) -> Option<Range> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tower_lsp::lsp_types::Url;
+
+    use super::*;
 
     #[test]
     fn test_parse_error_diagnostic() {

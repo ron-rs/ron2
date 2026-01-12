@@ -12,12 +12,14 @@
 use alloc::string::String;
 use core::fmt::Write;
 
-use crate::ast::{
-    AnonStructExpr, Attribute, Comment, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr,
-    OptionExpr, SeqExpr, SeqItem, StructBody, StructExpr, StructField, Trivia, TupleBody,
-    TupleElement, TupleExpr,
+use crate::{
+    ast::{
+        AnonStructExpr, Attribute, Comment, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr,
+        OptionExpr, SeqExpr, SeqItem, StructBody, StructExpr, StructField, Trivia, TupleBody,
+        TupleElement, TupleExpr,
+    },
+    error::Result,
 };
-use crate::error::Result;
 
 /// Serialize an AST document back to RON text.
 ///

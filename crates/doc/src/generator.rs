@@ -4,10 +4,12 @@ use std::collections::HashMap;
 
 use ron2::schema::{Field, Schema, TypeKind, Variant, VariantKind};
 
-use crate::config::{DocConfig, OutputFormat, OutputMode};
-use crate::discovery::DiscoveredSchema;
-use crate::example::{build_schema_map, generate_example};
-use crate::link::{type_path_short_name, LinkResolver};
+use crate::{
+    config::{DocConfig, OutputFormat, OutputMode},
+    discovery::DiscoveredSchema,
+    example::{build_schema_map, generate_example},
+    link::{type_path_short_name, LinkResolver},
+};
 
 /// Link mode for type formatting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

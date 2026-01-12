@@ -1,9 +1,11 @@
 //! Format RON files with consistent style while preserving comments.
 
-use std::fs;
-use std::io::{self, Read, Write};
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::{
+    fs,
+    io::{self, Read, Write},
+    path::PathBuf,
+    process::ExitCode,
+};
 
 use anyhow::{Context, Result};
 use clap::Args;

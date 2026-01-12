@@ -171,9 +171,11 @@ impl Hash for Map {
 
 #[cfg(feature = "serde")]
 mod serde_impl {
-    use super::{Map, Value};
     use alloc::vec::Vec;
+
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::{Map, Value};
 
     impl Serialize for Map {
         fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

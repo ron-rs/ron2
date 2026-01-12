@@ -2,10 +2,11 @@
 
 use alloc::borrow::Cow;
 
-use crate::ast::{AnonStructExpr, Expr, FieldsBody, StructField};
-use crate::error::{Error, Span, SpannedError, SpannedResult};
-
 use super::{FromRon, FromRonFields, expr_type_name};
+use crate::{
+    ast::{AnonStructExpr, Expr, FieldsBody, StructField},
+    error::{Error, Span, SpannedError, SpannedResult},
+};
 
 /// Maximum number of fields supported in a struct.
 ///

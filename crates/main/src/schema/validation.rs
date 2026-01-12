@@ -1,10 +1,13 @@
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
+use super::{
+    Field, Schema, TypeKind, Variant, VariantKind,
+    error::{Result, SchemaError, ValidationError, ValidationResult},
+};
 use crate::Value;
-
-use super::error::{Result, SchemaError, ValidationError, ValidationResult};
-use super::{Field, Schema, TypeKind, Variant, VariantKind};
 
 // =============================================================================
 // Schema Resolver Trait

@@ -82,8 +82,6 @@ pub mod types;
 pub mod validation;
 
 // Re-export conversion traits from crate
-pub use crate::{AstMapAccess, FormatConfig, FromRon, ToRon};
-
 pub use error::{
     PathSegment, Position, Result, SchemaError, Span, StorageError, ValidationError,
     ValidationErrorKind, ValidationResult,
@@ -98,3 +96,5 @@ pub use validation::{
     AcceptAllResolver, SchemaResolver, StorageResolver, validate, validate_type,
     validate_type_with_resolver, validate_with_resolver,
 };
+
+pub use crate::{AstMapAccess, FormatConfig, FromRon, ToRon};

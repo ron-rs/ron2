@@ -7,11 +7,13 @@
 //! - Schema generation for editor support
 //! - Extension attributes: `transparent`, `explicit`, implicit Some
 
-use ron2::ast::FormatConfig;
-use ron2::schema::{FromRon, ToRon};
+use std::{collections::HashMap, fs};
+
+use ron2::{
+    ast::FormatConfig,
+    schema::{FromRon, ToRon},
+};
 use ron2_derive::Ron;
-use std::collections::HashMap;
-use std::fs;
 
 /// Main game configuration.
 #[derive(Debug, Clone, Ron)]

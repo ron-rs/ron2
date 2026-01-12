@@ -6,17 +6,18 @@
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 use core::iter::Peekable;
 
-use crate::ast::{
-    AnonStructExpr, Attribute, AttributeContent, BoolExpr, ByteExpr, BytesExpr, CharExpr, Comment,
-    CommentKind, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr, NumberExpr, NumberKind,
-    OptionExpr, OptionValue, SeqExpr, SeqItem, StringExpr, StructBody, StructExpr, StructField,
-    Trivia, TupleBody, TupleElement, TupleExpr, UnitExpr,
-};
-use crate::error::{Error, Position, Span, SpannedError, SpannedResult};
-use crate::lexer::Lexer;
-use crate::token::{Token, TokenKind};
-
 use super::unescape;
+use crate::{
+    ast::{
+        AnonStructExpr, Attribute, AttributeContent, BoolExpr, ByteExpr, BytesExpr, CharExpr,
+        Comment, CommentKind, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr, NumberExpr,
+        NumberKind, OptionExpr, OptionValue, SeqExpr, SeqItem, StringExpr, StructBody, StructExpr,
+        StructField, Trivia, TupleBody, TupleElement, TupleExpr, UnitExpr,
+    },
+    error::{Error, Position, Span, SpannedError, SpannedResult},
+    lexer::Lexer,
+    token::{Token, TokenKind},
+};
 
 /// Parse RON source into an AST document.
 ///

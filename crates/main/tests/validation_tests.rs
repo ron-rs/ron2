@@ -11,11 +11,13 @@
 
 use std::collections::HashMap;
 
-use ron2::Value;
-use ron2::schema::{
-    Field, PathSegment, Schema, SchemaError, SchemaResolver, TypeKind, ValidationError,
-    ValidationErrorKind, Variant, validate, validate_type, validate_type_with_resolver,
-    validate_with_resolver,
+use ron2::{
+    Value,
+    schema::{
+        Field, PathSegment, Schema, SchemaError, SchemaResolver, TypeKind, ValidationError,
+        ValidationErrorKind, Variant, validate, validate_type, validate_type_with_resolver,
+        validate_with_resolver,
+    },
 };
 
 /// Helper to parse RON string into Value

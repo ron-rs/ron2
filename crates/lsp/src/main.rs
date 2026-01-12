@@ -3,17 +3,12 @@
 //! A Language Server Protocol implementation for RON (Rusty Object Notation) files.
 //! Provides auto-completion, diagnostics, and hover documentation based on schemas.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use serde::Deserialize;
-use tokio::sync::RwLock;
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use ron2_lsp::{diagnostics, hover, provide_completions, Document, SchemaResolver};
+use serde::Deserialize;
+use tokio::sync::RwLock;
+use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer, LspService, Server};
 
 /// LSP configuration settings.
 ///

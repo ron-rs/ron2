@@ -1,5 +1,6 @@
-use crate::error::{Position, Span};
 use alloc::string::String;
+
+use crate::error::{Position, Span};
 
 impl Position {
     /// Given a Position and a string, return the 0-indexed grapheme index into the
@@ -53,6 +54,7 @@ impl Span {
     #[must_use]
     pub fn substring_exclusive(&self, s: &str) -> Option<String> {
         use alloc::vec::Vec;
+
         use unicode_segmentation::UnicodeSegmentation;
 
         if let (Some(start), Some(end)) = (self.start.grapheme_index(s), self.end.grapheme_index(s))
@@ -68,6 +70,7 @@ impl Span {
     #[must_use]
     pub fn substring_inclusive(&self, s: &str) -> Option<String> {
         use alloc::vec::Vec;
+
         use unicode_segmentation::UnicodeSegmentation;
 
         if let (Some(start), Some(end)) = (self.start.grapheme_index(s), self.end.grapheme_index(s))
