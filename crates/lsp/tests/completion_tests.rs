@@ -3,8 +3,12 @@
 //! These tests verify that the LSP provides correct completions when working
 //! with schemas that use fully qualified TypeRef paths.
 
-use std::path::PathBuf;
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
+use ron2::schema::{write_schema, Field, Schema, TypeKind, Variant};
 use tower_lsp::lsp_types::{Position, Url};
 
 // Import from ron-lsp (need to make these pub in lib.rs or use a test helper)
@@ -12,13 +16,140 @@ use tower_lsp::lsp_types::{Position, Url};
 
 /// Get the path to the showcase schemas directory.
 fn showcase_schemas_dir() -> PathBuf {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest_dir)
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("schemas")
+    static SCHEMA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+    SCHEMA_DIR
+        .get_or_init(|| {
+            let mut dir = std::env::temp_dir();
+            dir.push(format!("ron2-lsp-schemas-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).expect("create schema temp dir");
+            write_showcase_schemas(&dir).expect("write showcase schemas");
+            dir
+        })
+        .clone()
+}
+
+fn write_showcase_schemas(dir: &Path) -> ron2::schema::Result<()> {
+    let game_config = Schema::with_doc(
+        "Main game configuration.",
+        TypeKind::Struct {
+            fields: vec![
+                Field::new("title", TypeKind::String)
+                    .with_doc("Game title displayed in the window."),
+                Field::new("version", TypeKind::String).with_doc("Version string."),
+                Field::new(
+                    "window",
+                    TypeKind::TypeRef("ron_showcase::WindowConfig".to_string()),
+                )
+                .with_doc("Window settings."),
+                Field::new(
+                    "graphics",
+                    TypeKind::TypeRef("ron_showcase::GraphicsQuality".to_string()),
+                )
+                .with_doc("Graphics quality preset."),
+                Field::new(
+                    "audio",
+                    TypeKind::TypeRef("ron_showcase::AudioConfig".to_string()),
+                )
+                .with_doc("Audio settings."),
+                Field::new(
+                    "keybindings",
+                    TypeKind::Map {
+                        key: Box::new(TypeKind::String),
+                        value: Box::new(TypeKind::String),
+                    },
+                )
+                .with_doc("Key bindings (action -> key)."),
+                Field::new(
+                    "player",
+                    TypeKind::TypeRef("ron_showcase::PlayerConfig".to_string()),
+                )
+                .with_doc("Player configuration."),
+            ],
+        },
+    );
+
+    let window_config = Schema::with_doc(
+        "Window configuration.",
+        TypeKind::Struct {
+            fields: vec![
+                Field::new("width", TypeKind::U32),
+                Field::new("height", TypeKind::U32),
+                Field::optional("fullscreen", TypeKind::Bool),
+            ],
+        },
+    );
+
+    let graphics_quality = Schema::with_doc(
+        "Graphics quality presets.",
+        TypeKind::Enum {
+            variants: vec![
+                Variant::unit("Low"),
+                Variant::unit("Medium"),
+                Variant::unit("High"),
+                Variant::unit("Ultra"),
+            ],
+        },
+    );
+
+    let audio_config = Schema::with_doc(
+        "Audio configuration with volume controls.",
+        TypeKind::Struct {
+            fields: vec![
+                Field::new("master_volume", TypeKind::F32),
+                Field::optional("music_volume", TypeKind::F32),
+                Field::optional("effects_volume", TypeKind::F32),
+            ],
+        },
+    );
+
+    let player_config = Schema::with_doc(
+        "Player configuration.",
+        TypeKind::Struct {
+            fields: vec![
+                Field::new("name", TypeKind::String),
+                Field::new(
+                    "ship",
+                    TypeKind::TypeRef("ron_showcase::ShipType".to_string()),
+                ),
+            ],
+        },
+    );
+
+    let ship_type = Schema::with_doc(
+        "Available ship types with their stats.",
+        TypeKind::Enum {
+            variants: vec![
+                Variant::unit("Scout").with_doc("Fast but fragile scout ship."),
+                Variant::struct_variant(
+                    "Fighter",
+                    vec![
+                        Field::new("weapon_slots", TypeKind::U8),
+                        Field::new("shield_strength", TypeKind::F32),
+                    ],
+                )
+                .with_doc("Balanced fighter with weapon slots."),
+                Variant::struct_variant(
+                    "Cruiser",
+                    vec![Field::new("cargo_capacity", TypeKind::U32)],
+                )
+                .with_doc("Heavy cruiser with cargo space."),
+            ],
+        },
+    );
+
+    write_schema("ron_showcase::GameConfig", &game_config, Some(dir))?;
+    write_schema("ron_showcase::WindowConfig", &window_config, Some(dir))?;
+    write_schema(
+        "ron_showcase::GraphicsQuality",
+        &graphics_quality,
+        Some(dir),
+    )?;
+    write_schema("ron_showcase::AudioConfig", &audio_config, Some(dir))?;
+    write_schema("ron_showcase::PlayerConfig", &player_config, Some(dir))?;
+    write_schema("ron_showcase::ShipType", &ship_type, Some(dir))?;
+
+    Ok(())
 }
 
 mod completion_integration {

@@ -11,7 +11,7 @@ use std::{collections::HashMap, fs};
 
 use ron2::{
     ast::FormatConfig,
-    schema::{FromRon, ToRon},
+    schema::{FromRon, RonSchemaType, ToRon},
 };
 use ron2_derive::Ron;
 
@@ -121,6 +121,8 @@ pub struct NotificationSettings {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RON2 Showcase ===\n");
+
+    GameConfig::write_schema(None).unwrap();
 
     println!("1. Loading config from file...");
 
