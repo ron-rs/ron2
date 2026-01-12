@@ -1071,6 +1071,7 @@ dependencies = [
  "clap",
  "ron2",
  "serde_json",
+ "tempfile",
  "walkdir",
 ]
 

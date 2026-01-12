@@ -80,6 +80,7 @@ fn file_path_to_type_path(path: &Path, base: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ron2::schema::{Field, TypeKind, write_schema};
 
     #[test]
     fn test_file_path_to_type_path() {
@@ -96,5 +97,24 @@ mod tests {
         let base = Path::new("/schemas");
         let path = Path::new("/schemas/Config.schema.ron");
         assert_eq!(file_path_to_type_path(path, base), "Config");
+    }
+
+    #[test]
+    fn test_discover_schemas_preserves_generic_typeref() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let schema = Schema::new(TypeKind::Struct {
+            fields: vec![Field::new(
+                "value",
+                TypeKind::TypeRef("my_crate::Wrapper<T>".to_string()),
+            )],
+        });
+
+        write_schema("my_crate::Generic", &schema, Some(temp_dir.path()))
+            .expect("write schema");
+
+        let discovered = discover_schemas(temp_dir.path()).expect("discover schemas");
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].type_path, "my_crate::Generic");
+        assert_eq!(discovered[0].schema, schema);
     }
 }

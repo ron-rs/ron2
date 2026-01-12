@@ -3,11 +3,13 @@
 //! This module provides a trait-based abstraction that allows sharing type analysis logic
 //! between code generation (TokenStream2) and compile-time building (TypeKind values).
 
+use std::collections::HashSet;
+
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{GenericArgument, PathArguments, Type};
 
-use crate::util::path_to_string;
+use crate::util::type_to_string_canonical;
 
 /// Primitive types that map directly to TypeKind variants.
 #[derive(Debug, Clone, Copy)]
@@ -133,13 +135,24 @@ impl TypeKindMapper for TokenMapper {
 }
 
 /// Map a Rust type to its TypeKind representation using the given mapper.
-pub fn map_type<M: TypeKindMapper>(ty: &Type, mapper: &M) -> M::Output {
+fn map_type_with_generics<M: TypeKindMapper>(
+    ty: &Type,
+    mapper: &M,
+    generics: &HashSet<String>,
+) -> M::Output {
     match ty {
         Type::Path(type_path) => {
             let path = &type_path.path;
 
             if let Some(segment) = path.segments.last() {
                 let ident_str = segment.ident.to_string();
+
+                if path.segments.len() == 1
+                    && matches!(segment.arguments, PathArguments::None)
+                    && generics.contains(&ident_str)
+                {
+                    return mapper.type_ref(ident_str);
+                }
 
                 // Check for primitives
                 if let Some(prim) = PrimitiveKind::from_ident(&ident_str) {
@@ -162,30 +175,30 @@ pub fn map_type<M: TypeKindMapper>(ty: &Type, mapper: &M) -> M::Output {
 
                     match ident_str.as_str() {
                         "Option" if generic_args.len() == 1 => {
-                            let inner = map_type(generic_args[0], mapper);
+                            let inner = map_type_with_generics(generic_args[0], mapper, generics);
                             return mapper.option(inner);
                         }
                         "Vec" | "VecDeque" | "HashSet" | "BTreeSet" | "LinkedList"
                             if generic_args.len() == 1 =>
                         {
-                            let inner = map_type(generic_args[0], mapper);
+                            let inner = map_type_with_generics(generic_args[0], mapper, generics);
                             return mapper.list(inner);
                         }
                         "HashMap" | "BTreeMap" if generic_args.len() == 2 => {
-                            let key = map_type(generic_args[0], mapper);
-                            let value = map_type(generic_args[1], mapper);
+                            let key = map_type_with_generics(generic_args[0], mapper, generics);
+                            let value = map_type_with_generics(generic_args[1], mapper, generics);
                             return mapper.map(key, value);
                         }
                         "Box" if generic_args.len() == 1 => {
                             // Box<T> is treated as just T for schema purposes
-                            return map_type(generic_args[0], mapper);
+                            return map_type_with_generics(generic_args[0], mapper, generics);
                         }
                         _ => {}
                     }
                 }
 
                 // For any other type, generate a TypeRef with the full path
-                let type_path_str = path_to_string(path);
+                let type_path_str = type_to_string_canonical(ty, generics);
                 return mapper.type_ref(type_path_str);
             }
 
@@ -197,32 +210,35 @@ pub fn map_type<M: TypeKindMapper>(ty: &Type, mapper: &M) -> M::Output {
                 return mapper.unit();
             }
 
-            let elements: Vec<_> = tuple.elems.iter().map(|t| map_type(t, mapper)).collect();
+            let elements: Vec<_> = tuple
+                .elems
+                .iter()
+                .map(|t| map_type_with_generics(t, mapper, generics))
+                .collect();
             mapper.tuple(elements)
         }
         Type::Reference(reference) => {
             // For references, use the underlying type
-            map_type(&reference.elem, mapper)
+            map_type_with_generics(&reference.elem, mapper, generics)
         }
         Type::Array(array) => {
             // Treat arrays as List for schema purposes
-            let inner = map_type(&array.elem, mapper);
+            let inner = map_type_with_generics(&array.elem, mapper, generics);
             mapper.list(inner)
         }
         Type::Slice(slice) => {
             // Treat slices as List for schema purposes
-            let inner = map_type(&slice.elem, mapper);
+            let inner = map_type_with_generics(&slice.elem, mapper, generics);
             mapper.list(inner)
         }
         _ => {
             // For other types, generate a TypeRef with the type as-is
-            let type_str = quote!(#ty).to_string();
+            let type_str = type_to_string_canonical(ty, generics);
             mapper.type_ref(type_str)
         }
     }
 }
 
-/// Convert a Rust type to TypeKind tokens (for code generation).
-pub fn type_to_type_kind(ty: &Type) -> TokenStream2 {
-    map_type(ty, &TokenMapper)
+pub fn type_to_type_kind_with_generics(ty: &Type, generics: &HashSet<String>) -> TokenStream2 {
+    map_type_with_generics(ty, &TokenMapper, generics)
 }

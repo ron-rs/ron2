@@ -8,7 +8,7 @@ use syn::{DeriveInput, Fields, GenericArgument, GenericParam, PathArguments, Typ
 
 use crate::{
     attr::{extract_doc_comment, ContainerAttrs, FieldAttrs, VariantAttrs},
-    type_mapper::{type_to_type_kind, PrimitiveKind},
+    type_mapper::{type_to_type_kind_with_generics, PrimitiveKind},
 };
 
 /// Generate the RonSchemaType implementation for a type.
@@ -23,11 +23,12 @@ pub fn impl_ron_schema(
     let doc = extract_doc_comment(&input.attrs);
 
     // Generate the TypeKind based on the data type
+    let generics = collect_generic_idents(&input.generics);
     let type_kind_tokens = match &input.data {
         syn::Data::Struct(data_struct) => {
-            generate_struct_kind(&data_struct.fields, container_attrs)?
+            generate_struct_kind(&data_struct.fields, container_attrs, &generics)?
         }
-        syn::Data::Enum(data_enum) => generate_enum_kind(data_enum, container_attrs)?,
+        syn::Data::Enum(data_enum) => generate_enum_kind(data_enum, container_attrs, &generics)?,
         syn::Data::Union(_) => {
             return Err(syn::Error::new_spanned(
                 input,
@@ -87,10 +88,11 @@ pub fn impl_ron_schema(
 pub fn generate_struct_kind(
     fields: &Fields,
     container_attrs: &ContainerAttrs,
+    generics: &HashSet<String>,
 ) -> syn::Result<TokenStream2> {
     // Handle transparent structs - return the inner type's TypeKind
     if container_attrs.transparent {
-        return generate_transparent_struct_kind(fields);
+        return generate_transparent_struct_kind(fields, generics);
     }
 
     match fields {
@@ -105,7 +107,7 @@ pub fn generate_struct_kind(
                     continue;
                 }
 
-                field_tokens.push(generate_field(f, &attrs, container_attrs)?);
+                field_tokens.push(generate_field(f, &attrs, container_attrs, generics)?);
             }
 
             Ok(quote! {
@@ -119,7 +121,7 @@ pub fn generate_struct_kind(
             let type_tokens: Vec<TokenStream2> = unnamed
                 .unnamed
                 .iter()
-                .map(|f| type_to_type_kind(&f.ty))
+                .map(|f| type_to_type_kind_with_generics(&f.ty, generics))
                 .collect();
 
             Ok(quote! {
@@ -138,7 +140,10 @@ pub fn generate_struct_kind(
 /// Generate TypeKind tokens for a transparent struct.
 ///
 /// Returns the inner type's TypeKind directly.
-fn generate_transparent_struct_kind(fields: &Fields) -> syn::Result<TokenStream2> {
+fn generate_transparent_struct_kind(
+    fields: &Fields,
+    generics: &HashSet<String>,
+) -> syn::Result<TokenStream2> {
     match fields {
         Fields::Named(named) => {
             // Find the single non-skipped field
@@ -157,7 +162,10 @@ fn generate_transparent_struct_kind(fields: &Fields) -> syn::Result<TokenStream2
                 ));
             }
 
-            Ok(type_to_type_kind(&active_fields[0].ty))
+            Ok(type_to_type_kind_with_generics(
+                &active_fields[0].ty,
+                generics,
+            ))
         }
         Fields::Unnamed(unnamed) => {
             if unnamed.unnamed.len() != 1 {
@@ -167,7 +175,10 @@ fn generate_transparent_struct_kind(fields: &Fields) -> syn::Result<TokenStream2
                 ));
             }
 
-            Ok(type_to_type_kind(&unnamed.unnamed[0].ty))
+            Ok(type_to_type_kind_with_generics(
+                &unnamed.unnamed[0].ty,
+                generics,
+            ))
         }
         Fields::Unit => Err(syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -180,11 +191,12 @@ fn generate_transparent_struct_kind(fields: &Fields) -> syn::Result<TokenStream2
 pub fn generate_enum_kind(
     data_enum: &syn::DataEnum,
     container_attrs: &ContainerAttrs,
+    generics: &HashSet<String>,
 ) -> syn::Result<TokenStream2> {
     let variant_tokens: Vec<TokenStream2> = data_enum
         .variants
         .iter()
-        .map(|v| generate_variant(v, container_attrs))
+        .map(|v| generate_variant(v, container_attrs, generics))
         .collect::<syn::Result<Vec<_>>>()?;
 
     Ok(quote! {
@@ -199,6 +211,7 @@ fn generate_field(
     field: &syn::Field,
     attrs: &FieldAttrs,
     container_attrs: &ContainerAttrs,
+    generics: &HashSet<String>,
 ) -> syn::Result<TokenStream2> {
     let original_name = field
         .ident
@@ -207,7 +220,7 @@ fn generate_field(
         .to_string();
 
     let name = attrs.effective_name(&original_name, container_attrs);
-    let type_kind = type_to_type_kind(&field.ty);
+    let type_kind = type_to_type_kind_with_generics(&field.ty, generics);
     let doc = extract_doc_comment(&field.attrs);
     let optional = attrs.has_default();
     let flattened = attrs.flatten;
@@ -232,6 +245,7 @@ fn generate_field(
 fn generate_variant(
     variant: &syn::Variant,
     container_attrs: &ContainerAttrs,
+    generics: &HashSet<String>,
 ) -> syn::Result<TokenStream2> {
     let variant_attrs = VariantAttrs::from_ast(&variant.attrs)?;
     let original_name = variant.ident.to_string();
@@ -249,7 +263,7 @@ fn generate_variant(
             let type_tokens: Vec<TokenStream2> = unnamed
                 .unnamed
                 .iter()
-                .map(|f| type_to_type_kind(&f.ty))
+                .map(|f| type_to_type_kind_with_generics(&f.ty, generics))
                 .collect();
 
             quote! {
@@ -267,7 +281,7 @@ fn generate_variant(
                     continue;
                 }
 
-                field_tokens.push(generate_field(f, &attrs, container_attrs)?);
+                field_tokens.push(generate_field(f, &attrs, container_attrs, generics)?);
             }
 
             quote! {

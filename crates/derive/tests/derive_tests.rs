@@ -192,6 +192,52 @@ fn test_collection_types() {
     }
 }
 
+/// Generic wrapper to validate TypeRef handling for type parameters.
+#[derive(RonSchema)]
+struct GenericWrapper<T> {
+    value: T,
+}
+
+#[test]
+fn test_generic_param_schema_typeref() {
+    let schema = GenericWrapper::<u32>::schema();
+    let expected = "T".to_string();
+
+    match &schema.kind {
+        TypeKind::Struct { fields } => {
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].name, "value");
+            assert_eq!(fields[0].ty, TypeKind::TypeRef(expected));
+        }
+        _ => panic!("Expected struct type kind"),
+    }
+}
+
+#[derive(RonSchema)]
+struct Wrapper<T> {
+    inner: T,
+}
+
+#[derive(RonSchema)]
+struct GenericHolder<T> {
+    value: Wrapper<std::vec::Vec<T>>,
+}
+
+#[test]
+fn test_generic_typeref_canonicalizes_std_paths() {
+    let schema = GenericHolder::<u32>::schema();
+    let crate_name = env!("CARGO_CRATE_NAME").replace('-', "_");
+    let expected = format!("{crate_name}::Wrapper<Vec<T>>");
+
+    match &schema.kind {
+        TypeKind::Struct { fields } => {
+            let field = fields.iter().find(|f| f.name == "value").unwrap();
+            assert_eq!(field.ty, TypeKind::TypeRef(expected));
+        }
+        _ => panic!("Expected struct type kind"),
+    }
+}
+
 /// Unit struct test.
 #[derive(RonSchema)]
 struct UnitStruct;

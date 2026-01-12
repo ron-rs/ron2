@@ -33,6 +33,13 @@
 //! - [`RonMap`] - Marker trait for map/dictionary-like types
 //! - [`RonOptional`] - Marker trait for optional/nullable types
 //!
+//! ## `TypeRef` Canonicalization
+//!
+//! `RonSchema` derives emit `TypeRef` paths in a canonical form for consistent
+//! schema discovery and linking:
+//! - Generic parameters remain unqualified (e.g., `T`).
+//! - Standard collection types are normalized to short names (e.g., `Vec`, `HashMap`).
+//!
 //! ## Implementing Custom Types
 //!
 //! ```rust
