@@ -268,52 +268,15 @@ impl<'a> AstParser<'a> {
     }
 
     /// Parse a complete document.
-    fn parse_document(&mut self) -> Result<Document<'a>> {
-        // Collect leading trivia
+    /// Parse a complete document (internal unified implementation).
+    fn parse_document_inner(&mut self, errors: &mut Vec<Error>) -> Document<'a> {
         let leading = self.collect_leading_trivia();
-
-        // Parse attributes
-        let attributes = self.parse_attributes()?;
-
-        // Collect trivia between attributes and value
-        let pre_value = self.collect_leading_trivia();
-
-        // Parse the main value if present
-        let value = match self.peek_kind() {
-            TokenKind::Eof => None,
-            _ => Some(self.parse_expr()?),
-        };
-
-        // Collect trailing trivia
-        let trailing = self.collect_leading_trivia();
-
-        // Ensure we're at EOF
-        if self.peek_kind() != TokenKind::Eof {
-            let tok = self.next_token();
-            return Err(Self::error(tok.span, ErrorKind::TrailingCharacters));
-        }
-
-        Ok(Document {
-            source: Cow::Borrowed(self.source),
-            leading,
-            attributes,
-            pre_value,
-            value,
-            trailing,
-        })
-    }
-
-    /// Parse a complete document with error recovery.
-    fn parse_document_lossy(&mut self) -> (Document<'a>, Vec<Error>) {
-        let mut errors = Vec::new();
-
-        let leading = self.collect_leading_trivia();
-        let attributes = self.parse_attributes_lossy(&mut errors);
+        let attributes = self.parse_attributes_inner(errors);
         let pre_value = self.collect_leading_trivia();
 
         let value = match self.peek_kind() {
             TokenKind::Eof => None,
-            _ => Some(self.parse_expr_lossy(&mut errors)),
+            _ => Some(self.parse_expr_inner(errors)),
         };
 
         let trailing = self.collect_leading_trivia();
@@ -324,17 +287,31 @@ impl<'a> AstParser<'a> {
             self.recover_until(&[TokenKind::Eof]);
         }
 
-        (
-            Document {
-                source: Cow::Borrowed(self.source),
-                leading,
-                attributes,
-                pre_value,
-                value,
-                trailing,
-            },
-            errors,
-        )
+        Document {
+            source: Cow::Borrowed(self.source),
+            leading,
+            attributes,
+            pre_value,
+            value,
+            trailing,
+        }
+    }
+
+    fn parse_document(&mut self) -> Result<Document<'a>> {
+        let mut errors = Vec::new();
+        let doc = self.parse_document_inner(&mut errors);
+        if errors.is_empty() {
+            Ok(doc)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse a complete document with error recovery.
+    fn parse_document_lossy(&mut self) -> (Document<'a>, Vec<Error>) {
+        let mut errors = Vec::new();
+        let doc = self.parse_document_inner(&mut errors);
+        (doc, errors)
     }
 
     /// Collect leading trivia without consuming a non-trivia token.
@@ -344,21 +321,8 @@ impl<'a> AstParser<'a> {
         self.drain_trivia()
     }
 
-    /// Parse inner attributes (`#![...]`).
-    fn parse_attributes(&mut self) -> Result<Vec<Attribute<'a>>> {
-        let mut attributes = Vec::new();
-
-        while self.peek_kind() == TokenKind::Hash {
-            let leading = self.drain_trivia();
-            let attr = self.parse_attribute(leading)?;
-            attributes.push(attr);
-        }
-
-        Ok(attributes)
-    }
-
-    /// Parse inner attributes (`#![...]`) with error recovery.
-    fn parse_attributes_lossy(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>> {
+    /// Parse inner attributes (`#![...]`) (internal unified implementation).
+    fn parse_attributes_inner(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>> {
         let mut attributes = Vec::new();
 
         while self.peek_kind() == TokenKind::Hash {
@@ -376,6 +340,21 @@ impl<'a> AstParser<'a> {
         }
 
         attributes
+    }
+
+    fn parse_attributes(&mut self) -> Result<Vec<Attribute<'a>>> {
+        let mut errors = Vec::new();
+        let attrs = self.parse_attributes_inner(&mut errors);
+        if errors.is_empty() {
+            Ok(attrs)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse inner attributes (`#![...]`) with error recovery.
+    fn parse_attributes_lossy(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>> {
+        self.parse_attributes_inner(errors)
     }
 
     /// Parse a single attribute.
@@ -469,34 +448,8 @@ impl<'a> AstParser<'a> {
     }
 
     /// Parse an expression.
-    fn parse_expr(&mut self) -> Result<Expr<'a>> {
-        match self.peek_kind() {
-            TokenKind::LParen => self.parse_tuple_or_unit(),
-            TokenKind::LBracket => self.parse_seq(),
-            TokenKind::LBrace => self.parse_map(),
-            TokenKind::Ident => self.parse_ident_expr(),
-            TokenKind::Integer => Ok(self.parse_integer()),
-            TokenKind::Float => Ok(self.parse_float()),
-            TokenKind::String => self.parse_string(),
-            TokenKind::ByteString => self.parse_bytes(),
-            TokenKind::Char => self.parse_char(),
-            TokenKind::Eof => Err(Self::error(self.eof_span(), ErrorKind::Eof)),
-            TokenKind::Error => {
-                let tok = self.next_token();
-                Err(Self::error_for_error_token(&tok))
-            }
-            _ => {
-                let tok = self.next_token();
-                Err(Self::error(
-                    tok.span,
-                    ErrorKind::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
-                ))
-            }
-        }
-    }
-
-    /// Parse an expression with error recovery.
-    fn parse_expr_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+    /// Parse an expression (internal unified implementation).
+    fn parse_expr_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         match self.peek_kind() {
             TokenKind::LParen => self.parse_tuple_or_unit_lossy(errors),
             TokenKind::LBracket => self.parse_seq_lossy(errors),
@@ -534,6 +487,21 @@ impl<'a> AstParser<'a> {
                 self.error_expr_from(err, errors)
             }
         }
+    }
+
+    fn parse_expr(&mut self) -> Result<Expr<'a>> {
+        let mut errors = Vec::new();
+        let expr = self.parse_expr_inner(&mut errors);
+        if errors.is_empty() {
+            Ok(expr)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse an expression with error recovery.
+    fn parse_expr_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+        self.parse_expr_inner(errors)
     }
 
     /// Create an `ErrorKind::Expected` with optional context.
@@ -661,6 +629,22 @@ impl<'a> AstParser<'a> {
         ));
     }
 
+    /// Handle missing comma in unified parsing.
+    /// Returns true if parsing should continue, false if loop should break.
+    fn handle_missing_comma(
+        &mut self,
+        context: &'static str,
+        closing: TokenKind,
+        errors: &mut Vec<Error>,
+    ) -> bool {
+        if self.at_closing_or_eof(closing) {
+            false
+        } else {
+            self.report_missing_comma(context, errors);
+            true
+        }
+    }
+
     /// Parse tuple/unit prefix, handling the common opening logic.
     ///
     /// Returns (open_paren, leading_trivia, close_paren_if_unit, is_named_fields).
@@ -685,26 +669,17 @@ impl<'a> AstParser<'a> {
 
     /// Parse a tuple `(a, b, c)` or unit `()`.
     fn parse_tuple_or_unit(&mut self) -> Result<Expr<'a>> {
-        let (open_paren, leading, close_if_unit, is_named_fields) =
-            self.parse_tuple_or_unit_prefix();
-
-        if let Some(close_span) = close_if_unit {
-            return Ok(Expr::Unit(UnitExpr {
-                span: Span::between(&open_paren.span, &close_span),
-            }));
-        }
-
-        if is_named_fields {
-            // Parse as anonymous struct with named fields
-            self.parse_fields_body_inner(open_paren, leading)
+        let mut errors = Vec::new();
+        let expr = self.parse_tuple_or_unit_inner(&mut errors);
+        if errors.is_empty() {
+            Ok(expr)
         } else {
-            // Parse as tuple
-            self.parse_tuple_inner(open_paren, leading)
+            Err(errors.remove(0))
         }
     }
 
-    /// Parse a tuple `(a, b, c)` or unit `()` with error recovery.
-    fn parse_tuple_or_unit_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+    /// Parse a tuple `(a, b, c)` or unit `()` (internal unified implementation).
+    fn parse_tuple_or_unit_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let (open_paren, leading, close_if_unit, is_named_fields) =
             self.parse_tuple_or_unit_prefix();
 
@@ -715,10 +690,15 @@ impl<'a> AstParser<'a> {
         }
 
         if is_named_fields {
-            self.parse_fields_body_inner_lossy(open_paren, leading, errors)
+            self.parse_fields_body_inner_impl(open_paren, leading, errors)
         } else {
-            self.parse_tuple_inner_lossy(open_paren, leading, errors)
+            self.parse_tuple_inner_impl(open_paren, leading, errors)
         }
+    }
+
+    /// Parse a tuple `(a, b, c)` or unit `()` with error recovery.
+    fn parse_tuple_or_unit_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+        self.parse_tuple_or_unit_inner(errors)
     }
 
     /// Check if the next tokens look like `ident:` (a named field).
@@ -752,60 +732,8 @@ impl<'a> AstParser<'a> {
     }
 
     /// Parse a tuple expression starting after the opening paren.
-    fn parse_tuple_inner(
-        &mut self,
-        open_paren: Token<'a>,
-        mut leading: Trivia<'a>,
-    ) -> Result<Expr<'a>> {
-        let mut elements = Vec::new();
-
-        loop {
-            if self.peek_kind() == TokenKind::RParen {
-                break;
-            }
-
-            let expr = self.parse_expr()?;
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            elements.push(TupleElement {
-                leading,
-                expr,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma {
-                break;
-            }
-        }
-
-        let trailing = if elements.is_empty() {
-            leading
-        } else {
-            self.collect_leading_trivia()
-        };
-
-        let close_paren = self.consume_closing_strict(
-            TokenKind::RParen,
-            Self::expected("closing `)` or `}`", Some("struct")),
-        )?;
-
-        Ok(Expr::Tuple(TupleExpr {
-            span: Span::between(&open_paren.span, &close_paren),
-            open_paren: open_paren.span,
-            leading: Trivia::empty(),
-            elements,
-            trailing,
-            close_paren,
-        }))
-    }
-
-    /// Parse a tuple expression with error recovery.
-    fn parse_tuple_inner_lossy(
+    /// Parse a tuple expression (internal unified implementation).
+    fn parse_tuple_inner_impl(
         &mut self,
         open_paren: Token<'a>,
         mut leading: Trivia<'a>,
@@ -814,8 +742,15 @@ impl<'a> AstParser<'a> {
         let mut elements = Vec::new();
 
         loop {
-            if self.at_closing_or_eof(TokenKind::RParen) {
+            // Always check for closing paren (handles trailing commas)
+            if self.peek_kind() == TokenKind::RParen {
                 break;
+            }
+            // Only check for EOF if not after a comma
+            if elements.is_empty() || elements.last().map_or(false, |e: &TupleElement| e.comma.is_none()) {
+                if self.peek_kind() == TokenKind::Eof {
+                    break;
+                }
             }
 
             let expr = self.parse_expr_lossy(errors);
@@ -832,11 +767,8 @@ impl<'a> AstParser<'a> {
 
             leading = self.collect_leading_trivia();
 
-            if !has_comma {
-                if self.at_closing_or_eof(TokenKind::RParen) {
-                    break;
-                }
-                self.report_missing_comma("tuple", errors);
+            if !has_comma && !self.handle_missing_comma("tuple", TokenKind::RParen, errors) {
+                break;
             }
         }
 
@@ -862,94 +794,33 @@ impl<'a> AstParser<'a> {
         })
     }
 
-    /// Parse a fields body starting after opening paren.
-    fn parse_fields_body_inner(
+    fn parse_tuple_inner(
         &mut self,
         open_paren: Token<'a>,
-        mut leading: Trivia<'a>,
+        leading: Trivia<'a>,
     ) -> Result<Expr<'a>> {
-        let mut fields = Vec::new();
-
-        loop {
-            if self.peek_kind() == TokenKind::RParen {
-                break;
-            }
-
-            // Expect field name
-            if self.peek_kind() != TokenKind::Ident {
-                let tok = self.next_token();
-                return Err(Self::error(
-                    tok.span,
-                    Self::expected("identifier", None),
-                ));
-            }
-            let name_tok = self.next_token();
-
-            let pre_colon = self.collect_leading_trivia();
-
-            // Expect colon
-            if self.peek_kind() != TokenKind::Colon {
-                return Err(Self::error(
-                    name_tok.span,
-                    Self::expected("`:` after map key", Some("struct field")),
-                ));
-            }
-            let colon_tok = self.next_token();
-
-            let post_colon = self.collect_leading_trivia();
-
-            // Parse value
-            let value = self.parse_expr()?;
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            fields.push(StructField {
-                leading,
-                name: Ident {
-                    span: name_tok.span.clone(),
-                    name: Cow::Borrowed(name_tok.text),
-                },
-                pre_colon,
-                colon: colon_tok.span,
-                post_colon,
-                value,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma {
-                break;
-            }
-        }
-
-        let trailing = if fields.is_empty() {
-            leading
+        let mut errors = Vec::new();
+        let expr = self.parse_tuple_inner_impl(open_paren, leading, &mut errors);
+        if errors.is_empty() {
+            Ok(expr)
         } else {
-            self.collect_leading_trivia()
-        };
-
-        let close_paren = self.consume_closing_strict(
-            TokenKind::RParen,
-            Self::expected("closing `)` or `}`", Some("struct")),
-        )?;
-
-        // Anonymous struct with fields
-        Ok(Expr::AnonStruct(AnonStructExpr {
-            span: Span::between(&open_paren.span, &close_paren),
-            open_paren: open_paren.span,
-            leading: Trivia::empty(),
-            fields,
-            trailing,
-            close_paren,
-        }))
+            Err(errors.remove(0))
+        }
     }
 
-    /// Parse a fields body starting after opening paren with error recovery.
+    /// Parse a tuple expression with error recovery.
+    fn parse_tuple_inner_lossy(
+        &mut self,
+        open_paren: Token<'a>,
+        leading: Trivia<'a>,
+        errors: &mut Vec<Error>,
+    ) -> Expr<'a> {
+        self.parse_tuple_inner_impl(open_paren, leading, errors)
+    }
+
+    /// Parse a fields body starting after opening paren (internal unified implementation).
     #[allow(clippy::too_many_lines)]
-    fn parse_fields_body_inner_lossy(
+    fn parse_fields_body_inner_impl(
         &mut self,
         open_paren: Token<'a>,
         mut leading: Trivia<'a>,
@@ -1078,8 +949,33 @@ impl<'a> AstParser<'a> {
         })
     }
 
+    fn parse_fields_body_inner(
+        &mut self,
+        open_paren: Token<'a>,
+        leading: Trivia<'a>,
+    ) -> Result<Expr<'a>> {
+        let mut errors = Vec::new();
+        let expr = self.parse_fields_body_inner_impl(open_paren, leading, &mut errors);
+        if errors.is_empty() {
+            Ok(expr)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse a fields body starting after opening paren with error recovery.
+    fn parse_fields_body_inner_lossy(
+        &mut self,
+        open_paren: Token<'a>,
+        leading: Trivia<'a>,
+        errors: &mut Vec<Error>,
+    ) -> Expr<'a> {
+        self.parse_fields_body_inner_impl(open_paren, leading, errors)
+    }
+
     /// Parse a sequence `[a, b, c]`.
-    fn parse_seq(&mut self) -> Result<Expr<'a>> {
+    /// Parse a sequence `[a, b, c]` (internal unified implementation).
+    fn parse_seq_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open_bracket = self.next_token();
         debug_assert_eq!(open_bracket.kind, TokenKind::LBracket);
 
@@ -1087,61 +983,15 @@ impl<'a> AstParser<'a> {
         let mut items = Vec::new();
 
         loop {
+            // Always check for closing bracket (handles trailing commas)
             if self.peek_kind() == TokenKind::RBracket {
                 break;
             }
-
-            let expr = self.parse_expr()?;
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            items.push(SeqItem {
-                leading,
-                expr,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma {
-                break;
-            }
-        }
-
-        let trailing = if items.is_empty() {
-            leading
-        } else {
-            self.collect_leading_trivia()
-        };
-
-        let close_bracket = self.consume_closing_strict(
-            TokenKind::RBracket,
-            Self::expected("closing `]`", Some("array")),
-        )?;
-
-        Ok(Expr::Seq(SeqExpr {
-            span: Span::between(&open_bracket.span, &close_bracket),
-            open_bracket: open_bracket.span,
-            leading: Trivia::empty(),
-            items,
-            trailing,
-            close_bracket,
-        }))
-    }
-
-    /// Parse a sequence `[a, b, c]` with error recovery.
-    fn parse_seq_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        let open_bracket = self.next_token();
-        debug_assert_eq!(open_bracket.kind, TokenKind::LBracket);
-
-        let mut leading = self.collect_leading_trivia();
-        let mut items = Vec::new();
-
-        loop {
-            if self.at_closing_or_eof(TokenKind::RBracket) {
-                break;
+            // Only check for EOF if we're not after a comma (allow error in strict mode)
+            if items.is_empty() || items.last().map_or(false, |item: &SeqItem| item.comma.is_none()) {
+                if self.peek_kind() == TokenKind::Eof {
+                    break;
+                }
             }
 
             let expr = self.parse_expr_lossy(errors);
@@ -1158,11 +1008,8 @@ impl<'a> AstParser<'a> {
 
             leading = self.collect_leading_trivia();
 
-            if !has_comma {
-                if self.at_closing_or_eof(TokenKind::RBracket) {
-                    break;
-                }
-                self.report_missing_comma("array", errors);
+            if !has_comma && !self.handle_missing_comma("array", TokenKind::RBracket, errors) {
+                break;
             }
         }
 
@@ -1188,8 +1035,23 @@ impl<'a> AstParser<'a> {
         })
     }
 
-    /// Parse a map `{key: value, ...}`.
-    fn parse_map(&mut self) -> Result<Expr<'a>> {
+    fn parse_seq(&mut self) -> Result<Expr<'a>> {
+        let mut errors = Vec::new();
+        let expr = self.parse_seq_inner(&mut errors);
+        if errors.is_empty() {
+            Ok(expr)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse a sequence `[a, b, c]` with error recovery.
+    fn parse_seq_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+        self.parse_seq_inner(errors)
+    }
+
+    /// Parse a map `{key: value, ...}` (internal unified implementation).
+    fn parse_map_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open_brace = self.next_token();
         debug_assert_eq!(open_brace.kind, TokenKind::LBrace);
 
@@ -1197,124 +1059,49 @@ impl<'a> AstParser<'a> {
         let mut entries = Vec::new();
 
         loop {
+            // Always check for closing brace (handles trailing commas)
             if self.peek_kind() == TokenKind::RBrace {
                 break;
             }
-
-            let key = self.parse_expr()?;
-            let pre_colon = self.collect_leading_trivia();
-
-            if self.peek_kind() != TokenKind::Colon {
-                // Point error to the unexpected token, not the key
-                let unexpected = self.next_token();
-                return Err(Self::error(
-                    unexpected.span,
-                    Self::expected("`:` after map key", Some("map entry")),
-                ));
-            }
-            let colon_tok = self.next_token();
-
-            let post_colon = self.collect_leading_trivia();
-            let value = self.parse_expr()?;
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            entries.push(MapEntry {
-                leading,
-                key,
-                pre_colon,
-                colon: colon_tok.span,
-                post_colon,
-                value,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma {
-                break;
-            }
-        }
-
-        let trailing = if entries.is_empty() {
-            leading
-        } else {
-            self.collect_leading_trivia()
-        };
-
-        let close_brace = self.consume_closing_strict(
-            TokenKind::RBrace,
-            Self::expected("closing `}`", Some("map")),
-        )?;
-
-        Ok(Expr::Map(MapExpr {
-            span: Span::between(&open_brace.span, &close_brace),
-            open_brace: open_brace.span,
-            leading: Trivia::empty(),
-            entries,
-            trailing,
-            close_brace,
-        }))
-    }
-
-    /// Create a map entry with missing colon during error recovery.
-    fn recover_map_entry_missing_colon(
-        &mut self,
-        leading: Trivia<'a>,
-        key: Expr<'a>,
-        pre_colon: Trivia<'a>,
-        errors: &mut Vec<Error>,
-    ) -> MapEntry<'a> {
-        errors.push(Self::error(
-            self.peek_span(),
-            Self::expected("`:` after map key", Some("map entry")),
-        ));
-        self.recover_until(&[TokenKind::Comma, TokenKind::RBrace]);
-        let trailing = self.collect_leading_trivia();
-        let (comma, _) = self.consume_comma();
-        let colon_span = pre_colon.span.clone().unwrap_or_else(|| self.eof_span());
-        let key_span = key.span().clone();
-        let error_span = Self::span_at_end(&key_span);
-        MapEntry {
-            leading,
-            key,
-            pre_colon,
-            colon: Self::span_at_end(&colon_span),
-            post_colon: Trivia::empty(),
-            value: Expr::Error(ErrorExpr {
-                span: error_span.clone(),
-                error: Error::with_span(
-                    Self::expected("value", Some("map entry")),
-                    error_span,
-                ),
-            }),
-            trailing,
-            comma,
-        }
-    }
-
-    /// Parse a map `{key: value, ...}` with error recovery.
-    fn parse_map_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        let open_brace = self.next_token();
-        debug_assert_eq!(open_brace.kind, TokenKind::LBrace);
-
-        let mut leading = self.collect_leading_trivia();
-        let mut entries = Vec::new();
-
-        loop {
-            if self.at_closing_or_eof(TokenKind::RBrace) {
-                break;
+            // Only check for EOF if not after a comma
+            if entries.is_empty() || entries.last().map_or(false, |e: &MapEntry| e.comma.is_none()) {
+                if self.peek_kind() == TokenKind::Eof {
+                    break;
+                }
             }
 
             let key = self.parse_expr_lossy(errors);
             let pre_colon = self.collect_leading_trivia();
 
             if self.peek_kind() != TokenKind::Colon {
-                let entry = self.recover_map_entry_missing_colon(leading, key, pre_colon, errors);
+                // Missing colon - create error entry and recover
+                errors.push(Self::error(
+                    self.peek_span(),
+                    Self::expected("`:` after map key", Some("map entry")),
+                ));
+                self.recover_until(&[TokenKind::Comma, TokenKind::RBrace]);
+                let trailing = self.collect_leading_trivia();
+                let (comma, _) = self.consume_comma();
+                let colon_span = pre_colon.span.clone().unwrap_or_else(|| self.eof_span());
+                let key_span = key.span().clone();
+                let error_span = Self::span_at_end(&key_span);
+                entries.push(MapEntry {
+                    leading,
+                    key,
+                    pre_colon,
+                    colon: Self::span_at_end(&colon_span),
+                    post_colon: Trivia::empty(),
+                    value: Expr::Error(ErrorExpr {
+                        span: error_span.clone(),
+                        error: Error::with_span(
+                            Self::expected("value", Some("map entry")),
+                            error_span,
+                        ),
+                    }),
+                    trailing,
+                    comma,
+                });
                 leading = self.collect_leading_trivia();
-                entries.push(entry);
                 continue;
             }
             let colon_tok = self.next_token();
@@ -1338,11 +1125,8 @@ impl<'a> AstParser<'a> {
 
             leading = self.collect_leading_trivia();
 
-            if !has_comma {
-                if self.at_closing_or_eof(TokenKind::RBrace) {
-                    break;
-                }
-                self.report_missing_comma("map", errors);
+            if !has_comma && !self.handle_missing_comma("map", TokenKind::RBrace, errors) {
+                break;
             }
         }
 
@@ -1366,6 +1150,21 @@ impl<'a> AstParser<'a> {
             trailing,
             close_brace,
         })
+    }
+
+    fn parse_map(&mut self) -> Result<Expr<'a>> {
+        let mut errors = Vec::new();
+        let expr = self.parse_map_inner(&mut errors);
+        if errors.is_empty() {
+            Ok(expr)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse a map `{key: value, ...}` with error recovery.
+    fn parse_map_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+        self.parse_map_inner(errors)
     }
 
     /// Parse an identifier-starting expression.
@@ -1426,38 +1225,8 @@ impl<'a> AstParser<'a> {
     }
 
     /// Parse `Some(value)`.
-    fn parse_some(&mut self, some_tok: Token<'a>) -> Result<Expr<'a>> {
-        if self.peek_kind() != TokenKind::LParen {
-            return Err(Self::error(
-                some_tok.span,
-                Self::expected("`Some` or `None`", None),
-            ));
-        }
-        let open_paren = self.next_token();
-
-        let leading = self.collect_leading_trivia();
-        let expr = self.parse_expr()?;
-        let trailing = self.collect_leading_trivia();
-
-        let close_paren = self.consume_closing_strict(
-            TokenKind::RParen,
-            Self::expected("closing `)`", Some("option")),
-        )?;
-
-        Ok(Expr::Option(Box::new(OptionExpr {
-            span: Span::between(&some_tok.span, &close_paren),
-            value: Some(OptionValue {
-                open_paren: open_paren.span,
-                leading,
-                expr,
-                trailing,
-                close_paren,
-            }),
-        })))
-    }
-
-    /// Parse `Some(value)` with error recovery.
-    fn parse_some_lossy(&mut self, some_tok: Token<'a>, errors: &mut Vec<Error>) -> Expr<'a> {
+    /// Parse `Some(value)` (internal unified implementation).
+    fn parse_some_inner(&mut self, some_tok: Token<'a>, errors: &mut Vec<Error>) -> Expr<'a> {
         if self.peek_kind() != TokenKind::LParen {
             let err = Self::error(
                 some_tok.span,
@@ -1487,6 +1256,21 @@ impl<'a> AstParser<'a> {
                 close_paren,
             }),
         }))
+    }
+
+    fn parse_some(&mut self, some_tok: Token<'a>) -> Result<Expr<'a>> {
+        let mut errors = Vec::new();
+        let expr = self.parse_some_inner(some_tok, &mut errors);
+        if errors.is_empty() {
+            Ok(expr)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse `Some(value)` with error recovery.
+    fn parse_some_lossy(&mut self, some_tok: Token<'a>, errors: &mut Vec<Error>) -> Expr<'a> {
+        self.parse_some_inner(some_tok, errors)
     }
 
     /// Parse a struct or enum variant: `Name(...)` or `Name`.
