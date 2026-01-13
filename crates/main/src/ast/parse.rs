@@ -178,6 +178,16 @@ impl<'a> AstParser<'a> {
         })
     }
 
+    /// Consume a comma if present. Returns `(span, has_comma)`.
+    fn consume_comma(&mut self) -> (Option<Span>, bool) {
+        if self.peek_kind() == TokenKind::Comma {
+            let comma_tok = self.next_token();
+            (Some(comma_tok.span), true)
+        } else {
+            (None, false)
+        }
+    }
+
     /// Drain the trivia buffer into a Trivia struct.
     fn drain_trivia(&mut self) -> Trivia<'a> {
         if self.trivia_buffer.is_empty() {
@@ -720,13 +730,7 @@ impl<'a> AstParser<'a> {
             let expr = self.parse_expr()?;
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             elements.push(TupleElement {
                 leading,
@@ -781,13 +785,7 @@ impl<'a> AstParser<'a> {
             let expr = self.parse_expr_lossy(errors);
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             elements.push(TupleElement {
                 leading,
@@ -869,13 +867,7 @@ impl<'a> AstParser<'a> {
             let value = self.parse_expr()?;
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             fields.push(StructField {
                 leading,
@@ -939,13 +931,7 @@ impl<'a> AstParser<'a> {
                     errors.push(Self::error(error_span.clone(), Error::ExpectedIdentifier));
                     self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
                     let trailing = self.collect_leading_trivia();
-                    let comma = if self.peek_kind() == TokenKind::Comma {
-                        let comma_tok = self.next_token();
-                        Some(comma_tok.span)
-                    } else {
-                        None
-                    };
-                    let has_comma = comma.is_some();
+                    let (comma, has_comma) = self.consume_comma();
                     // Create a placeholder field to preserve structure
                     fields.push(StructField {
                         leading,
@@ -1002,13 +988,7 @@ impl<'a> AstParser<'a> {
             };
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             fields.push(StructField {
                 leading,
@@ -1075,13 +1055,7 @@ impl<'a> AstParser<'a> {
             let expr = self.parse_expr()?;
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             items.push(SeqItem {
                 leading,
@@ -1135,13 +1109,7 @@ impl<'a> AstParser<'a> {
             let expr = self.parse_expr_lossy(errors);
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             items.push(SeqItem {
                 leading,
@@ -1216,13 +1184,7 @@ impl<'a> AstParser<'a> {
             let value = self.parse_expr()?;
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             entries.push(MapEntry {
                 leading,
@@ -1279,12 +1241,7 @@ impl<'a> AstParser<'a> {
         ));
         self.recover_until(&[TokenKind::Comma, TokenKind::RBrace]);
         let trailing = self.collect_leading_trivia();
-        let comma = if self.peek_kind() == TokenKind::Comma {
-            let comma_tok = self.next_token();
-            Some(comma_tok.span)
-        } else {
-            None
-        };
+        let (comma, _) = self.consume_comma();
         let colon_span = pre_colon
             .span
             .clone()
@@ -1337,13 +1294,7 @@ impl<'a> AstParser<'a> {
             let value = self.parse_expr_lossy(errors);
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             entries.push(MapEntry {
                 leading,
@@ -1615,13 +1566,7 @@ impl<'a> AstParser<'a> {
             let expr = self.parse_expr()?;
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             elements.push(TupleElement {
                 leading,
@@ -1657,13 +1602,7 @@ impl<'a> AstParser<'a> {
             let expr = self.parse_expr_lossy(errors);
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             elements.push(TupleElement {
                 leading,
@@ -1976,13 +1915,7 @@ impl<'a> AstParser<'a> {
         let value = self.parse_expr()?;
         let trailing = self.collect_leading_trivia();
 
-        let comma = if self.peek_kind() == TokenKind::Comma {
-            let comma_tok = self.next_token();
-            Some(comma_tok.span)
-        } else {
-            None
-        };
-        let has_comma = comma.is_some();
+        let (comma, has_comma) = self.consume_comma();
 
         fields.push(StructField {
             leading,
@@ -2033,13 +1966,7 @@ impl<'a> AstParser<'a> {
             let value = self.parse_expr()?;
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             fields.push(StructField {
                 leading,
@@ -2083,13 +2010,7 @@ impl<'a> AstParser<'a> {
         let value = self.parse_expr_lossy(errors);
         let trailing = self.collect_leading_trivia();
 
-        let comma = if self.peek_kind() == TokenKind::Comma {
-            let comma_tok = self.next_token();
-            Some(comma_tok.span)
-        } else {
-            None
-        };
-        let has_comma = comma.is_some();
+        let (comma, has_comma) = self.consume_comma();
 
         fields.push(StructField {
             leading,
@@ -2120,13 +2041,7 @@ impl<'a> AstParser<'a> {
                     errors.push(Self::error(error_span.clone(), Error::ExpectedIdentifier));
                     self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
                     let trailing = self.collect_leading_trivia();
-                    let comma = if self.peek_kind() == TokenKind::Comma {
-                        let comma_tok = self.next_token();
-                        Some(comma_tok.span)
-                    } else {
-                        None
-                    };
-                    let has_comma = comma.is_some();
+                    let (comma, has_comma) = self.consume_comma();
                     // Create a placeholder field to preserve structure
                     fields.push(StructField {
                         leading,
@@ -2183,13 +2098,7 @@ impl<'a> AstParser<'a> {
             };
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             fields.push(StructField {
                 leading,
@@ -2235,13 +2144,7 @@ impl<'a> AstParser<'a> {
         // Handle the first element
         let trailing = self.collect_leading_trivia();
 
-        let comma = if self.peek_kind() == TokenKind::Comma {
-            let comma_tok = self.next_token();
-            Some(comma_tok.span)
-        } else {
-            None
-        };
-        let has_comma = comma.is_some();
+        let (comma, has_comma) = self.consume_comma();
 
         elements.push(TupleElement {
             leading,
@@ -2265,13 +2168,7 @@ impl<'a> AstParser<'a> {
             let expr = self.parse_expr()?;
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             elements.push(TupleElement {
                 leading,
@@ -2300,13 +2197,7 @@ impl<'a> AstParser<'a> {
         let mut elements = Vec::new();
 
         let trailing = self.collect_leading_trivia();
-        let comma = if self.peek_kind() == TokenKind::Comma {
-            let comma_tok = self.next_token();
-            Some(comma_tok.span)
-        } else {
-            None
-        };
-        let has_comma = comma.is_some();
+        let (comma, has_comma) = self.consume_comma();
 
         elements.push(TupleElement {
             leading,
@@ -2330,13 +2221,7 @@ impl<'a> AstParser<'a> {
             let expr = self.parse_expr_lossy(errors);
             let trailing = self.collect_leading_trivia();
 
-            let comma = if self.peek_kind() == TokenKind::Comma {
-                let comma_tok = self.next_token();
-                Some(comma_tok.span)
-            } else {
-                None
-            };
-            let has_comma = comma.is_some();
+            let (comma, has_comma) = self.consume_comma();
 
             elements.push(TupleElement {
                 leading,
