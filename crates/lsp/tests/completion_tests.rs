@@ -707,4 +707,69 @@ mod completion_integration {
             "TypeRef to struct should suggest struct snippet"
         );
     }
+
+    #[test]
+    fn test_completions_exclude_used_fields_with_missing_close_paren() {
+        // Missing the closing ')' should not cause already-used fields to reappear.
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    title: "Test",
+    version: "1.0",
+    "#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        let completions = ron2_lsp::provide_completions(&doc, Position::new(5, 4), &resolver);
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+
+        assert!(
+            !labels.contains(&"title"),
+            "Should not suggest 'title' after it is already present"
+        );
+        assert!(
+            !labels.contains(&"version"),
+            "Should not suggest 'version' after it is already present"
+        );
+    }
+
+    #[test]
+    fn test_value_completions_with_missing_open_paren() {
+        // Missing '(' should still allow value completions to key off the field name.
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+graphics:
+"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        let completions = ron2_lsp::provide_completions(&doc, Position::new(2, 9), &resolver);
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+
+        assert!(
+            labels.contains(&"Low"),
+            "Enum variants should be suggested for graphics even without '('"
+        );
+    }
+
+    #[test]
+    fn test_field_completions_with_missing_comma() {
+        // Missing a comma between fields should not switch to value completions.
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    title: "Test"
+    ver
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        let completions = ron2_lsp::provide_completions(&doc, Position::new(4, 7), &resolver);
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+
+        assert!(
+            labels.contains(&"version"),
+            "Field name completions should still suggest 'version'"
+        );
+    }
 }
