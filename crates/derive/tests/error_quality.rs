@@ -10,7 +10,7 @@
 //! 3. Context about expected vs actual types
 //! 4. Suggestions for valid alternatives (for unknown fields/variants)
 
-use ron2::{error::Error, FromRon};
+use ron2::{error::ErrorKind, FromRon};
 use ron2_derive::Ron;
 
 // =============================================================================
@@ -90,14 +90,14 @@ fn missing_field_error_names_the_struct() {
     let err = SimpleConfig::from_ron(input).unwrap_err();
 
     // Check error code includes struct context
-    if let Error::MissingStructField { field, outer } = &err.code {
+    if let ErrorKind::MissingField { field, outer } = &err.kind() {
         assert_eq!(field.as_ref(), "port");
         assert!(
             outer.is_some(),
             "Missing field error should include struct name"
         );
     } else {
-        panic!("Expected MissingStructField error, got {:?}", err.code);
+        panic!("Expected MissingStructField error, got {:?}", err.kind());
     }
 }
 
@@ -111,7 +111,8 @@ fn missing_field_span_points_to_struct() {
 
     // For missing fields, span should point to the struct opening
     assert_eq!(
-        err.span.start.line, 1,
+        err.span().start.line,
+        1,
         "Missing field error should point to struct start"
     );
 }
@@ -165,9 +166,10 @@ fn unknown_field_span_points_to_field_name() {
 
     // Span should point to "unknown" on line 4
     assert_eq!(
-        err.span.start.line, 4,
+        err.span().start.line,
+        4,
         "Unknown field error should point to field name on line 4, got line {}",
-        err.span.start.line
+        err.span().start.line
     );
 }
 
@@ -215,11 +217,11 @@ fn enum_field_error_has_correct_span() {
     let err = Message::from_ron(input).unwrap_err();
 
     // Span should point to the invalid value
-    assert_eq!(err.span.start.line, 1);
+    assert_eq!(err.span().start.line, 1);
     assert!(
-        err.span.start.col >= 15,
+        err.span().start.col >= 15,
         "Error should point to 'not_a_number', got col {}",
-        err.span.start.col
+        err.span().start.col
     );
 }
 
@@ -250,7 +252,8 @@ fn nested_error_has_correct_span() {
 
     // Error should point to "not_an_int" on line 4
     assert_eq!(
-        err.span.start.line, 4,
+        err.span().start.line,
+        4,
         "Error should be on line 4 where invalid value is"
     );
 }
@@ -283,9 +286,10 @@ fn deeply_nested_error_preserves_span() {
 
     // Error should be on line 4 where "wrong" is
     assert_eq!(
-        err.span.start.line, 4,
+        err.span().start.line,
+        4,
         "Error should be on line 4, got {}",
-        err.span.start.line
+        err.span().start.line
     );
 }
 
@@ -306,7 +310,7 @@ fn vec_element_error_has_correct_span() {
     let err = WithVec::from_ron(input).unwrap_err();
 
     // Error should be on line 2 where "three" is
-    assert_eq!(err.span.start.line, 2);
+    assert_eq!(err.span().start.line, 2);
 }
 
 #[test]
@@ -341,9 +345,10 @@ fn map_value_error_has_correct_span() {
 
     // Error should be on line 4 where "not_a_number" is
     assert_eq!(
-        err.span.start.line, 4,
+        err.span().start.line,
+        4,
         "Error should be on line 4, got {}",
-        err.span.start.line
+        err.span().start.line
     );
 }
 
@@ -360,11 +365,11 @@ fn tuple_element_error_has_correct_span() {
     let err = Point::from_ron(input).unwrap_err();
 
     // Error should point to "not_an_int"
-    assert_eq!(err.span.start.line, 1);
+    assert_eq!(err.span().start.line, 1);
     assert!(
-        err.span.start.col >= 5,
+        err.span().start.col >= 5,
         "Error should point to second element, got col {}",
-        err.span.start.col
+        err.span().start.col
     );
 }
 
@@ -399,9 +404,9 @@ fn option_inner_type_error_has_correct_span() {
 
     // Error should point to "not_an_int"
     assert!(
-        err.span.start.col >= 30,
+        err.span().start.col >= 30,
         "Error should point to 'not_an_int', got col {}",
-        err.span.start.col
+        err.span().start.col
     );
 }
 
@@ -455,11 +460,11 @@ fn negative_unsigned_error() {
     let msg = err.to_string();
 
     // Verify error code is IntegerOutOfBounds with correct value and target type
-    if let Error::IntegerOutOfBounds { value, target_type } = &err.code {
+    if let ErrorKind::IntegerOutOfBounds { value, target_type } = &err.kind() {
         assert_eq!(value.as_ref(), "-1", "Error should include the value '-1'");
         assert_eq!(*target_type, "u8", "Error should mention target type 'u8'");
     } else {
-        panic!("Expected IntegerOutOfBounds error, got {:?}", err.code);
+        panic!("Expected IntegerOutOfBounds error, got {:?}", err.kind());
     }
 
     // Verify the message is clear
@@ -476,7 +481,7 @@ fn negative_unsigned_error_span_points_to_value() {
     let err = WithU8::from_ron(input).unwrap_err();
 
     // Span should point to "-1" specifically
-    let sliced = &input[err.span.start_offset..err.span.end_offset];
+    let sliced = &input[err.span().start_offset..err.span().end_offset];
     assert_eq!(
         sliced, "-1",
         "Span should point exactly to '-1', got '{}'",
@@ -484,11 +489,12 @@ fn negative_unsigned_error_span_points_to_value() {
     );
 
     // Verify position is correct (line 1, column 9 for the minus sign)
-    assert_eq!(err.span.start.line, 1);
+    assert_eq!(err.span().start.line, 1);
     assert_eq!(
-        err.span.start.col, 9,
+        err.span().start.col,
+        9,
         "Span should start at column 9 (the '-' in '-1'), got {}",
-        err.span.start.col
+        err.span().start.col
     );
 }
 
@@ -512,11 +518,11 @@ fn negative_unsigned_error_u16() {
     let input = r#"(value: -1)"#;
     let err = WithU16::from_ron(input).unwrap_err();
 
-    if let Error::IntegerOutOfBounds { value, target_type } = &err.code {
+    if let ErrorKind::IntegerOutOfBounds { value, target_type } = &err.kind() {
         assert_eq!(value.as_ref(), "-1");
         assert_eq!(*target_type, "u16");
     } else {
-        panic!("Expected IntegerOutOfBounds, got {:?}", err.code);
+        panic!("Expected IntegerOutOfBounds, got {:?}", err.kind());
     }
 }
 
@@ -525,11 +531,11 @@ fn negative_unsigned_error_u32() {
     let input = r#"(value: -1)"#;
     let err = WithU32::from_ron(input).unwrap_err();
 
-    if let Error::IntegerOutOfBounds { value, target_type } = &err.code {
+    if let ErrorKind::IntegerOutOfBounds { value, target_type } = &err.kind() {
         assert_eq!(value.as_ref(), "-1");
         assert_eq!(*target_type, "u32");
     } else {
-        panic!("Expected IntegerOutOfBounds, got {:?}", err.code);
+        panic!("Expected IntegerOutOfBounds, got {:?}", err.kind());
     }
 }
 
@@ -538,11 +544,11 @@ fn negative_unsigned_error_u64() {
     let input = r#"(value: -1)"#;
     let err = WithU64::from_ron(input).unwrap_err();
 
-    if let Error::IntegerOutOfBounds { value, target_type } = &err.code {
+    if let ErrorKind::IntegerOutOfBounds { value, target_type } = &err.kind() {
         assert_eq!(value.as_ref(), "-1");
         assert_eq!(*target_type, "u64");
     } else {
-        panic!("Expected IntegerOutOfBounds, got {:?}", err.code);
+        panic!("Expected IntegerOutOfBounds, got {:?}", err.kind());
     }
 }
 
@@ -551,15 +557,15 @@ fn large_negative_unsigned_error() {
     let input = r#"(value: -1000)"#;
     let err = WithU8::from_ron(input).unwrap_err();
 
-    if let Error::IntegerOutOfBounds { value, target_type } = &err.code {
+    if let ErrorKind::IntegerOutOfBounds { value, target_type } = &err.kind() {
         assert_eq!(value.as_ref(), "-1000");
         assert_eq!(*target_type, "u8");
     } else {
-        panic!("Expected IntegerOutOfBounds, got {:?}", err.code);
+        panic!("Expected IntegerOutOfBounds, got {:?}", err.kind());
     }
 
     // Verify span points to the value
-    let sliced = &input[err.span.start_offset..err.span.end_offset];
+    let sliced = &input[err.span().start_offset..err.span().end_offset];
     assert_eq!(sliced, "-1000");
 }
 
@@ -572,13 +578,14 @@ fn negative_unsigned_multiline_span() {
 
     // Error should be on line 2 where -42 is
     assert_eq!(
-        err.span.start.line, 2,
+        err.span().start.line,
+        2,
         "Error should be on line 2, got line {}",
-        err.span.start.line
+        err.span().start.line
     );
 
     // Span should point to "-42"
-    let sliced = &input[err.span.start_offset..err.span.end_offset];
+    let sliced = &input[err.span().start_offset..err.span().end_offset];
     assert_eq!(sliced, "-42");
 }
 
@@ -606,7 +613,7 @@ fn error_span_can_extract_source_text() {
     let err = SimpleConfig::from_ron(input).unwrap_err();
 
     // Verify we can slice the source with the span
-    let sliced = &input[err.span.start_offset..err.span.end_offset];
+    let sliced = &input[err.span().start_offset..err.span().end_offset];
 
     // The sliced text should be the problematic value
     assert!(
@@ -625,7 +632,7 @@ fn multiline_error_span_extracts_correct_text() {
 )"#;
     let err = SimpleConfig::from_ron(input).unwrap_err();
 
-    let sliced = &input[err.span.start_offset..err.span.end_offset];
+    let sliced = &input[err.span().start_offset..err.span().end_offset];
     assert!(
         sliced.contains("wrong"),
         "Sliced text should contain 'wrong': '{}'",
@@ -727,14 +734,14 @@ fn duplicate_field_produces_error() {
     let err = SimpleConfig::from_ron(input).unwrap_err();
 
     // Error should be DuplicateStructField
-    if let Error::DuplicateStructField { field, outer } = &err.code {
+    if let ErrorKind::DuplicateField { field, outer } = &err.kind() {
         assert_eq!(field.as_ref(), "name");
         assert!(
             outer.is_some(),
             "Duplicate field error should include struct name"
         );
     } else {
-        panic!("Expected DuplicateStructField error, got {:?}", err.code);
+        panic!("Expected DuplicateStructField error, got {:?}", err.kind());
     }
 }
 
@@ -752,9 +759,10 @@ fn duplicate_field_span_points_to_second_occurrence() {
 
     // Span should point to the duplicate "name" on line 4
     assert_eq!(
-        err.span.start.line, 4,
+        err.span().start.line,
+        4,
         "Duplicate field error should point to second occurrence on line 4, got line {}",
-        err.span.start.line
+        err.span().start.line
     );
 }
 
@@ -771,11 +779,11 @@ fn duplicate_field_in_nested_struct_produces_error() {
     let err = Outer::from_ron(input).unwrap_err();
 
     // Error should be DuplicateStructField
-    if let Error::DuplicateStructField { field, outer } = &err.code {
+    if let ErrorKind::DuplicateField { field, outer } = &err.kind() {
         assert_eq!(field.as_ref(), "value");
         assert!(outer.is_some());
     } else {
-        panic!("Expected DuplicateStructField error, got {:?}", err.code);
+        panic!("Expected DuplicateStructField error, got {:?}", err.kind());
     }
 }
 
@@ -809,11 +817,11 @@ fn flatten_field_error_points_to_invalid_value() {
     let err = FlattenOuter::from_ron(input).unwrap_err();
 
     // Error should point to "not_an_int"
-    assert_eq!(err.span.start.line, 1);
+    assert_eq!(err.span().start.line, 1);
     assert!(
-        err.span.start.col >= 22,
+        err.span().start.col >= 22,
         "Error should point to 'not_an_int' at col 22+, got col {}",
-        err.span.start.col
+        err.span().start.col
     );
 }
 
@@ -860,9 +868,10 @@ fn flatten_multiline_error_has_correct_span() {
 
     // Error should point to "wrong" on line 3
     assert_eq!(
-        err.span.start.line, 3,
+        err.span().start.line,
+        3,
         "Error should be on line 3, got line {}",
-        err.span.start.line
+        err.span().start.line
     );
 }
 
@@ -901,9 +910,10 @@ fn deeply_flattened_error_preserves_span() {
 
     // Error should be on line 4 where "wrong" is
     assert_eq!(
-        err.span.start.line, 4,
+        err.span().start.line,
+        4,
         "Error should be on line 4, got {}",
-        err.span.start.line
+        err.span().start.line
     );
 }
 
@@ -922,7 +932,8 @@ fn nested_struct_without_flatten_has_correct_error() {
 
     // Error should point to "not_an_int" on line 4
     assert_eq!(
-        err.span.start.line, 4,
+        err.span().start.line,
+        4,
         "Error should be on line 4 where invalid value is"
     );
 }
@@ -1030,17 +1041,18 @@ mod map_key_errors {
 
         // Error should be on line 4 where the invalid key `123` is
         assert_eq!(
-            err.span.start.line, 4,
+            err.span().start.line,
+            4,
             "Key error should point to line 4 where `123` is, got line {}",
-            err.span.start.line
+            err.span().start.line
         );
 
         // The column should point to the key (123), not the value (2)
         // The key `123` starts at column 9 (after 8 spaces of indentation)
         assert!(
-            err.span.start.col < 15,
+            err.span().start.col < 15,
             "Key error should point to key position (col < 15), got col {}",
-            err.span.start.col
+            err.span().start.col
         );
     }
 
@@ -1066,7 +1078,7 @@ mod map_key_errors {
         let err = MapWithStringKeys::from_ron(input).unwrap_err();
 
         // Extract the source text at the error span
-        let sliced = &input[err.span.start_offset..err.span.end_offset];
+        let sliced = &input[err.span().start_offset..err.span().end_offset];
 
         // Should contain the key, not the value
         assert!(
@@ -1114,9 +1126,10 @@ mod map_key_errors {
 
         // Error should point to line 4 where `3.14` is
         assert_eq!(
-            err.span.start.line, 4,
+            err.span().start.line,
+            4,
             "Key error should be on line 4, got {}",
-            err.span.start.line
+            err.span().start.line
         );
     }
 }
@@ -1142,17 +1155,18 @@ mod map_value_errors {
 
         // Error should be on line 4
         assert_eq!(
-            err.span.start.line, 4,
+            err.span().start.line,
+            4,
             "Value error should point to line 4, got line {}",
-            err.span.start.line
+            err.span().start.line
         );
 
         // The column should point to the value, not the key
         // The value starts after `"b": ` which is around column 14
         assert!(
-            err.span.start.col > 10,
+            err.span().start.col > 10,
             "Value error should point to value position (col > 10), got col {}",
-            err.span.start.col
+            err.span().start.col
         );
     }
 
@@ -1162,7 +1176,7 @@ mod map_value_errors {
         let err = MapWithI32Values::from_ron(input).unwrap_err();
 
         // Extract the source text at the error span
-        let sliced = &input[err.span.start_offset..err.span.end_offset];
+        let sliced = &input[err.span().start_offset..err.span().end_offset];
 
         // Should contain the value, not the key
         assert!(
@@ -1215,9 +1229,10 @@ mod map_value_errors {
 
         // Error should be on line 4 where "oops" is
         assert_eq!(
-            err.span.start.line, 4,
+            err.span().start.line,
+            4,
             "Nested value error should be on line 4, got {}",
-            err.span.start.line
+            err.span().start.line
         );
     }
 
@@ -1263,9 +1278,9 @@ mod key_vs_value_distinction {
         if let Some(Some(colon_byte_pos)) = colon_pos {
             // Key error span should end before or at the colon
             assert!(
-                err.span.end_offset <= colon_byte_pos,
+                err.span().end_offset <= colon_byte_pos,
                 "Key error span (end: {}) should be before colon at byte {}",
-                err.span.end_offset,
+                err.span().end_offset,
                 colon_byte_pos
             );
         }
@@ -1285,9 +1300,9 @@ mod key_vs_value_distinction {
             if let Some(colon_byte_pos) = colon_pos {
                 // Value error span should start after the colon
                 assert!(
-                    err.span.start_offset > colon_byte_pos,
+                    err.span().start_offset > colon_byte_pos,
                     "Value error span (start: {}) should be after colon at byte {}",
-                    err.span.start_offset,
+                    err.span().start_offset,
                     colon_byte_pos
                 );
             }
@@ -1301,7 +1316,7 @@ mod key_vs_value_distinction {
         let err = StringToI32Map::from_ron(input).unwrap_err();
 
         // Should report the key error first (since key is deserialized before value)
-        let sliced = &input[err.span.start_offset..err.span.end_offset];
+        let sliced = &input[err.span().start_offset..err.span().end_offset];
         assert!(
             sliced.contains("123"),
             "Should report key error first: got '{}'",
@@ -1321,7 +1336,7 @@ mod key_vs_value_distinction {
         let err = I32ToStringMap::from_ron(input).unwrap_err();
 
         // Error span should point to the key
-        let sliced = &input[err.span.start_offset..err.span.end_offset];
+        let sliced = &input[err.span().start_offset..err.span().end_offset];
         assert!(
             sliced.contains("not_int"),
             "Error should point to key 'not_int', got: '{}'",
@@ -1336,7 +1351,7 @@ mod key_vs_value_distinction {
         let err = I32ToStringMap::from_ron(input).unwrap_err();
 
         // Error span should point to the value (999), not the key (42)
-        let sliced = &input[err.span.start_offset..err.span.end_offset];
+        let sliced = &input[err.span().start_offset..err.span().end_offset];
         assert!(
             sliced.contains("999"),
             "Error should point to value '999', got: '{}'",
@@ -1367,11 +1382,11 @@ mod complex_map_scenarios {
         let err = BTreeMap::<String, String>::from_ron(input).unwrap_err();
 
         // Should point to the first entry's key
-        assert_eq!(err.span.start.line, 1);
+        assert_eq!(err.span().start.line, 1);
         assert!(
-            err.span.start.col < 10,
+            err.span().start.col < 10,
             "Error should point near start of map, got col {}",
-            err.span.start.col
+            err.span().start.col
         );
     }
 
@@ -1381,7 +1396,7 @@ mod complex_map_scenarios {
         let err = BTreeMap::<String, String>::from_ron(input).unwrap_err();
 
         // Should point to the first entry's value
-        let sliced = &input[err.span.start_offset..err.span.end_offset];
+        let sliced = &input[err.span().start_offset..err.span().end_offset];
         assert!(
             sliced.contains("123"),
             "Error should point to value '123', got: '{}'",
@@ -1401,9 +1416,10 @@ mod complex_map_scenarios {
 
         // Error should be on line 4 where the invalid value is
         assert_eq!(
-            err.span.start.line, 4,
+            err.span().start.line,
+            4,
             "Error should be on line 4, got {}",
-            err.span.start.line
+            err.span().start.line
         );
     }
 
@@ -1412,7 +1428,7 @@ mod complex_map_scenarios {
         let input = r#"{ "a": "ok", "b": "ok", "c": 999 }"#;
         let err = BTreeMap::<String, String>::from_ron(input).unwrap_err();
 
-        let sliced = &input[err.span.start_offset..err.span.end_offset];
+        let sliced = &input[err.span().start_offset..err.span().end_offset];
         assert!(
             sliced.contains("999"),
             "Error should point to last value '999', got: '{}'",
@@ -1438,9 +1454,10 @@ mod complex_map_scenarios {
 
         // Error should point to the inner map's invalid key
         assert_eq!(
-            err.span.start.line, 4,
+            err.span().start.line,
+            4,
             "Error should be on line 4, got {}",
-            err.span.start.line
+            err.span().start.line
         );
     }
 
@@ -1457,12 +1474,13 @@ mod complex_map_scenarios {
 
         // Error should point to the inner map's invalid value
         assert_eq!(
-            err.span.start.line, 4,
+            err.span().start.line,
+            4,
             "Error should be on line 4, got {}",
-            err.span.start.line
+            err.span().start.line
         );
 
-        let sliced = &input[err.span.start_offset..err.span.end_offset];
+        let sliced = &input[err.span().start_offset..err.span().end_offset];
         assert!(
             sliced.contains("not_an_int"),
             "Error should contain 'not_an_int', got: '{}'",

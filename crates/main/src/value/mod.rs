@@ -1,7 +1,12 @@
 //! Value module.
 
 use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
-use core::{cmp::Eq, fmt::{self, Display, Formatter}, hash::Hash, str::FromStr};
+use core::{
+    cmp::Eq,
+    fmt::{self, Display, Formatter},
+    hash::Hash,
+    str::FromStr,
+};
 
 mod map;
 mod number;
@@ -10,7 +15,7 @@ pub use map::Map;
 pub use number::{F32, F64, Number};
 
 use crate::{
-    Error, SpannedError,
+    Error, ErrorKind,
     ast::{parse_document, to_value},
 };
 
@@ -64,7 +69,7 @@ pub enum Value {
 }
 
 impl FromStr for Value {
-    type Err = SpannedError;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let doc = parse_document(s)?;
@@ -77,7 +82,7 @@ impl FromStr for Value {
             }
             None => {
                 // Empty document - return EOF error (consistent with FromRon::from_ron)
-                Err(SpannedError::at_start(Error::Eof))
+                Err(Error::at_start(ErrorKind::Eof))
             }
         }
     }
@@ -85,7 +90,7 @@ impl FromStr for Value {
 
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use crate::ast::{format_expr, value_to_expr, FormatConfig};
+        use crate::ast::{FormatConfig, format_expr, value_to_expr};
 
         // Convert Value to AST expression (with synthetic spans)
         let expr = value_to_expr(self.clone());

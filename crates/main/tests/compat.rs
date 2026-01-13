@@ -510,9 +510,12 @@ mod value_comparison {
         let ron_output = ron::to_string(value).expect("ron should serialize");
         let ron2_output = value.to_ron().expect("ron2 should serialize");
 
-        let ron_value: Value = ron_output.parse::<ron2::Value>().expect("ron2 should parse ron output");
-        let ron2_value: Value =
-            ron2_output.parse::<ron2::Value>().expect("ron2 should parse ron2 output");
+        let ron_value: Value = ron_output
+            .parse::<ron2::Value>()
+            .expect("ron2 should parse ron output");
+        let ron2_value: Value = ron2_output
+            .parse::<ron2::Value>()
+            .expect("ron2 should parse ron2 output");
 
         // Values may differ in representation but should be semantically equivalent
         // For now, just verify both parse successfully

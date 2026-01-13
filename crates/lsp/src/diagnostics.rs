@@ -137,18 +137,18 @@ fn format_validation_error_inner(
     doc: &Document,
 ) -> (String, Option<Range>) {
     // Build context prefix from path (path is stored innermost-first, display outermost-first)
-    let context_prefix = if error.path.is_empty() {
+    let context_prefix = if error.path().is_empty() {
         String::new()
     } else {
-        let path_str: Vec<String> = error.path.iter().rev().map(format_path_segment).collect();
+        let path_str: Vec<String> = error.path().iter().rev().map(format_path_segment).collect();
         format!("{}: ", path_str.join(" -> "))
     };
 
     // Try to find position based on innermost path segment
-    let range = find_position_from_path(&error.path, doc);
+    let range = find_position_from_path(error.path(), doc);
 
     // Format the message based on error kind
-    let message = match &error.kind {
+    let message = match error.kind() {
         ValidationErrorKind::TypeMismatch { expected, found } => {
             format!(
                 "{}Type mismatch: expected {}, got {}",
@@ -181,10 +181,12 @@ fn format_validation_error_inner(
                 context_prefix, value, target_type
             )
         }
+        // Handle other ErrorKind variants with a generic message
+        _ => format!("{}{}", context_prefix, error.kind()),
     };
 
     // Try to find better position for specific error kinds if path didn't help
-    let final_range = range.or_else(|| find_position_from_kind(&error.kind, doc));
+    let final_range = range.or_else(|| find_position_from_kind(error.kind(), doc));
 
     (message, final_range)
 }

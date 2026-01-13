@@ -108,20 +108,9 @@ impl From<io::Error> for SchemaError {
     }
 }
 
-impl From<crate::SpannedError> for SchemaError {
-    fn from(e: crate::SpannedError) -> Self {
-        SchemaError::Storage(StorageError::Parse(e.to_string()))
-    }
-}
-
 impl From<crate::Error> for SchemaError {
     fn from(e: crate::Error) -> Self {
-        SchemaError::Storage(StorageError::Parse(e.to_string()))
-    }
-}
-
-impl From<ValidationError> for SchemaError {
-    fn from(e: ValidationError) -> Self {
+        // Wrap as validation error (Error is now ValidationError)
         SchemaError::Validation(Box::new(e))
     }
 }

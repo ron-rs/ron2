@@ -141,9 +141,9 @@ impl Document {
         let ast_doc = doc.into_owned();
 
         let parse_error = errors.first().map(|err| ParseError {
-            message: format!("{}", err.code),
-            line: err.span.start.line.saturating_sub(1),
-            col: err.span.start.col.saturating_sub(1),
+            message: format!("{}", err.kind()),
+            line: err.span().start.line.saturating_sub(1),
+            col: err.span().start.col.saturating_sub(1),
         });
 
         self.type_attr = type_attr;

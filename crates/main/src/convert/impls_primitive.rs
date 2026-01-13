@@ -12,7 +12,7 @@ use crate::{
         Expr, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
         synthetic_string, synthetic_unit,
     },
-    error::{Error, Result, SpannedResult},
+    error::{Error, ErrorKind, Result},
 };
 
 // =============================================================================
@@ -90,7 +90,7 @@ impl ToRon for f64 {
 // =============================================================================
 
 impl FromRon for bool {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Bool(b) => Ok(b.value),
             _ => Err(spanned_type_mismatch("bool", expr)),
@@ -99,7 +99,7 @@ impl FromRon for bool {
 }
 
 impl FromRon for char {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Char(c) => Ok(c.value),
             _ => Err(spanned_type_mismatch("char", expr)),
@@ -108,7 +108,7 @@ impl FromRon for char {
 }
 
 impl FromRon for String {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::String(s) => Ok(s.value.clone()),
             _ => Err(spanned_type_mismatch("String", expr)),
@@ -117,7 +117,7 @@ impl FromRon for String {
 }
 
 impl FromRon for () {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Unit(_) => Ok(()),
             _ => Err(spanned_type_mismatch("()", expr)),
@@ -129,7 +129,7 @@ macro_rules! impl_from_ron_int {
     ($($ty:ty),+ $(,)?) => {
         $(
             impl FromRon for $ty {
-                fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+                fn from_ast(expr: &Expr<'_>) -> Result<Self> {
                     match expr {
                         Expr::Number(n) => {
                             parse_integer_from_raw::<$ty>(&n.raw, &n.kind, stringify!($ty))
@@ -138,10 +138,10 @@ macro_rules! impl_from_ron_int {
                         Expr::Byte(b) => {
                             // Byte literals can be converted to integers
                             <$ty>::try_from(b.value)
-                                .map_err(|_| spanned_err(Error::IntegerOutOfBounds {
+                                .map_err(|_| spanned_err(Error::new(ErrorKind::IntegerOutOfBounds {
                                     value: alloc::format!("b'{}'", b.value as char).into(),
                                     target_type: stringify!($ty),
-                                }, expr))
+                                }), expr))
                         }
                         _ => Err(spanned_type_mismatch(stringify!($ty), expr)),
                     }
@@ -158,7 +158,7 @@ impl_from_ron_int!(i128, u128);
 
 impl FromRon for f32 {
     #[allow(clippy::cast_possible_truncation)]
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Number(n) => {
                 let val =
@@ -171,7 +171,7 @@ impl FromRon for f32 {
 }
 
 impl FromRon for f64 {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Number(n) => {
                 parse_float_from_raw(&n.raw, &n.kind).map_err(|e| spanned_err(e, expr))

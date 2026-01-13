@@ -750,7 +750,7 @@ mod field_flatten {
             inner: Inner { x: 10, y: 20 },
         };
         let ron = outer.to_ron().unwrap();
-        
+
         // Fields should appear at top level
         assert!(ron.contains("name"));
         assert!(ron.contains("x"));
@@ -817,11 +817,11 @@ mod field_flatten {
         assert_eq!(inlined.name, "test");
         assert_eq!(inlined.x, 5);
         assert_eq!(inlined.y, 10);
-        
+
         // Both should serialize to the same field structure (ignoring type name)
         let flattened_ron = flattened.to_ron().unwrap();
         let inlined_ron = inlined.to_ron().unwrap();
-        
+
         // Both should contain the same fields
         assert!(flattened_ron.contains("name"));
         assert!(flattened_ron.contains("x"));
@@ -862,7 +862,7 @@ mod field_flatten {
             color: Color { r: 255, g: 0, b: 0 },
         };
         let ron = sprite.to_ron().unwrap();
-        
+
         // All fields at top level
         assert!(ron.contains("name"));
         assert!(ron.contains("x"));
@@ -870,7 +870,7 @@ mod field_flatten {
         assert!(ron.contains("r"));
         assert!(ron.contains("g"));
         assert!(ron.contains("b"));
-        
+
         let parsed: Sprite = Sprite::from_ron(&ron).unwrap();
         assert_eq!(sprite, parsed);
     }
@@ -905,12 +905,12 @@ mod field_flatten {
             },
         };
         let ron = nested.to_ron().unwrap();
-        
+
         // All fields should be at top level
         assert!(ron.contains("name"));
         assert!(ron.contains("id"));
         assert!(ron.contains("value"));
-        
+
         let parsed: Level0 = Level0::from_ron(&ron).unwrap();
         assert_eq!(nested, parsed);
     }
@@ -984,15 +984,14 @@ mod field_flatten {
     #[test]
     fn flatten_option_with_default_inner_is_presence_based() {
         let none_ron = r#"(name: "none")"#;
-        let none: OuterWithOptionalDefaults = OuterWithOptionalDefaults::from_ron(none_ron).unwrap();
+        let none: OuterWithOptionalDefaults =
+            OuterWithOptionalDefaults::from_ron(none_ron).unwrap();
         assert_eq!(none.inner, None);
 
         let some_ron = r#"(name: "some", x: 5)"#;
-        let some: OuterWithOptionalDefaults = OuterWithOptionalDefaults::from_ron(some_ron).unwrap();
-        assert_eq!(
-            some.inner,
-            Some(OptionalInnerWithDefaults { x: 5, y: 0 })
-        );
+        let some: OuterWithOptionalDefaults =
+            OuterWithOptionalDefaults::from_ron(some_ron).unwrap();
+        assert_eq!(some.inner, Some(OptionalInnerWithDefaults { x: 5, y: 0 }));
     }
 
     // Flatten with rename_all
@@ -1021,12 +1020,12 @@ mod field_flatten {
             },
         };
         let ron = outer.to_ron().unwrap();
-        
+
         // All fields should be camelCase
         assert!(ron.contains("outerField"));
         assert!(ron.contains("innerField"));
         assert!(ron.contains("anotherField"));
-        
+
         let parsed: OuterCamel = OuterCamel::from_ron(&ron).unwrap();
         assert_eq!(outer, parsed);
     }
@@ -1106,7 +1105,7 @@ mod variant_rename {
         };
         let ron = s.to_ron().unwrap();
         assert!(ron.contains("pending"));
-        
+
         let parsed: Status = Status::from_ron(&ron).unwrap();
         assert_eq!(s, parsed);
     }
@@ -1133,7 +1132,7 @@ mod variant_skip {
         // This test documents that #[ron(skip)] on variants is primarily
         // for preventing serialization/deserialization, but causes compile errors
         // in exhaustive match contexts. This is the expected behavior.
-        // 
+        //
         // Use case: Mark deprecated variants that shouldn't be used anymore
         // but can't be removed due to compatibility.
     }

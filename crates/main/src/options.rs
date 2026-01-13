@@ -5,7 +5,7 @@ use std::io;
 
 use crate::{
     ast::{parse_document, to_value},
-    error::{Error, SpannedError, SpannedResult},
+    error::{Error, ErrorKind, Result},
     extensions::Extensions,
     value::Value,
 };
@@ -73,7 +73,7 @@ impl Options {
     /// This function contains an `expect()` call that cannot panic in practice:
     /// when UTF-8 validation fails, we slice up to `valid_up_to()` which is
     /// guaranteed to be valid UTF-8 by the `Utf8Error` contract.
-    pub fn from_reader<R>(&self, mut rdr: R) -> SpannedResult<Value>
+    pub fn from_reader<R>(&self, mut rdr: R) -> Result<Value>
     where
         R: io::Read,
     {
@@ -87,14 +87,20 @@ impl Options {
                 Err(err) => core::str::from_utf8(&bytes[..err.valid_up_to()])
                     .expect("source is valid up to error"),
             };
-            return Err(SpannedError::wrap(io_err.into(), valid_input));
+            return Err(Error::wrap(
+                ErrorKind::Io {
+                    message: io_err.to_string(),
+                    source: None,
+                },
+                valid_input,
+            ));
         }
 
         self.from_bytes(&bytes)
     }
 
     /// Parse a RON string into a Value using the AST parser.
-    pub fn from_str(&self, s: &str) -> SpannedResult<Value> {
+    pub fn from_str(&self, s: &str) -> Result<Value> {
         let doc = parse_document(s)?;
 
         match to_value(&doc) {
@@ -105,14 +111,19 @@ impl Options {
             }
             None => {
                 // Empty document - return EOF error (consistent with FromRon::from_ron)
-                Err(SpannedError::at_start(Error::Eof))
+                Err(Error::eof())
             }
         }
     }
 
     /// Parse RON bytes into a Value using the AST parser.
-    pub fn from_bytes(&self, s: &[u8]) -> SpannedResult<Value> {
-        let s = core::str::from_utf8(s).map_err(|e| SpannedError::at_start(Error::Utf8Error(e)))?;
+    pub fn from_bytes(&self, s: &[u8]) -> Result<Value> {
+        let s = core::str::from_utf8(s).map_err(|e| {
+            Error::at_start(ErrorKind::Utf8 {
+                message: e.to_string(),
+                source: None,
+            })
+        })?;
         self.from_str(s)
     }
 }

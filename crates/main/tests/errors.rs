@@ -269,12 +269,12 @@ fn error_has_position_info() {
 
 #[test]
 fn error_multiline_position() {
-    let result: Result<Value, _> =
-        r#"[
+    let result: Result<Value, _> = r#"[
     1,
     2,
 
-"#.parse();
+"#
+    .parse();
     let err = result.unwrap_err();
     let msg = format!("{err}");
     // Should show position beyond line 1

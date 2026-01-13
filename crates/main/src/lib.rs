@@ -68,10 +68,7 @@ pub mod value;
 pub use crate::{
     ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing},
     convert::{AstMapAccess, FromRon, FromRonFields, ParsedInt, ToRon, parse_int_raw},
-    error::{
-        Error, PathSegment, Position, Span, SpannedError, SpannedResult, ValidationError,
-        ValidationErrorKind,
-    },
+    error::{Error, ErrorKind, PathSegment, Position, Result, Span},
     extensions::Extensions,
     options::Options,
     value::{Map, NamedContent, Number, StructFields, Value},
@@ -88,7 +85,7 @@ pub use crate::{
 /// assert_eq!(value, Value::Number(Number::U8(42)));
 /// ```
 #[deprecated]
-pub fn from_str(s: &str) -> SpannedResult<Value> {
+pub fn from_str(s: &str) -> Result<Value> {
     Options::default().from_str(s)
 }
 
@@ -103,12 +100,12 @@ pub fn from_str(s: &str) -> SpannedResult<Value> {
 /// assert_eq!(value, Value::Number(Number::U8(42)));
 /// ```
 #[deprecated]
-pub fn from_bytes(s: &[u8]) -> SpannedResult<Value> {
+pub fn from_bytes(s: &[u8]) -> Result<Value> {
     Options::default().from_bytes(s)
 }
 
 /// Deserialize a Value from a reader.
 #[deprecated]
-pub fn from_reader<R: std::io::Read>(rdr: R) -> SpannedResult<Value> {
+pub fn from_reader<R: std::io::Read>(rdr: R) -> Result<Value> {
     Options::default().from_reader(rdr)
 }

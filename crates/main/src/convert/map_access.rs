@@ -1,14 +1,14 @@
 //! `AstMapAccess` helper for struct deserialization with span preservation.
 
 use alloc::borrow::Cow;
+use core::hash::{BuildHasher, Hash};
+use std::collections::HashMap;
 
 use super::{FromRon, FromRonFields, expr_type_name};
 use crate::{
     ast::{AnonStructExpr, Expr, FieldsBody, StringExpr, StringKind, StructField},
-    error::{Error, Span, SpannedError, SpannedResult},
+    error::{Error, ErrorKind, Result, Span},
 };
-use core::hash::{BuildHasher, Hash};
-use std::collections::HashMap;
 
 /// Maximum number of fields supported in a struct.
 ///
@@ -24,14 +24,14 @@ pub const MAX_FIELDS: usize = 64;
 ///
 /// ```
 /// use ron2::{AstMapAccess, FromRon};
-/// use ron2::ast::{Expr, AnonStructExpr};
-/// use ron2::error::SpannedResult;
+/// use ron2::ast::Expr;
+/// use ron2::error::Result;
 ///
 /// // Manually implementing FromRon for a struct
 /// struct Point { x: i32, y: i32 }
 ///
 /// impl FromRon for Point {
-///     fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+///     fn from_ast(expr: &Expr<'_>) -> Result<Self> {
 ///         match expr {
 ///             Expr::AnonStruct(s) => {
 ///                 let mut access = AstMapAccess::from_anon(s, Some("Point"))?;
@@ -40,10 +40,7 @@ pub const MAX_FIELDS: usize = 64;
 ///                 access.deny_unknown_fields(&["x", "y"])?;
 ///                 Ok(Point { x, y })
 ///             }
-///             _ => Err(ron2::error::SpannedError {
-///                 code: ron2::error::Error::ExpectedStructLike,
-///                 span: expr.span().clone(),
-///             })
+///             _ => Err(ron2::Error::expected("struct", expr.span().clone()))
 ///         }
 ///     }
 /// }
@@ -68,18 +65,15 @@ impl<'a> AstMapAccess<'a> {
     /// Returns an error if:
     /// - The struct has more than 64 fields
     /// - Duplicate field names are found
-    pub fn from_anon(
-        s: &'a AnonStructExpr<'a>,
-        struct_name: Option<&'a str>,
-    ) -> SpannedResult<Self> {
+    pub fn from_anon(s: &'a AnonStructExpr<'a>, struct_name: Option<&'a str>) -> Result<Self> {
         if s.fields.len() > MAX_FIELDS {
-            return Err(SpannedError {
-                code: Error::TooManyFields {
+            return Err(Error::with_span(
+                ErrorKind::TooManyFields {
                     count: s.fields.len(),
                     limit: MAX_FIELDS,
                 },
-                span: s.span.clone(),
-            });
+                s.span.clone(),
+            ));
         }
 
         // Check for duplicate field names via linear scan
@@ -87,13 +81,13 @@ impl<'a> AstMapAccess<'a> {
             let name = field.name.name.as_ref();
             for earlier in &s.fields[..i] {
                 if earlier.name.name.as_ref() == name {
-                    return Err(SpannedError {
-                        code: Error::DuplicateStructField {
+                    return Err(Error::with_span(
+                        ErrorKind::DuplicateField {
                             field: Cow::Owned(name.to_string()),
                             outer: struct_name.map(|s| Cow::Owned(s.to_string())),
                         },
-                        span: field.name.span.clone(),
-                    });
+                        field.name.span.clone(),
+                    ));
                 }
             }
         }
@@ -117,15 +111,15 @@ impl<'a> AstMapAccess<'a> {
         fields_body: &'a FieldsBody<'a>,
         struct_name: Option<&'a str>,
         struct_span: Span,
-    ) -> SpannedResult<Self> {
+    ) -> Result<Self> {
         if fields_body.fields.len() > MAX_FIELDS {
-            return Err(SpannedError {
-                code: Error::TooManyFields {
+            return Err(Error::with_span(
+                ErrorKind::TooManyFields {
                     count: fields_body.fields.len(),
                     limit: MAX_FIELDS,
                 },
-                span: struct_span,
-            });
+                struct_span,
+            ));
         }
 
         // Check for duplicate field names via linear scan
@@ -133,13 +127,13 @@ impl<'a> AstMapAccess<'a> {
             let name = field.name.name.as_ref();
             for earlier in &fields_body.fields[..i] {
                 if earlier.name.name.as_ref() == name {
-                    return Err(SpannedError {
-                        code: Error::DuplicateStructField {
+                    return Err(Error::with_span(
+                        ErrorKind::DuplicateField {
                             field: Cow::Owned(name.to_string()),
                             outer: struct_name.map(|s| Cow::Owned(s.to_string())),
                         },
-                        span: field.name.span.clone(),
-                    });
+                        field.name.span.clone(),
+                    ));
                 }
             }
         }
@@ -164,26 +158,26 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// Returns an error with the field's span if deserialization fails,
     /// or the struct's span if the field is missing.
-    pub fn required<T: FromRon>(&mut self, name: &'static str) -> SpannedResult<T> {
+    pub fn required<T: FromRon>(&mut self, name: &'static str) -> Result<T> {
         match self.find_field(name) {
             Some((idx, field)) => {
                 self.consumed |= 1 << idx;
                 T::from_ast(&field.value)
             }
-            None => Err(SpannedError {
-                code: Error::MissingStructField {
+            None => Err(Error::with_span(
+                ErrorKind::MissingField {
                     field: Cow::Borrowed(name),
                     outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
                 },
-                span: self.struct_span.clone(),
-            }),
+                self.struct_span.clone(),
+            )),
         }
     }
 
     /// Get an optional field.
     ///
     /// Returns `Ok(None)` if the field is missing.
-    pub fn optional<T: FromRon>(&mut self, name: &'static str) -> SpannedResult<Option<T>> {
+    pub fn optional<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
         match self.find_field(name) {
             Some((idx, field)) => {
                 self.consumed |= 1 << idx;
@@ -194,7 +188,7 @@ impl<'a> AstMapAccess<'a> {
     }
 
     /// Get a field with a default value if missing.
-    pub fn with_default<T: FromRon + Default>(&mut self, name: &'static str) -> SpannedResult<T> {
+    pub fn with_default<T: FromRon + Default>(&mut self, name: &'static str) -> Result<T> {
         match self.find_field(name) {
             Some((idx, field)) => {
                 self.consumed |= 1 << idx;
@@ -209,7 +203,7 @@ impl<'a> AstMapAccess<'a> {
         &mut self,
         name: &'static str,
         default_fn: F,
-    ) -> SpannedResult<T> {
+    ) -> Result<T> {
         match self.find_field(name) {
             Some((idx, field)) => {
                 self.consumed |= 1 << idx;
@@ -223,18 +217,18 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// Pass the list of expected field names. Returns an error pointing to
     /// the first unknown field's span.
-    pub fn deny_unknown_fields(&self, expected: &'static [&'static str]) -> SpannedResult<()> {
+    pub fn deny_unknown_fields(&self, expected: &'static [&'static str]) -> Result<()> {
         for (i, field) in self.fields.iter().enumerate() {
             if self.consumed & (1 << i) == 0 {
                 let name = field.name.name.as_ref();
-                return Err(SpannedError {
-                    code: Error::NoSuchStructField {
+                return Err(Error::with_span(
+                    ErrorKind::UnknownField {
+                        field: Cow::Owned(name.to_string()),
                         expected,
-                        found: Cow::Owned(name.to_string()),
                         outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
                     },
-                    span: field.name.span.clone(),
-                });
+                    field.name.span.clone(),
+                ));
             }
         }
         Ok(())
@@ -255,10 +249,7 @@ impl<'a> AstMapAccess<'a> {
     /// this method rejects bare values and requires explicit option syntax.
     ///
     /// Use this for fields marked with `#[ron(explicit)]`.
-    pub fn required_explicit<T: FromRon>(
-        &mut self,
-        name: &'static str,
-    ) -> SpannedResult<Option<T>> {
+    pub fn required_explicit<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
         match self.find_field(name) {
             Some((idx, field)) => {
                 self.consumed |= 1 << idx;
@@ -267,22 +258,22 @@ impl<'a> AstMapAccess<'a> {
                         None => Ok(None),
                         Some(inner) => Ok(Some(T::from_ast(&inner.expr)?)),
                     },
-                    other => Err(SpannedError {
-                        code: Error::InvalidValueForType {
+                    other => Err(Error::with_span(
+                        ErrorKind::TypeMismatch {
                             expected: "Some(...) or None".to_string(),
                             found: expr_type_name(other).to_string(),
                         },
-                        span: other.span().clone(),
-                    }),
+                        other.span().clone(),
+                    )),
                 }
             }
-            None => Err(SpannedError {
-                code: Error::MissingStructField {
+            None => Err(Error::with_span(
+                ErrorKind::MissingField {
                     field: Cow::Borrowed(name),
                     outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
                 },
-                span: self.struct_span.clone(),
-            }),
+                self.struct_span.clone(),
+            )),
         }
     }
 
@@ -292,10 +283,7 @@ impl<'a> AstMapAccess<'a> {
     /// this method rejects bare values and requires explicit option syntax.
     ///
     /// Use this for fields marked with `#[ron(explicit, default)]`.
-    pub fn with_default_explicit<T: FromRon>(
-        &mut self,
-        name: &'static str,
-    ) -> SpannedResult<Option<T>> {
+    pub fn with_default_explicit<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
         match self.find_field(name) {
             Some((idx, field)) => {
                 self.consumed |= 1 << idx;
@@ -304,13 +292,13 @@ impl<'a> AstMapAccess<'a> {
                         None => Ok(None),
                         Some(inner) => Ok(Some(T::from_ast(&inner.expr)?)),
                     },
-                    other => Err(SpannedError {
-                        code: Error::InvalidValueForType {
+                    other => Err(Error::with_span(
+                        ErrorKind::TypeMismatch {
                             expected: "Some(...) or None".to_string(),
                             found: expr_type_name(other).to_string(),
                         },
-                        span: other.span().clone(),
-                    }),
+                        other.span().clone(),
+                    )),
                 }
             }
             None => Ok(None),
@@ -324,13 +312,13 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// The inner type must implement [`FromRonFields`] to consume fields
     /// from this access.
-    pub fn flatten<T: FromRonFields>(&mut self) -> SpannedResult<T> {
+    pub fn flatten<T: FromRonFields>(&mut self) -> Result<T> {
         T::from_fields(self)
     }
 }
 
 impl<T: FromRonFields> FromRonFields for Option<T> {
-    fn from_fields(access: &mut AstMapAccess<'_>) -> SpannedResult<Self> {
+    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
         let consumed_before = access.consumed;
 
         match T::from_fields(access) {
@@ -343,7 +331,7 @@ impl<T: FromRonFields> FromRonFields for Option<T> {
             }
             Err(err) => {
                 if access.consumed == consumed_before
-                    && matches!(err.code, Error::MissingStructField { .. })
+                    && matches!(err.kind(), ErrorKind::MissingField { .. })
                 {
                     Ok(None)
                 } else {
@@ -357,7 +345,7 @@ impl<T: FromRonFields> FromRonFields for Option<T> {
 impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRonFields
     for HashMap<K, V, S>
 {
-    fn from_fields(access: &mut AstMapAccess<'_>) -> SpannedResult<Self> {
+    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
         let remaining = access
             .fields
             .iter()
@@ -425,7 +413,7 @@ mod tests {
 
             // deny_unknown_fields should fail because 'b' wasn't consumed
             let err = access.deny_unknown_fields(&["a", "c"]).unwrap_err();
-            assert!(matches!(err.code, Error::NoSuchStructField { .. }));
+            assert!(matches!(err.kind(), ErrorKind::UnknownField { .. }));
         } else {
             panic!("Expected anonymous struct");
         }
@@ -458,12 +446,12 @@ mod tests {
         let doc = parse_document(ron).unwrap();
         if let Some(Expr::AnonStruct(s)) = &doc.value {
             let err = AstMapAccess::from_anon(s, Some("Test")).unwrap_err();
-            match err.code {
-                Error::DuplicateStructField { field, outer } => {
+            match err.kind() {
+                ErrorKind::DuplicateField { field, outer } => {
                     assert_eq!(field.as_ref(), "a");
                     assert_eq!(outer.as_deref(), Some("Test"));
                 }
-                _ => panic!("Expected DuplicateStructField error"),
+                _ => panic!("Expected DuplicateField error"),
             }
         } else {
             panic!("Expected anonymous struct");
@@ -485,12 +473,12 @@ mod tests {
         let doc = parse_document(&ron).unwrap();
         if let Some(Expr::AnonStruct(s)) = &doc.value {
             let err = AstMapAccess::from_anon(s, Some("TooLarge")).unwrap_err();
-            match err.code {
-                Error::TooManyFields { count, limit } => {
-                    assert_eq!(count, 65);
-                    assert_eq!(limit, MAX_FIELDS);
+            match err.kind() {
+                ErrorKind::TooManyFields { count, limit } => {
+                    assert_eq!(*count, 65);
+                    assert_eq!(*limit, MAX_FIELDS);
                 }
-                _ => panic!("Expected TooManyFields error, got {:?}", err.code),
+                _ => panic!("Expected TooManyFields error, got {:?}", err.kind()),
             }
         } else {
             panic!("Expected anonymous struct");
@@ -525,12 +513,12 @@ mod tests {
         if let Some(Expr::AnonStruct(s)) = &doc.value {
             let mut access = AstMapAccess::from_anon(s, Some("Test")).unwrap();
             let err = access.required::<i32>("missing").unwrap_err();
-            match err.code {
-                Error::MissingStructField { field, outer } => {
+            match err.kind() {
+                ErrorKind::MissingField { field, outer } => {
                     assert_eq!(field.as_ref(), "missing");
                     assert_eq!(outer.as_deref(), Some("Test"));
                 }
-                _ => panic!("Expected MissingStructField error"),
+                _ => panic!("Expected MissingField error"),
             }
         } else {
             panic!("Expected anonymous struct");

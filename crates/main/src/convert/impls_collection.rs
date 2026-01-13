@@ -8,10 +8,10 @@ use alloc::{
 use core::hash::{BuildHasher, Hash};
 use std::collections::{HashMap, HashSet};
 
-use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
+use super::{FromRon, ToRon, invalid_value, spanned_err, spanned_type_mismatch};
 use crate::{
     ast::{Expr, synthetic_map, synthetic_seq},
-    error::{Error, Result, SpannedResult},
+    error::Result,
 };
 
 // =============================================================================
@@ -121,7 +121,7 @@ fn extract_seq_elements<'a>(expr: &'a Expr<'a>) -> Option<Vec<&'a Expr<'a>>> {
 }
 
 impl<T: FromRon> FromRon for Vec<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match extract_seq_elements(expr) {
             Some(elements) => elements.into_iter().map(T::from_ast).collect(),
             None => Err(spanned_type_mismatch("sequence", expr)),
@@ -130,7 +130,7 @@ impl<T: FromRon> FromRon for Vec<T> {
 }
 
 impl<T: FromRon> FromRon for VecDeque<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match extract_seq_elements(expr) {
             Some(elements) => elements.into_iter().map(T::from_ast).collect(),
             None => Err(spanned_type_mismatch("sequence", expr)),
@@ -139,7 +139,7 @@ impl<T: FromRon> FromRon for VecDeque<T> {
 }
 
 impl<T: FromRon> FromRon for LinkedList<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match extract_seq_elements(expr) {
             Some(elements) => elements.into_iter().map(T::from_ast).collect(),
             None => Err(spanned_type_mismatch("sequence", expr)),
@@ -148,19 +148,19 @@ impl<T: FromRon> FromRon for LinkedList<T> {
 }
 
 impl<T: FromRon + Eq + Hash, S: BuildHasher + Default> FromRon for HashSet<T, S> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match extract_seq_elements(expr) {
             Some(elements) => elements
                 .into_iter()
                 .map(T::from_ast)
-                .collect::<SpannedResult<HashSet<T, S>>>(),
+                .collect::<Result<HashSet<T, S>>>(),
             None => Err(spanned_type_mismatch("sequence", expr)),
         }
     }
 }
 
 impl<T: FromRon + Ord> FromRon for BTreeSet<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match extract_seq_elements(expr) {
             Some(elements) => elements.into_iter().map(T::from_ast).collect(),
             None => Err(spanned_type_mismatch("sequence", expr)),
@@ -169,12 +169,12 @@ impl<T: FromRon + Ord> FromRon for BTreeSet<T> {
 }
 
 impl<T: FromRon, const N: usize> FromRon for [T; N] {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match extract_seq_elements(expr) {
             Some(elements) => {
                 if elements.len() != N {
                     return Err(spanned_err(
-                        Error::invalid_value(format!(
+                        invalid_value(format!(
                             "expected array of length {N}, got {}",
                             elements.len()
                         )),
@@ -184,10 +184,10 @@ impl<T: FromRon, const N: usize> FromRon for [T; N] {
                 let vec: Vec<T> = elements
                     .into_iter()
                     .map(T::from_ast)
-                    .collect::<SpannedResult<_>>()?;
+                    .collect::<Result<_>>()?;
                 vec.try_into().map_err(|_| {
                     spanned_err(
-                        Error::invalid_value(format!("failed to convert to array of length {N}")),
+                        invalid_value(format!("failed to convert to array of length {N}")),
                         expr,
                     )
                 })
@@ -199,7 +199,7 @@ impl<T: FromRon, const N: usize> FromRon for [T; N] {
 
 // Map types
 impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRon for HashMap<K, V, S> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Map(map) => {
                 let mut result =
@@ -217,7 +217,7 @@ impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRon for H
 }
 
 impl<K: FromRon + Ord, V: FromRon> FromRon for BTreeMap<K, V> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Map(map) => {
                 let mut result = BTreeMap::new();
@@ -236,7 +236,7 @@ impl<K: FromRon + Ord, V: FromRon> FromRon for BTreeMap<K, V> {
 impl<K: FromRon + Eq + Hash, V: FromRon, S: core::hash::BuildHasher + Default> FromRon
     for indexmap::IndexMap<K, V, S>
 {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Map(map) => {
                 let mut result =
@@ -256,12 +256,9 @@ impl<K: FromRon + Eq + Hash, V: FromRon, S: core::hash::BuildHasher + Default> F
 impl<T: FromRon + Eq + Hash, S: core::hash::BuildHasher + Default> FromRon
     for indexmap::IndexSet<T, S>
 {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match extract_seq_elements(expr) {
-            Some(elements) => elements
-                .into_iter()
-                .map(T::from_ast)
-                .collect::<SpannedResult<_>>(),
+            Some(elements) => elements.into_iter().map(T::from_ast).collect::<Result<_>>(),
             None => Err(spanned_type_mismatch("sequence", expr)),
         }
     }

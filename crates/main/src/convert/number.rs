@@ -2,7 +2,7 @@
 
 use crate::{
     ast::NumberKind,
-    error::{Error, Result},
+    error::{Error, ErrorKind, Result},
 };
 
 /// Result of parsing an integer from its raw string representation.
@@ -49,9 +49,11 @@ pub fn parse_int_raw(raw: &str) -> Result<ParsedInt> {
         let (base, digits) = determine_base_and_digits(unsigned_raw);
         u128::from_str_radix(digits, base)
     }
-    .map_err(|_| Error::IntegerOutOfBounds {
-        value: raw.to_string().into(),
-        target_type: "u128",
+    .map_err(|_| {
+        Error::new(ErrorKind::IntegerOutOfBounds {
+            value: raw.to_string().into(),
+            target_type: "u128",
+        })
     })?;
 
     Ok(ParsedInt {
@@ -73,25 +75,34 @@ where
     match kind {
         NumberKind::Integer => {
             let parsed = parse_int_raw(raw)?;
-            T::try_from(parsed.magnitude).map_err(|_| Error::IntegerOutOfBounds {
-                value: raw_trimmed.to_string().into(),
-                target_type,
+            T::try_from(parsed.magnitude).map_err(|_| {
+                Error::new(ErrorKind::IntegerOutOfBounds {
+                    value: raw_trimmed.to_string().into(),
+                    target_type,
+                })
             })
         }
         NumberKind::NegativeInteger => {
             let parsed = parse_int_raw(raw)?;
             // Convert magnitude to signed and negate
-            let val = i128::try_from(parsed.magnitude).map_err(|_| Error::IntegerOutOfBounds {
-                value: raw_trimmed.to_string().into(),
-                target_type,
+            let val = i128::try_from(parsed.magnitude).map_err(|_| {
+                Error::new(ErrorKind::IntegerOutOfBounds {
+                    value: raw_trimmed.to_string().into(),
+                    target_type,
+                })
             })?;
             let val = -val;
-            T::try_from(val).map_err(|_| Error::IntegerOutOfBounds {
-                value: raw_trimmed.to_string().into(),
-                target_type,
+            T::try_from(val).map_err(|_| {
+                Error::new(ErrorKind::IntegerOutOfBounds {
+                    value: raw_trimmed.to_string().into(),
+                    target_type,
+                })
             })
         }
-        NumberKind::Float | NumberKind::SpecialFloat => Err(Error::ExpectedInteger),
+        NumberKind::Float | NumberKind::SpecialFloat => Err(Error::new(ErrorKind::TypeMismatch {
+            expected: "integer".into(),
+            found: "float".into(),
+        })),
     }
 }
 
@@ -103,16 +114,29 @@ pub(crate) fn parse_float_from_raw(raw: &str, kind: &NumberKind) -> Result<f64> 
             "inf" => Ok(f64::INFINITY),
             "-inf" => Ok(f64::NEG_INFINITY),
             "NaN" => Ok(f64::NAN),
-            _ => Err(Error::ExpectedFloat),
+            _ => Err(Error::new(ErrorKind::TypeMismatch {
+                expected: "float".into(),
+                found: raw.into(),
+            })),
         },
         NumberKind::Float | NumberKind::Integer | NumberKind::NegativeInteger => {
             if raw.contains('_') {
                 // Slow path: filter underscores
                 let cleaned: alloc::string::String = raw.chars().filter(|&c| c != '_').collect();
-                cleaned.parse().map_err(|_| Error::ExpectedFloat)
+                cleaned.parse().map_err(|_| {
+                    Error::new(ErrorKind::TypeMismatch {
+                        expected: "float".into(),
+                        found: raw.into(),
+                    })
+                })
             } else {
                 // Fast path: no underscores (common case)
-                raw.parse().map_err(|_| Error::ExpectedFloat)
+                raw.parse().map_err(|_| {
+                    Error::new(ErrorKind::TypeMismatch {
+                        expected: "float".into(),
+                        found: raw.into(),
+                    })
+                })
             }
         }
     }

@@ -151,9 +151,9 @@ impl<'a, W: Write> AstSerializer<'a, W> {
             Expr::AnonStruct(s) => self.write_anon_struct(s)?,
             Expr::Struct(s) => self.write_struct(s)?,
             Expr::Error(_) => {
-                return Err(crate::error::Error::Message(
+                return Err(crate::error::Error::new(crate::error::ErrorKind::Message(
                     "cannot serialize error expression".to_string(),
-                ));
+                )));
             }
         }
         Ok(())

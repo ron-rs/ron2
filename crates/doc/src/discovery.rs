@@ -79,8 +79,9 @@ fn file_path_to_type_path(path: &Path, base: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use ron2::schema::{write_schema, Field, TypeKind};
+
     use super::*;
-    use ron2::schema::{Field, TypeKind, write_schema};
 
     #[test]
     fn test_file_path_to_type_path() {
@@ -109,8 +110,7 @@ mod tests {
             )],
         });
 
-        write_schema("my_crate::Generic", &schema, Some(temp_dir.path()))
-            .expect("write schema");
+        write_schema("my_crate::Generic", &schema, Some(temp_dir.path())).expect("write schema");
 
         let discovered = discover_schemas(temp_dir.path()).expect("discover schemas");
         assert_eq!(discovered.len(), 1);

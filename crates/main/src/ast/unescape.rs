@@ -5,7 +5,7 @@
 use alloc::{string::String, vec::Vec};
 
 use super::{BytesKind, StringKind};
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 
 /// Decode a string literal.
 /// Returns `(value, kind)` on success, or `(Error, byte_offset_in_raw)` on failure.
@@ -77,32 +77,48 @@ pub fn unescape_string(s: &str) -> core::result::Result<String, (Error, usize)> 
                     byte_offset += 1;
                     let hex: String = chars.by_ref().take(2).collect();
                     byte_offset += hex.len();
-                    let val = u8::from_str_radix(&hex, 16)
-                        .map_err(|_| (Error::InvalidEscape("invalid hex escape"), char_start))?;
+                    let val = u8::from_str_radix(&hex, 16).map_err(|_| {
+                        (
+                            Error::new(ErrorKind::InvalidEscape("invalid hex escape".into())),
+                            char_start,
+                        )
+                    })?;
                     result.push(val as char);
                 }
                 Some('u') => {
                     byte_offset += 1;
                     if chars.next() != Some('{') {
-                        return Err((Error::InvalidEscape("expected { after \\u"), char_start));
+                        return Err((
+                            Error::new(ErrorKind::InvalidEscape("expected { after \\u".into())),
+                            char_start,
+                        ));
                     }
                     byte_offset += 1;
                     let hex: String = chars.by_ref().take_while(|&c| c != '}').collect();
                     byte_offset += hex.len() + 1; // +1 for closing }
                     let val = u32::from_str_radix(&hex, 16).map_err(|_| {
-                        (Error::InvalidEscape("invalid unicode escape"), char_start)
+                        (
+                            Error::new(ErrorKind::InvalidEscape("invalid unicode escape".into())),
+                            char_start,
+                        )
                     })?;
                     let c = char::from_u32(val).ok_or((
-                        Error::InvalidEscape("invalid unicode codepoint"),
+                        Error::new(ErrorKind::InvalidEscape("invalid unicode codepoint".into())),
                         char_start,
                     ))?;
                     result.push(c);
                 }
                 Some(_) => {
-                    return Err((Error::InvalidEscape("unknown escape sequence"), char_start));
+                    return Err((
+                        Error::new(ErrorKind::InvalidEscape("unknown escape sequence".into())),
+                        char_start,
+                    ));
                 }
                 None => {
-                    return Err((Error::InvalidEscape("unexpected end of string"), char_start));
+                    return Err((
+                        Error::new(ErrorKind::InvalidEscape("unexpected end of string".into())),
+                        char_start,
+                    ));
                 }
             }
         } else {
@@ -155,17 +171,28 @@ pub fn unescape_bytes(s: &str) -> Result<Vec<u8>> {
                 Some('\'') => result.push(b'\''),
                 Some('x') => {
                     let hex: String = chars.by_ref().take(2).collect();
-                    let val = u8::from_str_radix(&hex, 16)
-                        .map_err(|_| Error::InvalidEscape("invalid hex escape"))?;
+                    let val = u8::from_str_radix(&hex, 16).map_err(|_| {
+                        Error::new(ErrorKind::InvalidEscape("invalid hex escape".into()))
+                    })?;
                     result.push(val);
                 }
-                Some(_) => return Err(Error::InvalidEscape("unknown escape sequence")),
-                None => return Err(Error::InvalidEscape("unexpected end of string")),
+                Some(_) => {
+                    return Err(Error::new(ErrorKind::InvalidEscape(
+                        "unknown escape sequence".into(),
+                    )));
+                }
+                None => {
+                    return Err(Error::new(ErrorKind::InvalidEscape(
+                        "unexpected end of string".into(),
+                    )));
+                }
             }
         } else if c.is_ascii() {
             result.push(c as u8);
         } else {
-            return Err(Error::InvalidEscape("non-ASCII character in byte string"));
+            return Err(Error::new(ErrorKind::InvalidEscape(
+                "non-ASCII character in byte string".into(),
+            )));
         }
     }
 
@@ -175,7 +202,12 @@ pub fn unescape_bytes(s: &str) -> Result<Vec<u8>> {
 /// Unescape a single character.
 pub fn unescape_char(s: &str) -> Result<char> {
     let mut chars = s.chars();
-    let c = chars.next().ok_or(Error::ExpectedChar)?;
+    let c = chars.next().ok_or_else(|| {
+        Error::new(ErrorKind::Expected {
+            expected: "character".into(),
+            context: None,
+        })
+    })?;
 
     if c == '\\' {
         match chars.next() {
@@ -187,20 +219,28 @@ pub fn unescape_char(s: &str) -> Result<char> {
             Some('\'') => Ok('\''),
             Some('x') => {
                 let hex: String = chars.take(2).collect();
-                let val = u8::from_str_radix(&hex, 16)
-                    .map_err(|_| Error::InvalidEscape("invalid hex escape"))?;
+                let val = u8::from_str_radix(&hex, 16).map_err(|_| {
+                    Error::new(ErrorKind::InvalidEscape("invalid hex escape".into()))
+                })?;
                 Ok(val as char)
             }
             Some('u') => {
                 if chars.next() != Some('{') {
-                    return Err(Error::InvalidEscape("expected { after \\u"));
+                    return Err(Error::new(ErrorKind::InvalidEscape(
+                        "expected { after \\u".into(),
+                    )));
                 }
                 let hex: String = chars.take_while(|&c| c != '}').collect();
-                let val = u32::from_str_radix(&hex, 16)
-                    .map_err(|_| Error::InvalidEscape("invalid unicode escape"))?;
-                char::from_u32(val).ok_or(Error::InvalidEscape("invalid unicode codepoint"))
+                let val = u32::from_str_radix(&hex, 16).map_err(|_| {
+                    Error::new(ErrorKind::InvalidEscape("invalid unicode escape".into()))
+                })?;
+                char::from_u32(val).ok_or_else(|| {
+                    Error::new(ErrorKind::InvalidEscape("invalid unicode codepoint".into()))
+                })
             }
-            _ => Err(Error::InvalidEscape("unknown escape sequence")),
+            _ => Err(Error::new(ErrorKind::InvalidEscape(
+                "unknown escape sequence".into(),
+            ))),
         }
     } else {
         Ok(c)
@@ -210,7 +250,12 @@ pub fn unescape_char(s: &str) -> Result<char> {
 /// Unescape a byte character.
 pub fn unescape_byte_char(s: &str) -> Result<u8> {
     let mut chars = s.chars();
-    let c = chars.next().ok_or(Error::ExpectedByteLiteral)?;
+    let c = chars.next().ok_or_else(|| {
+        Error::new(ErrorKind::Expected {
+            expected: "byte literal".into(),
+            context: None,
+        })
+    })?;
 
     if c == '\\' {
         match chars.next() {
@@ -222,13 +267,18 @@ pub fn unescape_byte_char(s: &str) -> Result<u8> {
             Some('\'') => Ok(b'\''),
             Some('x') => {
                 let hex: String = chars.take(2).collect();
-                u8::from_str_radix(&hex, 16).map_err(|_| Error::InvalidEscape("invalid hex escape"))
+                u8::from_str_radix(&hex, 16)
+                    .map_err(|_| Error::new(ErrorKind::InvalidEscape("invalid hex escape".into())))
             }
-            _ => Err(Error::InvalidEscape("unknown escape sequence")),
+            _ => Err(Error::new(ErrorKind::InvalidEscape(
+                "unknown escape sequence".into(),
+            ))),
         }
     } else if c.is_ascii() {
         Ok(c as u8)
     } else {
-        Err(Error::InvalidEscape("non-ASCII character in byte literal"))
+        Err(Error::new(ErrorKind::InvalidEscape(
+            "non-ASCII character in byte literal".into(),
+        )))
     }
 }

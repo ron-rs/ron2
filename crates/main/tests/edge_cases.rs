@@ -505,7 +505,8 @@ fn edge_comments_in_seq() {
         1, // first
         2, /* second */
         3  // third
-    ]"#.parse()
+    ]"#
+    .parse()
     .unwrap();
     assert_eq!(
         value,

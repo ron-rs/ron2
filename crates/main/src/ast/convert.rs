@@ -1,6 +1,3 @@
-// Allow deprecated errors during transition period
-#![allow(deprecated)]
-
 //! Conversion between AST and Value.
 //!
 //! This module provides bidirectional conversion:
@@ -25,21 +22,25 @@ use crate::{
         TupleElement, TupleExpr, UnitExpr,
     },
     convert::parse_int_raw,
-    error::{Error, Result, Span, SpannedError, SpannedResult},
+    error::{Error, ErrorKind, Result, Span},
     value::{F64, NamedContent, Number, StructFields, Value},
 };
 
 /// Extension trait to attach span information to `Result` errors.
 trait SpanExt<T> {
-    /// Convert a `Result<T, Error>` to `SpannedResult<T>` by attaching a span.
-    fn with_span(self, span: &Span) -> SpannedResult<T>;
+    /// Attach a span to any error.
+    fn with_span(self, span: &Span) -> Result<T>;
 }
 
 impl<T> SpanExt<T> for Result<T> {
-    fn with_span(self, span: &Span) -> SpannedResult<T> {
-        self.map_err(|code| SpannedError {
-            code,
-            span: span.clone(),
+    fn with_span(self, span: &Span) -> Result<T> {
+        self.map_err(|err| {
+            // If already has a span, preserve it; otherwise attach new span
+            if err.span().is_synthetic() {
+                Error::with_span(err.kind().clone(), span.clone())
+            } else {
+                err
+            }
         })
     }
 }
@@ -57,7 +58,7 @@ impl<T> SpanExt<T> for Result<T> {
 /// let doc = parse_document("42").unwrap();
 /// let value = to_value(&doc).unwrap();
 /// ```
-pub fn to_value(doc: &Document<'_>) -> Option<SpannedResult<Value>> {
+pub fn to_value(doc: &Document<'_>) -> Option<Result<Value>> {
     doc.value.as_ref().map(expr_to_value)
 }
 
@@ -65,7 +66,7 @@ pub fn to_value(doc: &Document<'_>) -> Option<SpannedResult<Value>> {
 ///
 /// Errors include the span of the expression that caused the error,
 /// enabling precise error reporting with source location.
-pub fn expr_to_value(expr: &Expr<'_>) -> SpannedResult<Value> {
+pub fn expr_to_value(expr: &Expr<'_>) -> Result<Value> {
     match expr {
         Expr::Unit(_) => Ok(Value::Unit),
         Expr::Bool(b) => Ok(Value::Bool(b.value)),
@@ -80,10 +81,7 @@ pub fn expr_to_value(expr: &Expr<'_>) -> SpannedResult<Value> {
         Expr::Tuple(tuple) => tuple_to_value(tuple),
         Expr::AnonStruct(s) => anon_struct_to_value(s),
         Expr::Struct(s) => struct_to_value(s),
-        Expr::Error(err) => Err(SpannedError {
-            code: err.error.clone(),
-            span: err.span.clone(),
-        }),
+        Expr::Error(err) => Err(Error::with_span(err.error.kind().clone(), err.span.clone())),
     }
 }
 
@@ -108,10 +106,8 @@ fn parse_integer(raw: &str) -> Result<Value> {
 
     if parsed.negative {
         // Convert magnitude to signed and negate
-        let val = i128::try_from(parsed.magnitude).map_err(|_| Error::IntegerOutOfBounds {
-            value: raw.to_string().into(),
-            target_type: "i128",
-        })?;
+        let val = i128::try_from(parsed.magnitude)
+            .map_err(|_| Error::integer_out_of_bounds(raw.to_string(), "i128"))?;
         let val = -val;
         fit_signed(val, raw)
     } else {
@@ -137,10 +133,7 @@ fn fit_signed(val: i128, #[allow(unused_variables)] raw: &str) -> Result<Value> 
     {
         i64::try_from(val)
             .map(fit_signed_64)
-            .map_err(|_| Error::IntegerOutOfBounds {
-                value: raw.to_string().into(),
-                target_type: "i64",
-            })
+            .map_err(|_| Error::integer_out_of_bounds(raw.to_string(), "i64"))
     }
 }
 
@@ -174,10 +167,7 @@ fn fit_unsigned(val: u128, #[allow(unused_variables)] raw: &str) -> Result<Value
     {
         u64::try_from(val)
             .map(fit_unsigned_64)
-            .map_err(|_| Error::IntegerOutOfBounds {
-                value: raw.to_string().into(),
-                target_type: "u64",
-            })
+            .map_err(|_| Error::integer_out_of_bounds(raw.to_string(), "u64"))
     }
 }
 
@@ -198,7 +188,12 @@ fn parse_float(raw: &str) -> Result<Value> {
     let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
 
     // Always parse as f64 for consistency
-    let val: f64 = cleaned.parse().map_err(|_| Error::ExpectedFloat)?;
+    let val: f64 = cleaned.parse().map_err(|_| {
+        Error::new(ErrorKind::Expected {
+            expected: "valid floating-point number".into(),
+            context: None,
+        })
+    })?;
     Ok(Value::Number(Number::F64(F64(val))))
 }
 
@@ -207,7 +202,10 @@ fn parse_special_float(raw: &str) -> Result<Value> {
         "inf" => Ok(Value::Number(Number::F64(F64(f64::INFINITY)))),
         "-inf" => Ok(Value::Number(Number::F64(F64(f64::NEG_INFINITY)))),
         "NaN" => Ok(Value::Number(Number::F64(F64(f64::NAN)))),
-        _ => Err(Error::ExpectedFloat),
+        _ => Err(Error::new(ErrorKind::Expected {
+            expected: "valid floating-point number".into(),
+            context: None,
+        })),
     }
 }
 
@@ -219,7 +217,7 @@ fn bytes_to_value(b: &BytesExpr<'_>) -> Value {
     Value::Bytes(b.value.clone())
 }
 
-fn option_to_value(opt: &OptionExpr<'_>) -> SpannedResult<Value> {
+fn option_to_value(opt: &OptionExpr<'_>) -> Result<Value> {
     match &opt.value {
         Some(inner) => {
             let val = expr_to_value(&inner.expr)?;
@@ -229,8 +227,8 @@ fn option_to_value(opt: &OptionExpr<'_>) -> SpannedResult<Value> {
     }
 }
 
-fn seq_to_value(seq: &SeqExpr<'_>) -> SpannedResult<Value> {
-    let items: SpannedResult<Vec<Value>> = seq
+fn seq_to_value(seq: &SeqExpr<'_>) -> Result<Value> {
+    let items: Result<Vec<Value>> = seq
         .items
         .iter()
         .map(|item| expr_to_value(&item.expr))
@@ -238,8 +236,8 @@ fn seq_to_value(seq: &SeqExpr<'_>) -> SpannedResult<Value> {
     Ok(Value::Seq(items?))
 }
 
-fn map_to_value(map: &MapExpr<'_>) -> SpannedResult<Value> {
-    let entries: SpannedResult<Vec<(Value, Value)>> = map
+fn map_to_value(map: &MapExpr<'_>) -> Result<Value> {
+    let entries: Result<Vec<(Value, Value)>> = map
         .entries
         .iter()
         .map(|entry| {
@@ -253,8 +251,8 @@ fn map_to_value(map: &MapExpr<'_>) -> SpannedResult<Value> {
 }
 
 /// Convert anonymous tuple `(a, b, c)` to `Value::Tuple`.
-fn tuple_to_value(tuple: &TupleExpr<'_>) -> SpannedResult<Value> {
-    let elements: SpannedResult<Vec<Value>> = tuple
+fn tuple_to_value(tuple: &TupleExpr<'_>) -> Result<Value> {
+    let elements: Result<Vec<Value>> = tuple
         .elements
         .iter()
         .map(|elem| expr_to_value(&elem.expr))
@@ -263,7 +261,7 @@ fn tuple_to_value(tuple: &TupleExpr<'_>) -> SpannedResult<Value> {
 }
 
 /// Convert anonymous struct `(field: value, ...)` to `Value::Struct`.
-fn anon_struct_to_value(s: &AnonStructExpr<'_>) -> SpannedResult<Value> {
+fn anon_struct_to_value(s: &AnonStructExpr<'_>) -> Result<Value> {
     let struct_fields: StructFields = s
         .fields
         .iter()
@@ -272,13 +270,13 @@ fn anon_struct_to_value(s: &AnonStructExpr<'_>) -> SpannedResult<Value> {
             let value = expr_to_value(&f.value)?;
             Ok((name, value))
         })
-        .collect::<SpannedResult<_>>()?;
+        .collect::<Result<_>>()?;
 
     Ok(Value::Struct(struct_fields))
 }
 
 /// Convert named struct/enum to `Value::Named`.
-fn struct_to_value(s: &StructExpr<'_>) -> SpannedResult<Value> {
+fn struct_to_value(s: &StructExpr<'_>) -> Result<Value> {
     let name = s.name.name.to_string();
 
     let content = match &s.body {
@@ -297,7 +295,7 @@ fn struct_to_value(s: &StructExpr<'_>) -> SpannedResult<Value> {
 }
 
 /// Convert tuple body to Vec<Value>.
-fn tuple_body_to_vec(tuple: &TupleBody<'_>) -> SpannedResult<Vec<Value>> {
+fn tuple_body_to_vec(tuple: &TupleBody<'_>) -> Result<Vec<Value>> {
     tuple
         .elements
         .iter()
@@ -306,7 +304,7 @@ fn tuple_body_to_vec(tuple: &TupleBody<'_>) -> SpannedResult<Vec<Value>> {
 }
 
 /// Convert fields body to `StructFields` (`Vec<(String, Value)>`).
-fn fields_body_to_struct_fields(fields: &FieldsBody<'_>) -> SpannedResult<StructFields> {
+fn fields_body_to_struct_fields(fields: &FieldsBody<'_>) -> Result<StructFields> {
     let mut result = StructFields::new();
     for field in &fields.fields {
         let key = field.name.name.to_string();

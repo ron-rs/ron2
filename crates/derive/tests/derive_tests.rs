@@ -563,9 +563,10 @@ fn test_field_level_error_span_invalid_type() {
 
     // The span should point to the invalid value "not_a_number"
     // which starts at line 2, column 11
-    assert_eq!(err.span.start.line, 2, "Error should be on line 2");
+    assert_eq!(err.span().start.line, 2, "Error should be on line 2");
     assert_eq!(
-        err.span.start.col, 11,
+        err.span().start.col,
+        11,
         "Error should point to column 11 (start of string)"
     );
 }
@@ -582,7 +583,7 @@ fn test_field_level_error_span_missing_field() {
 
     // For missing fields, the error points to the struct itself
     // The span should be at line 1 where the struct starts
-    assert_eq!(err.span.start.line, 1, "Error should be on line 1");
+    assert_eq!(err.span().start.line, 1, "Error should be on line 1");
 }
 
 #[test]
@@ -609,7 +610,7 @@ fn test_nested_field_error_span() {
     let err = Outer::from_ron(input).unwrap_err();
 
     // Error should point to "not_an_int" at line 4
-    assert_eq!(err.span.start.line, 4, "Error should be on line 4");
+    assert_eq!(err.span().start.line, 4, "Error should be on line 4");
 }
 
 #[test]
@@ -626,9 +627,10 @@ fn test_enum_variant_field_error_span() {
     let err = Message::from_ron(input).unwrap_err();
 
     // Error should point to "not_a_number"
-    assert_eq!(err.span.start.line, 1, "Error should be on line 1");
+    assert_eq!(err.span().start.line, 1, "Error should be on line 1");
     assert_eq!(
-        err.span.start.col, 15,
+        err.span().start.col,
+        15,
         "Error should point to the invalid string"
     );
 }
@@ -648,7 +650,7 @@ fn test_sequence_element_error_span() {
     let err = WithVec::from_ron(input).unwrap_err();
 
     // Error should point to "three" at line 2
-    assert_eq!(err.span.start.line, 2, "Error should be on line 2");
+    assert_eq!(err.span().start.line, 2, "Error should be on line 2");
 }
 
 #[test]
@@ -662,9 +664,10 @@ fn test_tuple_struct_element_error_span() {
     let err = Point::from_ron(input).unwrap_err();
 
     // Error should point to "not_an_int"
-    assert_eq!(err.span.start.line, 1, "Error should be on line 1");
+    assert_eq!(err.span().start.line, 1, "Error should be on line 1");
     assert_eq!(
-        err.span.start.col, 5,
+        err.span().start.col,
+        5,
         "Error should point to the invalid string"
     );
 }

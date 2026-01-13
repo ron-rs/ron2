@@ -85,23 +85,23 @@ fn derive_struct_ser(
                                                     fields.push((name, value));
                                                 }
                                                 _ => {
-                                                    return Err(::ron2::error::Error::Message(
+                                                    return Err(::ron2::Error::new(::ron2::error::ErrorKind::Message(
                                                         format!(
                                                             "flatten field {} map keys must be strings",
                                                             stringify!(#field_ident)
                                                         ),
-                                                    ));
+                                                    )));
                                                 }
                                             }
                                         }
                                     }
                                     _ => {
-                                        return Err(::ron2::error::Error::Message(
+                                        return Err(::ron2::Error::new(::ron2::error::ErrorKind::Message(
                                             format!(
                                                 "flatten field {} must serialize to a struct or map with string keys",
                                                 stringify!(#field_ident)
                                             )
-                                        ));
+                                        )));
                                     }
                                 }
                             }
@@ -118,23 +118,23 @@ fn derive_struct_ser(
                                             fields.push((name, value));
                                         }
                                         _ => {
-                                            return Err(::ron2::error::Error::Message(
+                                            return Err(::ron2::Error::new(::ron2::error::ErrorKind::Message(
                                                 format!(
                                                     "flatten field {} map keys must be strings",
                                                     stringify!(#field_ident)
                                                 ),
-                                            ));
+                                            )));
                                         }
                                     }
                                 }
                             }
                             _ => {
-                                return Err(::ron2::error::Error::Message(
+                                return Err(::ron2::Error::new(::ron2::error::ErrorKind::Message(
                                     format!(
                                         "flatten field {} must serialize to a struct or map with string keys",
                                         stringify!(#field_ident)
                                     )
-                                ));
+                                )));
                             }
                         }
                     };

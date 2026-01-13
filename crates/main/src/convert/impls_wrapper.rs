@@ -3,10 +3,10 @@
 use alloc::{borrow::Cow, boxed::Box, rc::Rc, sync::Arc};
 use core::cell::{Cell, RefCell};
 
-use super::{FromRon, ToRon, spanned_err, spanned_type_mismatch};
+use super::{FromRon, ToRon, invalid_value, spanned_err, spanned_type_mismatch};
 use crate::{
     ast::{Expr, synthetic_option, synthetic_tuple},
-    error::{Error, Result, SpannedResult},
+    error::Result,
 };
 
 // =============================================================================
@@ -23,7 +23,7 @@ impl<T: ToRon> ToRon for Option<T> {
 }
 
 impl<T: FromRon> FromRon for Option<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::Option(opt) => match &opt.value {
                 None => Ok(None),
@@ -46,7 +46,7 @@ impl<T: ToRon + ?Sized> ToRon for Box<T> {
 }
 
 impl<T: FromRon> FromRon for Box<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         Ok(Box::new(T::from_ast(expr)?))
     }
 }
@@ -78,7 +78,7 @@ impl<T: ToRon + Clone> ToRon for Cow<'_, T> {
 }
 
 impl<T: FromRon + Clone> FromRon for Cow<'static, T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         Ok(Cow::Owned(T::from_ast(expr)?))
     }
 }
@@ -94,7 +94,7 @@ impl<T: ToRon> ToRon for Rc<T> {
 }
 
 impl<T: FromRon> FromRon for Rc<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         Ok(Rc::new(T::from_ast(expr)?))
     }
 }
@@ -106,7 +106,7 @@ impl<T: ToRon> ToRon for Arc<T> {
 }
 
 impl<T: FromRon> FromRon for Arc<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         Ok(Arc::new(T::from_ast(expr)?))
     }
 }
@@ -122,7 +122,7 @@ impl<T: ToRon + Copy> ToRon for Cell<T> {
 }
 
 impl<T: FromRon> FromRon for Cell<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         Ok(Cell::new(T::from_ast(expr)?))
     }
 }
@@ -134,7 +134,7 @@ impl<T: ToRon> ToRon for RefCell<T> {
 }
 
 impl<T: FromRon> FromRon for RefCell<T> {
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         Ok(RefCell::new(T::from_ast(expr)?))
     }
 }
@@ -175,7 +175,7 @@ macro_rules! impl_from_ron_tuple {
     () => {};
     ($first:ident $(, $rest:ident)*) => {
         impl<$first: FromRon $(, $rest: FromRon)*> FromRon for ($first, $($rest,)*) {
-            fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self> {
+            fn from_ast(expr: &Expr<'_>) -> Result<Self> {
                 let Some(elements) = extract_seq_elements(expr) else {
                     return Err(spanned_type_mismatch("tuple", expr));
                 };
@@ -183,7 +183,7 @@ macro_rules! impl_from_ron_tuple {
                 let expected = impl_from_ron_tuple!(@count $first $(, $rest)*);
                 if elements.len() != expected {
                     return Err(spanned_err(
-                        Error::invalid_value(alloc::format!(
+                        invalid_value(alloc::format!(
                             "expected tuple of {expected} elements, got {}",
                             elements.len()
                         )),
@@ -192,8 +192,8 @@ macro_rules! impl_from_ron_tuple {
                 }
                 let mut iter = elements.into_iter();
                 Ok((
-                    $first::from_ast(iter.next().ok_or_else(|| spanned_err(Error::invalid_value("tuple too short"), expr))?)?,
-                    $($rest::from_ast(iter.next().ok_or_else(|| spanned_err(Error::invalid_value("tuple too short"), expr))?)?,)*
+                    $first::from_ast(iter.next().ok_or_else(|| spanned_err(invalid_value("tuple too short"), expr))?)?,
+                    $($rest::from_ast(iter.next().ok_or_else(|| spanned_err(invalid_value("tuple too short"), expr))?)?,)*
                 ))
             }
         }

@@ -37,7 +37,7 @@ fn as_validation_error(err: &SchemaError) -> Option<&ValidationError> {
 fn has_field_in_path(err: &SchemaError, field_name: &str) -> bool {
     as_validation_error(err)
         .map(|e| {
-            e.path
+            e.path()
                 .iter()
                 .any(|seg| matches!(seg, PathSegment::Field(f) if f == field_name))
         })
@@ -48,9 +48,9 @@ fn has_field_in_path(err: &SchemaError, field_name: &str) -> bool {
 fn has_element_in_path(err: &SchemaError, index: usize) -> bool {
     as_validation_error(err)
         .map(|e| {
-            e.path
+            e.path()
                 .iter()
-                .any(|seg| matches!(seg, PathSegment::Element(i) if *i == index))
+                .any(|seg| matches!(seg, PathSegment::Element(i) if i == &index))
         })
         .unwrap_or(false)
 }
@@ -59,7 +59,7 @@ fn has_element_in_path(err: &SchemaError, index: usize) -> bool {
 fn has_variant_in_path(err: &SchemaError, variant_name: &str) -> bool {
     as_validation_error(err)
         .map(|e| {
-            e.path
+            e.path()
                 .iter()
                 .any(|seg| matches!(seg, PathSegment::Variant(v) if v == variant_name))
         })
@@ -70,7 +70,7 @@ fn has_variant_in_path(err: &SchemaError, variant_name: &str) -> bool {
 fn has_type_ref_in_path(err: &SchemaError, type_path: &str) -> bool {
     as_validation_error(err)
         .map(|e| {
-            e.path
+            e.path()
                 .iter()
                 .any(|seg| matches!(seg, PathSegment::TypeRef(p) if p == type_path))
         })
@@ -79,7 +79,7 @@ fn has_type_ref_in_path(err: &SchemaError, type_path: &str) -> bool {
 
 /// Helper to get the validation error kind from SchemaError
 fn validation_kind(err: &SchemaError) -> Option<&ValidationErrorKind> {
-    as_validation_error(err).map(|e| &e.kind)
+    as_validation_error(err).map(|e| e.kind())
 }
 
 // ============================================================================
@@ -387,10 +387,10 @@ fn test_validate_tuple_length_too_short() {
     assert!(matches!(
         validation_kind(&err),
         Some(ValidationErrorKind::LengthMismatch {
-            expected: 2,
+            expected,
             found: 1,
             ..
-        })
+        }) if expected == "2"
     ));
 }
 
@@ -404,10 +404,10 @@ fn test_validate_tuple_length_too_long() {
     assert!(matches!(
         validation_kind(&err),
         Some(ValidationErrorKind::LengthMismatch {
-            expected: 1,
+            expected,
             found: 2,
             ..
-        })
+        }) if expected == "1"
     ));
 }
 
@@ -468,7 +468,11 @@ fn test_validate_map_wrong_key_type() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     if let Some(ve) = as_validation_error(&err) {
-        assert!(ve.path.iter().any(|seg| matches!(seg, PathSegment::MapKey)));
+        assert!(
+            ve.path()
+                .iter()
+                .any(|seg| matches!(seg, PathSegment::MapKey))
+        );
     } else {
         panic!("Expected validation error");
     }
@@ -486,7 +490,7 @@ fn test_validate_map_wrong_value_type() {
     let err = result.unwrap_err();
     if let Some(ve) = as_validation_error(&err) {
         assert!(
-            ve.path
+            ve.path()
                 .iter()
                 .any(|seg| matches!(seg, PathSegment::MapValue(_)))
         );
@@ -977,7 +981,7 @@ fn test_error_tuple_length_mismatch_message() {
         expected, found, ..
     }) = validation_kind(&err)
     {
-        assert_eq!(*expected, 2);
+        assert_eq!(expected, "2");
         assert_eq!(*found, 1);
     } else {
         panic!("Expected LengthMismatch error");

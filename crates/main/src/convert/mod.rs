@@ -37,7 +37,7 @@ pub use number::{ParsedInt, parse_int_raw};
 use crate::{
     Value,
     ast::{Expr, FormatConfig, expr_to_value, format_expr, parse_document, value_to_expr},
-    error::{Error, Result, SpannedError, SpannedResult},
+    error::{Error, ErrorKind, Result},
 };
 
 /// Trait for types that can be converted to RON.
@@ -82,7 +82,7 @@ pub trait ToRon {
 
     /// Convert this value to a RON [`Value`] (via AST).
     fn to_ron_value(&self) -> Result<Value> {
-        expr_to_value(&self.to_ast()?).map_err(|e| e.code)
+        expr_to_value(&self.to_ast()?)
     }
 }
 
@@ -103,7 +103,7 @@ pub trait FromRon: Sized {
     /// Core method: deserialize from an AST expression.
     ///
     /// This has access to the full span information for precise error reporting.
-    fn from_ast(expr: &Expr<'_>) -> SpannedResult<Self>;
+    fn from_ast(expr: &Expr<'_>) -> Result<Self>;
 
     /// Construct this type from a RON [`Value`].
     ///
@@ -116,26 +116,29 @@ pub trait FromRon: Sized {
     /// You can check if a span is synthetic using [`Span::is_synthetic()`](crate::error::Span::is_synthetic).
     fn from_ron_value(value: Value) -> Result<Self> {
         let expr = value_to_expr(value);
-        Self::from_ast(&expr).map_err(|e| e.code)
+        Self::from_ast(&expr)
     }
 
     /// Parse a RON string and construct this type.
     ///
-    /// Returns a [`SpannedResult`] with precise error location information.
-    fn from_ron(s: &str) -> SpannedResult<Self> {
+    /// Returns a [`Result`] with precise error location information.
+    fn from_ron(s: &str) -> Result<Self> {
         let doc = parse_document(s)?;
         match doc.value {
             Some(ref expr) => Self::from_ast(expr),
-            None => Err(SpannedError::at_start(Error::Eof)),
+            None => Err(Error::at_start(ErrorKind::Eof)),
         }
     }
 
     /// Read RON from a reader and construct this type.
-    fn from_ron_reader<R: Read>(mut reader: R) -> SpannedResult<Self> {
+    fn from_ron_reader<R: Read>(mut reader: R) -> Result<Self> {
         let mut buf = String::new();
-        reader
-            .read_to_string(&mut buf)
-            .map_err(|e| SpannedError::at_start(Error::Io(e.to_string())))?;
+        reader.read_to_string(&mut buf).map_err(|e| {
+            Error::at_start(ErrorKind::Io {
+                message: e.to_string(),
+                source: None,
+            })
+        })?;
         Self::from_ron(&buf)
     }
 }
@@ -173,67 +176,16 @@ pub trait FromRonFields: Sized {
     ///
     /// This is used for `#[ron(flatten)]` fields where the inner struct's
     /// fields appear directly in the parent struct.
-    fn from_fields(access: &mut AstMapAccess<'_>) -> SpannedResult<Self>;
+    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self>;
 }
 
 // =============================================================================
-// Error helpers
+// Error helpers (module-local)
 // =============================================================================
 
-impl Error {
-    /// Create a type mismatch error.
-    #[must_use]
-    pub fn type_mismatch(expected: &str, found: &Value) -> Self {
-        Error::InvalidValueForType {
-            expected: expected.into(),
-            found: value_type_name(found).into(),
-        }
-    }
-
-    /// Create a missing field error.
-    #[must_use]
-    pub fn missing_field(field: &str) -> Self {
-        Error::Message(alloc::format!("missing required field: {field}"))
-    }
-
-    /// Create an unknown field error.
-    #[must_use]
-    pub fn unknown_field(field: &str) -> Self {
-        Error::Message(alloc::format!("unknown field: {field}"))
-    }
-
-    /// Create an integer out of range error.
-    #[must_use]
-    pub fn integer_out_of_range(ty: &str, value: &str) -> Self {
-        Error::Message(alloc::format!("integer {value} out of range for type {ty}"))
-    }
-
-    /// Create an invalid value error.
-    #[must_use]
-    pub fn invalid_value(msg: impl Into<String>) -> Self {
-        Error::Message(msg.into())
-    }
-}
-
-/// Get a human-readable type name for a Value.
-///
-/// Returns generic category names (e.g., "number" not "i32") to match
-/// `expr_type_name` for consistent error messages across AST and Value paths.
-fn value_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Bool(_) => "bool",
-        Value::Char(_) => "char",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Bytes(_) => "bytes",
-        Value::Option(_) => "option",
-        Value::Seq(_) => "sequence",
-        Value::Tuple(_) => "tuple",
-        Value::Map(_) => "map",
-        Value::Struct(_) => "struct",
-        Value::Named { .. } => "named",
-        Value::Unit => "unit",
-    }
+/// Create an invalid value error.
+fn invalid_value(msg: impl Into<String>) -> Error {
+    Error::new(crate::error::ErrorKind::Message(msg.into()))
 }
 
 /// Get a human-readable type name for an AST expression.
@@ -258,21 +210,22 @@ pub fn expr_type_name(expr: &Expr<'_>) -> &'static str {
 }
 
 /// Create a spanned type mismatch error.
-pub(crate) fn spanned_type_mismatch(expected: &str, expr: &Expr<'_>) -> SpannedError {
-    SpannedError {
-        code: Error::InvalidValueForType {
+pub(crate) fn spanned_type_mismatch(expected: &str, expr: &Expr<'_>) -> Error {
+    Error::with_span(
+        ErrorKind::TypeMismatch {
             expected: expected.into(),
             found: expr_type_name(expr).into(),
         },
-        span: expr.span().clone(),
-    }
+        expr.span().clone(),
+    )
 }
 
 /// Create a spanned error with the given code and expression's span.
-pub(crate) fn spanned_err(code: Error, expr: &Expr<'_>) -> SpannedError {
-    SpannedError {
-        code,
-        span: expr.span().clone(),
+pub(crate) fn spanned_err(err: Error, expr: &Expr<'_>) -> Error {
+    if err.span().is_synthetic() {
+        Error::with_span(err.kind().clone(), expr.span().clone())
+    } else {
+        err
     }
 }
 
@@ -415,10 +368,10 @@ mod tests {
     fn test_spanned_error_line_numbers() {
         // Type mismatch on line 1 - expected i32, got string
         let err = i32::from_ron(r#""not a number""#).unwrap_err();
-        assert_eq!(err.span.start.line, 1);
-        assert_eq!(err.span.start.col, 1);
-        assert_eq!(err.span.end.line, 1);
-        assert_eq!(err.span.end.col, 15);
+        assert_eq!(err.span().start.line, 1);
+        assert_eq!(err.span().start.col, 1);
+        assert_eq!(err.span().end.line, 1);
+        assert_eq!(err.span().end.col, 15);
 
         // Type mismatch on line 3 in a multiline document
         let input = r#"[
@@ -427,10 +380,10 @@ mod tests {
     3
 ]"#;
         let err = Vec::<i32>::from_ron(input).unwrap_err();
-        assert_eq!(err.span.start.line, 3);
-        assert_eq!(err.span.start.col, 5);
-        assert_eq!(err.span.end.line, 3);
-        assert_eq!(err.span.end.col, 12);
+        assert_eq!(err.span().start.line, 3);
+        assert_eq!(err.span().start.col, 5);
+        assert_eq!(err.span().end.line, 3);
+        assert_eq!(err.span().end.col, 12);
 
         // Nested structure - tuple with wrong type in second position
         let input = r#"(
@@ -439,19 +392,19 @@ mod tests {
 )"#;
         let err = <(i32, i32)>::from_ron(input).unwrap_err();
         // The error should point to "not an int" on line 3
-        assert_eq!(err.span.start.line, 3);
+        assert_eq!(err.span().start.line, 3);
 
         // Integer out of range
         let err = i8::from_ron("128").unwrap_err();
-        assert_eq!(err.span.start.line, 1);
-        assert_eq!(err.span.start.col, 1);
+        assert_eq!(err.span().start.line, 1);
+        assert_eq!(err.span().start.col, 1);
 
         // Boolean type mismatch
         let err = bool::from_ron("42").unwrap_err();
-        assert_eq!(err.span.start.line, 1);
+        assert_eq!(err.span().start.line, 1);
         assert!(matches!(
-            err.code,
-            crate::error::Error::InvalidValueForType { .. }
+            err.kind(),
+            crate::error::ErrorKind::TypeMismatch { .. }
         ));
     }
 
@@ -463,8 +416,8 @@ mod tests {
 }"#;
         let err = BTreeMap::<String, i32>::from_ron(input).unwrap_err();
         // Error should point to "wrong" on line 3
-        assert_eq!(err.span.start.line, 3);
-        assert_eq!(err.span.start.col, 10);
+        assert_eq!(err.span().start.line, 3);
+        assert_eq!(err.span().start.col, 10);
     }
 
     #[test]
@@ -475,8 +428,8 @@ mod tests {
         let err = i32::from_ron_value(value).unwrap_err();
         // The error should still have the correct error code
         assert!(matches!(
-            err,
-            crate::error::Error::InvalidValueForType { .. }
+            err.kind(),
+            crate::error::ErrorKind::TypeMismatch { .. }
         ));
     }
 

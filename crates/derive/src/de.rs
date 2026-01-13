@@ -47,7 +47,7 @@ pub fn derive_from_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // which converts Value to Expr and calls from_ast
     Ok(quote! {
         impl #impl_generics ::ron2::FromRon for #name #ty_generics #where_clause {
-            fn from_ast(expr: &::ron2::ast::Expr<'_>) -> ::ron2::error::SpannedResult<Self> {
+            fn from_ast(expr: &::ron2::ast::Expr<'_>) -> ::ron2::error::Result<Self> {
                 #from_ast_body
             }
         }
@@ -92,7 +92,7 @@ fn derive_from_ron_fields(
 
     Ok(quote! {
         impl #impl_generics ::ron2::FromRonFields for #name #ty_generics #where_clause {
-            fn from_fields(access: &mut ::ron2::AstMapAccess<'_>) -> ::ron2::error::SpannedResult<Self> {
+            fn from_fields(access: &mut ::ron2::AstMapAccess<'_>) -> ::ron2::error::Result<Self> {
                 #(#field_extractions)*
                 Ok(#name { #(#field_names),* })
             }
@@ -156,7 +156,11 @@ fn derive_named_struct_de(
         }
 
         // Check if field has a default
-        if !matches!(field_attrs.default, FieldDefault::Default | FieldDefault::Path(_)) && !field_attrs.flatten {
+        if !matches!(
+            field_attrs.default,
+            FieldDefault::Default | FieldDefault::Path(_)
+        ) && !field_attrs.flatten
+        {
             all_fields_have_defaults = false;
         }
 
@@ -165,7 +169,7 @@ fn derive_named_struct_de(
             generate_field_extraction(field_ident, field_ty, &ron_name, &field_attrs, field)?;
         field_extractions.push(extraction);
     }
-    
+
     // Generate Unit case only if all fields have defaults
     let unit_case = if all_fields_have_defaults {
         // Build unit extractions using defaults
@@ -174,14 +178,14 @@ fn derive_named_struct_de(
             let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
             let field_ident = field.ident.as_ref().unwrap();
             let field_ty = &field.ty;
-            
+
             if field_attrs.should_skip_deserializing() {
                 unit_extractions.push(quote! {
                     let #field_ident: #field_ty = ::std::default::Default::default();
                 });
                 continue;
             }
-            
+
             let unit_extraction = match &field_attrs.default {
                 FieldDefault::Default => {
                     quote! {
@@ -198,11 +202,11 @@ fn derive_named_struct_de(
                         let #field_ident: #field_ty = ::std::default::Default::default();
                     }
                 }
-                _ => quote! {}
+                _ => quote! {},
             };
             unit_extractions.push(unit_extraction);
         }
-        
+
         quote! {
             // Unit: () - accept for structs with all fields having defaults
             ::ron2::ast::Expr::Unit(_) => {
@@ -239,13 +243,13 @@ fn derive_named_struct_de(
                 let expected_name = #struct_name;
                 let found_name = s.name.name.as_ref();
                 if found_name != expected_name {
-                    return Err(::ron2::error::SpannedError {
-                        code: ::ron2::error::Error::InvalidValueForType {
+                    return Err(::ron2::Error::with_span(
+                        ::ron2::error::ErrorKind::TypeMismatch {
                             expected: format!("struct {}", expected_name),
                             found: format!("struct {}", found_name),
                         },
-                        span: s.name.span.clone(),
-                    });
+                        s.name.span.clone(),
+                    ));
                 }
                 match &s.body {
                     Some(::ron2::ast::StructBody::Fields(fields)) => {
@@ -258,13 +262,13 @@ fn derive_named_struct_de(
                         #deny_unknown
                         Ok(#name { #(#field_names),* })
                     }
-                    _ => Err(::ron2::error::SpannedError {
-                        code: ::ron2::error::Error::InvalidValueForType {
+                    _ => Err(::ron2::Error::with_span(
+                        ::ron2::error::ErrorKind::TypeMismatch {
                             expected: concat!("struct ", #struct_name).to_string(),
                             found: "non-struct body".to_string(),
                         },
-                        span: s.span.clone(),
-                    }),
+                        s.span.clone(),
+                    )),
                 }
             }
             _ => {
@@ -280,13 +284,13 @@ fn derive_named_struct_de(
                 } else {
                     concat!("struct ", #struct_name).to_string()
                 };
-                Err(::ron2::error::SpannedError {
-                    code: ::ron2::error::Error::InvalidValueForType {
+                Err(::ron2::Error::with_span(
+                    ::ron2::error::ErrorKind::TypeMismatch {
                         expected: expected_msg,
                         found: found_type.to_string(),
                     },
-                    span: expr.span().clone(),
-                })
+                    expr.span().clone(),
+                ))
             }
         }
     })
@@ -342,44 +346,44 @@ fn derive_tuple_struct_de(
                 let expected_name = #struct_name;
                 let found_name = s.name.name.as_ref();
                 if found_name != expected_name {
-                    return Err(::ron2::error::SpannedError {
-                        code: ::ron2::error::Error::InvalidValueForType {
+                    return Err(::ron2::Error::with_span(
+                        ::ron2::error::ErrorKind::TypeMismatch {
                             expected: format!("struct {}", expected_name),
                             found: format!("struct {}", found_name),
                         },
-                        span: s.name.span.clone(),
-                    });
+                        s.name.span.clone(),
+                    ));
                 }
                 match &s.body {
                     Some(::ron2::ast::StructBody::Tuple(t)) => {
                         t.elements.iter().map(|e| &e.expr).collect()
                     }
-                    _ => return Err(::ron2::error::SpannedError {
-                        code: ::ron2::error::Error::InvalidValueForType {
+                    _ => return Err(::ron2::Error::with_span(
+                        ::ron2::error::ErrorKind::TypeMismatch {
                             expected: concat!("tuple struct ", #struct_name).to_string(),
                             found: "non-tuple body".to_string(),
                         },
-                        span: s.span.clone(),
-                    }),
+                        s.span.clone(),
+                    )),
                 }
             }
-            _ => return Err(::ron2::error::SpannedError {
-                code: ::ron2::error::Error::InvalidValueForType {
+            _ => return Err(::ron2::Error::with_span(
+                ::ron2::error::ErrorKind::TypeMismatch {
                     expected: concat!("tuple struct ", #struct_name).to_string(),
                     found: ::ron2::convert::expr_type_name(expr).to_string(),
                 },
-                span: expr.span().clone(),
-            }),
+                expr.span().clone(),
+            )),
         };
 
         if elements.len() != #field_count {
-            return Err(::ron2::error::SpannedError {
-                code: ::ron2::error::Error::InvalidValueForType {
+            return Err(::ron2::Error::with_span(
+                ::ron2::error::ErrorKind::TypeMismatch {
                     expected: format!("tuple with {} elements", #field_count),
                     found: format!("tuple with {} elements", elements.len()),
                 },
-                span: expr.span().clone(),
-            });
+                expr.span().clone(),
+            ));
         }
 
         #(#field_extractions)*
@@ -388,7 +392,10 @@ fn derive_tuple_struct_de(
 }
 
 /// Generate deserialization for a unit struct.
-fn derive_unit_struct_de(name: &Ident, container_attrs: &ContainerAttrs) -> syn::Result<TokenStream2> {
+fn derive_unit_struct_de(
+    name: &Ident,
+    container_attrs: &ContainerAttrs,
+) -> syn::Result<TokenStream2> {
     let struct_name = container_attrs
         .rename
         .clone()
@@ -404,23 +411,23 @@ fn derive_unit_struct_de(name: &Ident, container_attrs: &ContainerAttrs) -> syn:
                 let expected_name = #struct_name;
                 let found_name = s.name.name.as_ref();
                 if found_name != expected_name {
-                    return Err(::ron2::error::SpannedError {
-                        code: ::ron2::error::Error::InvalidValueForType {
+                    return Err(::ron2::Error::with_span(
+                        ::ron2::error::ErrorKind::TypeMismatch {
                             expected: format!("struct {}", expected_name),
                             found: format!("struct {}", found_name),
                         },
-                        span: s.name.span.clone(),
-                    });
+                        s.name.span.clone(),
+                    ));
                 }
                 Ok(#name)
             }
-            _ => Err(::ron2::error::SpannedError {
-                code: ::ron2::error::Error::InvalidValueForType {
+            _ => Err(::ron2::Error::with_span(
+                ::ron2::error::ErrorKind::TypeMismatch {
                     expected: concat!("unit struct ", #struct_name).to_string(),
                     found: ::ron2::convert::expr_type_name(expr).to_string(),
                 },
-                span: expr.span().clone(),
-            }),
+                expr.span().clone(),
+            )),
         }
     })
 }
@@ -523,13 +530,13 @@ fn derive_enum_de(
                             Some(::ron2::ast::StructBody::Tuple(t)) if t.elements.is_empty() => {
                                 Ok(#name::#variant_ident)
                             }
-                            _ => Err(::ron2::error::SpannedError {
-                                code: ::ron2::error::Error::InvalidValueForType {
+                            _ => Err(::ron2::Error::with_span(
+                                ::ron2::error::ErrorKind::TypeMismatch {
                                     expected: concat!("unit variant ", #variant_name).to_string(),
                                     found: "variant with content".to_string(),
                                 },
-                                span: s.span.clone(),
-                            }),
+                                s.span.clone(),
+                            )),
                         }
                     }
                 }
@@ -564,24 +571,24 @@ fn derive_enum_de(
                             Some(::ron2::ast::StructBody::Tuple(t)) => {
                                 let elements: ::std::vec::Vec<_> = t.elements.iter().map(|e| &e.expr).collect();
                                 if elements.len() != #field_count {
-                                    return Err(::ron2::error::SpannedError {
-                                        code: ::ron2::error::Error::InvalidValueForType {
+                                    return Err(::ron2::Error::with_span(
+                                        ::ron2::error::ErrorKind::TypeMismatch {
                                             expected: format!(concat!("tuple variant ", #variant_name, " with {} elements"), #field_count),
                                             found: format!("tuple with {} elements", elements.len()),
                                         },
-                                        span: s.span.clone(),
-                                    });
+                                        s.span.clone(),
+                                    ));
                                 }
                                 #(#field_extractions)*
                                 Ok(#name::#variant_ident(#(#field_indices),*))
                             }
-                            _ => Err(::ron2::error::SpannedError {
-                                code: ::ron2::error::Error::InvalidValueForType {
+                            _ => Err(::ron2::Error::with_span(
+                                ::ron2::error::ErrorKind::TypeMismatch {
                                     expected: concat!("tuple variant ", #variant_name).to_string(),
                                     found: "non-tuple variant body".to_string(),
                                 },
-                                span: s.span.clone(),
-                            }),
+                                s.span.clone(),
+                            )),
                         }
                     }
                 }
@@ -643,13 +650,13 @@ fn derive_enum_de(
                                 #deny_unknown
                                 Ok(#name::#variant_ident { #(#field_names),* })
                             }
-                            _ => Err(::ron2::error::SpannedError {
-                                code: ::ron2::error::Error::InvalidValueForType {
+                            _ => Err(::ron2::Error::with_span(
+                                ::ron2::error::ErrorKind::TypeMismatch {
                                     expected: concat!("struct variant ", #variant_name).to_string(),
                                     found: "non-struct variant body".to_string(),
                                 },
-                                span: s.span.clone(),
-                            }),
+                                s.span.clone(),
+                            )),
                         }
                     }
                 }
@@ -683,23 +690,23 @@ fn derive_enum_de(
                 let variant_name = s.name.name.as_ref();
                 match variant_name {
                     #(#variant_arms)*
-                    unknown => Err(::ron2::error::SpannedError {
-                        code: ::ron2::error::Error::NoSuchEnumVariant {
+                    unknown => Err(::ron2::Error::with_span(
+                        ::ron2::error::ErrorKind::UnknownVariant {
+                            variant: ::std::borrow::Cow::Owned(unknown.to_string()),
                             expected: &[#(#variant_names),*],
-                            found: ::std::borrow::Cow::Owned(unknown.to_string()),
                             outer: Some(::std::borrow::Cow::Borrowed(#enum_name)),
                         },
-                        span: s.name.span.clone(),
-                    }),
+                        s.name.span.clone(),
+                    )),
                 }
             }
-            _ => Err(::ron2::error::SpannedError {
-                code: ::ron2::error::Error::InvalidValueForType {
+            _ => Err(::ron2::Error::with_span(
+                ::ron2::error::ErrorKind::TypeMismatch {
                     expected: concat!("enum ", #enum_name).to_string(),
                     found: ::ron2::convert::expr_type_name(expr).to_string(),
                 },
-                span: expr.span().clone(),
-            }),
+                expr.span().clone(),
+            )),
         }
     })
 }

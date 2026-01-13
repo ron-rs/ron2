@@ -307,7 +307,8 @@ fn realistic_game_entity() {
             Transform(1.0, Quaternion(0.0, 0.0, 0.0, 1.0))
         ],
         active: true
-    )"#.parse()
+    )"#
+    .parse()
     .unwrap();
 
     match value {
@@ -343,7 +344,8 @@ fn realistic_api_response() {
             "request_id": "abc123",
             "timestamp": 1234567890
         }
-    )"#.parse()
+    )"#
+    .parse()
     .unwrap();
 
     // Just verify it parses correctly

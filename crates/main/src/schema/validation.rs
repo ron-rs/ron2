@@ -273,7 +273,10 @@ fn validate_type_internal<R: SchemaResolver>(
         TypeKind::Tuple(types) => match value {
             Value::Tuple(items) | Value::Seq(items) => {
                 if items.len() != types.len() {
-                    return Err(ValidationError::length_mismatch(types.len(), items.len()));
+                    return Err(ValidationError::length_mismatch(
+                        types.len().to_string(),
+                        items.len(),
+                    ));
                 }
                 for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
                     validate_type_internal(item, ty, ctx).map_err(|e| e.in_element(i))?;
@@ -416,8 +419,7 @@ fn validate_struct_fields_inner<'a, R: SchemaResolver>(
                 && let Some(inner) = fields.iter().find(|f| f.name == key_str)
             {
                 matched_flattened_struct = true;
-                validate_type_internal(val, &inner.ty, ctx)
-                    .map_err(|e| e.in_field(key_str))?;
+                validate_type_internal(val, &inner.ty, ctx).map_err(|e| e.in_field(key_str))?;
             }
         }
 
@@ -426,7 +428,10 @@ fn validate_struct_fields_inner<'a, R: SchemaResolver>(
                 validate_type_internal(val, map_value_type, ctx)
                     .map_err(|e| e.in_field(key_str))?;
             } else {
-                return Err(ValidationError::unknown_field(key_str.to_owned(), &[] as &[&str]));
+                return Err(ValidationError::unknown_field(
+                    key_str.to_owned(),
+                    &[] as &[&str],
+                ));
             }
         }
     }
@@ -606,7 +611,8 @@ fn validate_enum_internal<R: SchemaResolver>(
      -> ValidationResult<()> {
         if items.len() != types.len() {
             return Err(
-                ValidationError::length_mismatch(types.len(), items.len()).in_variant(variant_name)
+                ValidationError::length_mismatch(types.len().to_string(), items.len())
+                    .in_variant(variant_name),
             );
         }
         for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
@@ -715,7 +721,9 @@ mod tests {
         });
 
         // Valid struct with all fields
-        let value: Value = "(port: 8080, host: \"localhost\")".parse::<Value>().unwrap();
+        let value: Value = "(port: 8080, host: \"localhost\")"
+            .parse::<Value>()
+            .unwrap();
         assert!(validate(&value, &schema).is_ok());
 
         // Valid struct with only required fields

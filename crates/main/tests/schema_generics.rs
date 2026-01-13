@@ -33,8 +33,7 @@ fn test_collect_schemas_for_generic_container() {
 fn test_write_schemas_for_generic_container() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let output_dir = temp_dir.path().to_str().expect("utf-8 temp dir");
-    let written =
-        write_schemas::<GenericContainer<u32>>(Some(output_dir)).expect("write schemas");
+    let written = write_schemas::<GenericContainer<u32>>(Some(output_dir)).expect("write schemas");
 
     let container_path = <GenericContainer<u32> as RonSchemaType>::type_path().unwrap();
     let child_path = Child::type_path().unwrap();

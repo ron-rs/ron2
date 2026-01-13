@@ -6,11 +6,14 @@ use ron2::{FormatConfig, Map, NamedContent, Number, ToRon, Value};
 
 /// Helper: parse, serialize, parse again, and verify values match.
 fn roundtrip(input: &str) -> Value {
-    let value: Value = input.parse().unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
+    let value: Value = input
+        .parse()
+        .unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
     let serialized = value
         .to_ron_with(&FormatConfig::minimal())
         .unwrap_or_else(|e| panic!("Failed to serialize: {e}"));
-    let reparsed: Value = serialized.parse()
+    let reparsed: Value = serialized
+        .parse()
         .unwrap_or_else(|e| panic!("Failed to reparse '{serialized}' (from '{input}'): {e}"));
     assert_eq!(value, reparsed, "Roundtrip mismatch for '{input}'");
     value
@@ -18,11 +21,14 @@ fn roundtrip(input: &str) -> Value {
 
 /// Helper: roundtrip with pretty printing.
 fn roundtrip_pretty(input: &str) -> Value {
-    let value: Value = input.parse().unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
+    let value: Value = input
+        .parse()
+        .unwrap_or_else(|e| panic!("Failed to parse '{input}': {e}"));
     let serialized = value
         .to_ron()
         .unwrap_or_else(|e| panic!("Failed to serialize: {e}"));
-    let reparsed: Value = serialized.parse()
+    let reparsed: Value = serialized
+        .parse()
         .unwrap_or_else(|e| panic!("Failed to reparse '{serialized}' (from '{input}'): {e}"));
     assert_eq!(value, reparsed, "Roundtrip mismatch for '{input}'");
     value
@@ -336,9 +342,7 @@ fn roundtrip_string_raw_triple_hash_multiline() {
     let value = roundtrip(input);
     assert_eq!(
         value,
-        Value::String(String::from(
-            "\nhello \"world\"\nwowweee\"' r##\"\"##\nlol"
-        ))
+        Value::String(String::from("\nhello \"world\"\nwowweee\"' r##\"\"##\nlol"))
     );
 }
 

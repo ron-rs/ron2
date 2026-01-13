@@ -924,7 +924,10 @@ graphics:
 
         // Root-level fields should be suggested (window is present but incomplete)
         // Note: window may or may not be recognized as present depending on recovery
-        assert!(doc.ast.is_some(), "AST should survive incomplete nested struct");
+        assert!(
+            doc.ast.is_some(),
+            "AST should survive incomplete nested struct"
+        );
     }
 
     #[test]
@@ -949,15 +952,9 @@ graphics:
         let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
 
         // Should suggest fields not yet present
-        assert!(
-            labels.contains(&"window"),
-            "Should suggest 'window' field"
-        );
+        assert!(labels.contains(&"window"), "Should suggest 'window' field");
         assert!(labels.contains(&"audio"), "Should suggest 'audio' field");
-        assert!(
-            labels.contains(&"player"),
-            "Should suggest 'player' field"
-        );
+        assert!(labels.contains(&"player"), "Should suggest 'player' field");
 
         // Fields with errors should still be recognized as "present"
         assert!(

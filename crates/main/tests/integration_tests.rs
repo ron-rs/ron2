@@ -124,12 +124,14 @@ fn test_complete_workflow_complex_enum() {
     assert!(validate(&loading, &loaded_schema).is_ok());
 
     // Test struct variant with all fields
-    let success: ron2::Value =
-        r#"{ "Success": (data: "hello", metadata: { "key": "value" }) }"#.parse::<ron2::Value>().unwrap();
+    let success: ron2::Value = r#"{ "Success": (data: "hello", metadata: { "key": "value" }) }"#
+        .parse::<ron2::Value>()
+        .unwrap();
     assert!(validate(&success, &loaded_schema).is_ok());
 
     // Test struct variant with optional field omitted
-    let success_minimal: ron2::Value = r#"{ "Success": (data: "hello") }"#.parse::<ron2::Value>().unwrap();
+    let success_minimal: ron2::Value =
+        r#"{ "Success": (data: "hello") }"#.parse::<ron2::Value>().unwrap();
     assert!(validate(&success_minimal, &loaded_schema).is_ok());
 
     // Test error variant
@@ -384,10 +386,14 @@ fn test_schema_file_is_valid_ron() {
     let content = fs::read_to_string(&path).unwrap();
 
     // Verify it's valid RON that can be parsed
-    let _parsed: ron2::Value = content.parse::<ron2::Value>().expect("Schema file should be valid RON");
+    let _parsed: ron2::Value = content
+        .parse::<ron2::Value>()
+        .expect("Schema file should be valid RON");
 
     // Also verify it can be parsed as a Schema using DeRon trait
-    let value: ron2::Value = content.parse::<ron2::Value>().expect("Schema file should be valid RON");
+    let value: ron2::Value = content
+        .parse::<ron2::Value>()
+        .expect("Schema file should be valid RON");
     let _schema = Schema::from_ron_value(value).expect("Schema file should parse as Schema");
 }
 

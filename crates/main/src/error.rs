@@ -1,15 +1,17 @@
 //! Error types for RON parsing and deserialization.
 //!
-//! This module provides error types for parsing and validation:
-//! - [`Error`] - All ron2 errors (parsing + validation)
-//! - [`SpannedError`] - Error with source location
+//! This module provides a unified error type for all ron2 operations:
+//! - [`Error`] - The main error type (internally boxed for efficiency)
+//! - [`ErrorKind`] - All possible error variants
 //! - [`Position`], [`Span`] - Source position types
-//! - [`ValidationError`], [`ValidationErrorKind`] - Validation errors
-//! - [`PathSegment`] - Path context for errors
+//! - [`PathSegment`] - Path context for nested errors
 
 use alloc::{
     borrow::Cow,
+    boxed::Box,
     string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
 };
 use core::{fmt, str::Utf8Error};
 use std::io;
@@ -20,367 +22,750 @@ use crate::chars::{is_ident_first_char, is_ident_raw_char};
 
 mod path;
 mod span;
-mod validation;
 
 pub use path::PathSegment;
 pub use span::{Position, Span};
-pub use validation::{ValidationError, ValidationErrorKind};
 
-/// This type represents all possible errors that can occur when
-/// serializing or deserializing RON data.
-#[allow(clippy::module_name_repetitions)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SpannedError {
-    pub code: Error,
-    pub span: Span,
-}
+// Temporary compatibility aliases during migration
+// TODO: Remove these after migration is complete
+#[doc(hidden)]
+pub type SpannedError = Error;
+#[doc(hidden)]
+pub type SpannedResult<T> = Result<T>;
+#[doc(hidden)]
+pub type ValidationError = Error;
+#[doc(hidden)]
+pub type ValidationErrorKind = ErrorKind;
 
+// =============================================================================
+// Result type alias
+// =============================================================================
+
+/// Result type for ron2 operations.
 pub type Result<T, E = Error> = core::result::Result<T, E>;
-pub type SpannedResult<T> = core::result::Result<T, SpannedError>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Error {
-    Fmt,
-    Io(String),
-    Message(String),
-    Eof,
-    ExpectedArray,
-    ExpectedArrayEnd,
-    ExpectedAttribute,
-    ExpectedAttributeEnd,
-    ExpectedBoolean,
-    /// Expected a comma separator.
-    ///
-    /// The optional context indicates where the comma was expected
-    /// (e.g., "array", "map", "tuple", "struct").
-    ExpectedComma {
-        /// Optional context about where the comma was expected.
-        context: Option<&'static str>,
-    },
-    ExpectedChar,
-    ExpectedByteLiteral,
-    ExpectedFloat,
-    FloatUnderscore,
-    ExpectedInteger,
-    ExpectedOption,
-    ExpectedOptionEnd,
-    ExpectedMap,
-    /// Expected a colon separator.
-    ///
-    /// The optional context indicates where the colon was expected
-    /// (e.g., "map entry", "struct field").
-    ExpectedMapColon {
-        /// Optional context about where the colon was expected.
-        context: Option<&'static str>,
-    },
-    ExpectedMapEnd,
-    ExpectedDifferentStructName {
-        expected: &'static str,
-        found: String,
-    },
-    ExpectedStructLike,
-    ExpectedNamedStructLike(&'static str),
-    ExpectedStructLikeEnd,
-    ExpectedUnit,
-    ExpectedString,
-    ExpectedByteString,
-    ExpectedStringEnd,
-    ExpectedIdentifier,
-    /// Expected a value expression.
-    ///
-    /// The optional context indicates where the value was expected
-    /// (e.g., "struct field", "map entry").
-    ExpectedValue {
-        /// Optional context about where the value was expected.
-        context: Option<&'static str>,
-    },
+// =============================================================================
+// Error struct (internally boxed)
+// =============================================================================
 
-    InvalidEscape(&'static str),
+/// Unified error type for all ron2 operations.
+///
+/// This type is internally boxed to keep `Result<T, Error>` small (8 bytes),
+/// which improves performance in the common success case.
+///
+/// # Example
+///
+/// ```
+/// use ron2::{Error, ErrorKind, Span};
+///
+/// // Create an error with a span
+/// let err = Error::expected("closing `]`", Span::synthetic());
+///
+/// // Add path context
+/// let err = Error::type_mismatch("i32", "String")
+///     .in_element(0)
+///     .in_field("items");
+///
+/// println!("{}", err);
+/// ```
+#[derive(Debug, Clone)]
+pub struct Error(Box<ErrorInner>);
 
-    /// Integer out of bounds with context about the value and target type.
-    ///
-    /// Note: Consider using [`ValidationErrorKind::IntegerOutOfBounds`]
-    /// and converting via [`Error::from_validation_kind`] for consistency.
-    #[deprecated(
-        since = "0.2.0",
-        note = "use ValidationErrorKind::IntegerOutOfBounds and Error::from_validation_kind() instead"
-    )]
-    IntegerOutOfBounds {
-        /// The string representation of the integer that was out of bounds.
-        value: Cow<'static, str>,
-        /// The target type that couldn't hold the value.
-        target_type: &'static str,
-    },
-    InvalidIntegerDigit {
-        digit: char,
-        base: u8,
-    },
-
-    NoSuchExtension(String),
-
-    UnclosedBlockComment,
-    UnclosedLineComment,
-    UnderscoreAtBeginning,
-    UnexpectedChar(char),
-
-    Utf8Error(Utf8Error),
-    TrailingCharacters,
-
-    /// Type mismatch error.
-    ///
-    /// Note: Consider using [`ValidationErrorKind::TypeMismatch`]
-    /// and converting via [`Error::from_validation_kind`] for consistency.
-    #[deprecated(
-        since = "0.2.0",
-        note = "use ValidationErrorKind::TypeMismatch and Error::from_validation_kind() instead"
-    )]
-    InvalidValueForType {
-        expected: String,
-        found: String,
-    },
-    ExpectedDifferentLength {
-        expected: String,
-        found: usize,
-    },
-    /// Unknown enum variant error.
-    ///
-    /// Note: Consider using [`ValidationErrorKind::UnknownVariant`]
-    /// and converting via [`Error::from_validation_kind`] for consistency.
-    #[deprecated(
-        since = "0.2.0",
-        note = "use ValidationErrorKind::UnknownVariant and Error::from_validation_kind() instead"
-    )]
-    NoSuchEnumVariant {
-        expected: &'static [&'static str],
-        found: Cow<'static, str>,
-        outer: Option<Cow<'static, str>>,
-    },
-    /// Unknown struct field error.
-    ///
-    /// Note: Consider using [`ValidationErrorKind::UnknownField`]
-    /// and converting via [`Error::from_validation_kind`] for consistency.
-    #[deprecated(
-        since = "0.2.0",
-        note = "use ValidationErrorKind::UnknownField and Error::from_validation_kind() instead"
-    )]
-    NoSuchStructField {
-        expected: &'static [&'static str],
-        found: Cow<'static, str>,
-        outer: Option<Cow<'static, str>>,
-    },
-    /// Missing struct field error.
-    ///
-    /// Note: Consider using [`ValidationErrorKind::MissingField`]
-    /// and converting via [`Error::from_validation_kind`] for consistency.
-    #[deprecated(
-        since = "0.2.0",
-        note = "use ValidationErrorKind::MissingField and Error::from_validation_kind() instead"
-    )]
-    MissingStructField {
-        field: Cow<'static, str>,
-        outer: Option<Cow<'static, str>>,
-    },
-    /// Duplicate struct field error.
-    ///
-    /// Note: Consider using [`ValidationErrorKind::DuplicateField`]
-    /// and converting via [`Error::from_validation_kind`] for consistency.
-    #[deprecated(
-        since = "0.2.0",
-        note = "use ValidationErrorKind::DuplicateField and Error::from_validation_kind() instead"
-    )]
-    DuplicateStructField {
-        field: Cow<'static, str>,
-        outer: Option<Cow<'static, str>>,
-    },
-    InvalidIdentifier(String),
-    SuggestRawIdentifier(String),
-    ExpectedRawValue,
-    ExceededRecursionLimit,
-    /// Too many fields in struct for deserialization.
-    ///
-    /// The AST-based deserializer uses a 64-bit bitmask for field tracking,
-    /// limiting structs to 64 fields maximum.
-    TooManyFields {
-        /// Number of fields found
-        count: usize,
-        /// Maximum supported
-        limit: usize,
-    },
-    ExpectedStructName(String),
+#[derive(Debug, Clone)]
+struct ErrorInner {
+    kind: ErrorKind,
+    span: Span,
+    path: Vec<PathSegment>,
 }
 
-impl SpannedError {
-    /// Creates a `SpannedError` that wraps the given error code with a span
-    /// covering from position (1,1) to the end of the source.
+impl Error {
+    // =========================================================================
+    // Accessors
+    // =========================================================================
+
+    /// Returns the error kind.
     #[must_use]
-    pub fn wrap(code: Error, source: &str) -> Self {
-        Self {
-            code,
+    pub fn kind(&self) -> &ErrorKind {
+        &self.0.kind
+    }
+
+    /// Returns the source span.
+    #[must_use]
+    pub fn span(&self) -> &Span {
+        &self.0.span
+    }
+
+    /// Returns the path context (innermost to outermost).
+    #[must_use]
+    pub fn path(&self) -> &[PathSegment] {
+        &self.0.path
+    }
+
+    // =========================================================================
+    // Constructors
+    // =========================================================================
+
+    /// Create an error with a synthetic span (for errors without source location).
+    ///
+    /// Prefer `with_span` when a span is available for better error messages.
+    #[must_use]
+    pub fn new(kind: ErrorKind) -> Self {
+        Self(Box::new(ErrorInner {
+            kind,
+            span: Span::synthetic(),
+            path: Vec::new(),
+        }))
+    }
+
+    /// Create an error with a specific span.
+    #[must_use]
+    pub fn with_span(kind: ErrorKind, span: Span) -> Self {
+        Self(Box::new(ErrorInner {
+            kind,
+            span,
+            path: Vec::new(),
+        }))
+    }
+
+    /// Create an error spanning from (1,1) to the end of source.
+    #[must_use]
+    pub fn wrap(kind: ErrorKind, source: &str) -> Self {
+        Self(Box::new(ErrorInner {
+            kind,
             span: Span {
                 start: Position { line: 1, col: 1 },
                 end: Position::from_src_end(source),
                 start_offset: 0,
                 end_offset: source.len(),
             },
-        }
+            path: Vec::new(),
+        }))
     }
 
-    /// Creates a `SpannedError` at position (1,1) with zero-length span.
+    /// Create an error at position (1,1) with zero-length span.
     #[must_use]
-    pub fn at_start(code: Error) -> Self {
-        Self {
-            code,
+    pub fn at_start(kind: ErrorKind) -> Self {
+        Self(Box::new(ErrorInner {
+            kind,
             span: Span {
                 start: Position { line: 1, col: 1 },
                 end: Position { line: 1, col: 1 },
                 start_offset: 0,
                 end_offset: 0,
             },
+            path: Vec::new(),
+        }))
+    }
+
+    // =========================================================================
+    // Path builders (fluent API)
+    // =========================================================================
+
+    /// Add a field context to this error's path.
+    #[must_use]
+    pub fn in_field(mut self, name: impl Into<String>) -> Self {
+        self.0.path.push(PathSegment::Field(name.into()));
+        self
+    }
+
+    /// Add an element context to this error's path.
+    #[must_use]
+    pub fn in_element(mut self, index: usize) -> Self {
+        self.0.path.push(PathSegment::Element(index));
+        self
+    }
+
+    /// Add a variant context to this error's path.
+    #[must_use]
+    pub fn in_variant(mut self, name: impl Into<String>) -> Self {
+        self.0.path.push(PathSegment::Variant(name.into()));
+        self
+    }
+
+    /// Add a type ref context to this error's path.
+    #[must_use]
+    pub fn in_type_ref(mut self, path: impl Into<String>) -> Self {
+        self.0.path.push(PathSegment::TypeRef(path.into()));
+        self
+    }
+
+    /// Add a map key context to this error's path.
+    #[must_use]
+    pub fn in_map_key(mut self) -> Self {
+        self.0.path.push(PathSegment::MapKey);
+        self
+    }
+
+    /// Add a map value context to this error's path.
+    #[must_use]
+    pub fn in_map_value(mut self, key: impl Into<String>) -> Self {
+        self.0.path.push(PathSegment::MapValue(key.into()));
+        self
+    }
+
+    // =========================================================================
+    // Convenience constructors
+    // =========================================================================
+
+    /// Create an "unexpected end of input" error.
+    #[must_use]
+    pub fn eof() -> Self {
+        Self::new(ErrorKind::Eof)
+    }
+
+    /// Create an "expected X" error.
+    #[must_use]
+    pub fn expected(what: impl Into<Cow<'static, str>>, span: Span) -> Self {
+        Self::with_span(
+            ErrorKind::Expected {
+                expected: what.into(),
+                context: None,
+            },
+            span,
+        )
+    }
+
+    /// Create an "expected X in Y" error.
+    #[must_use]
+    pub fn expected_in(
+        what: impl Into<Cow<'static, str>>,
+        context: &'static str,
+        span: Span,
+    ) -> Self {
+        Self::with_span(
+            ErrorKind::Expected {
+                expected: what.into(),
+                context: Some(context),
+            },
+            span,
+        )
+    }
+
+    /// Create a type mismatch error.
+    #[must_use]
+    pub fn type_mismatch(expected: impl Into<String>, found: impl Into<String>) -> Self {
+        Self::new(ErrorKind::TypeMismatch {
+            expected: expected.into(),
+            found: found.into(),
+        })
+    }
+
+    /// Create a missing field error.
+    #[must_use]
+    pub fn missing_field(field: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(ErrorKind::MissingField {
+            field: field.into(),
+            outer: None,
+        })
+    }
+
+    /// Create a missing field error with outer context.
+    #[must_use]
+    pub fn missing_field_in(
+        field: impl Into<Cow<'static, str>>,
+        outer: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self::new(ErrorKind::MissingField {
+            field: field.into(),
+            outer: Some(outer.into()),
+        })
+    }
+
+    /// Create an unknown field error.
+    #[must_use]
+    pub fn unknown_field(
+        field: impl Into<Cow<'static, str>>,
+        expected: &'static [&'static str],
+    ) -> Self {
+        Self::new(ErrorKind::UnknownField {
+            field: field.into(),
+            expected,
+            outer: None,
+        })
+    }
+
+    /// Create an unknown field error with outer context.
+    #[must_use]
+    pub fn unknown_field_in(
+        field: impl Into<Cow<'static, str>>,
+        expected: &'static [&'static str],
+        outer: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self::new(ErrorKind::UnknownField {
+            field: field.into(),
+            expected,
+            outer: Some(outer.into()),
+        })
+    }
+
+    /// Create a duplicate field error.
+    #[must_use]
+    pub fn duplicate_field(field: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(ErrorKind::DuplicateField {
+            field: field.into(),
+            outer: None,
+        })
+    }
+
+    /// Create a duplicate field error with outer context.
+    #[must_use]
+    pub fn duplicate_field_in(
+        field: impl Into<Cow<'static, str>>,
+        outer: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self::new(ErrorKind::DuplicateField {
+            field: field.into(),
+            outer: Some(outer.into()),
+        })
+    }
+
+    /// Create an unknown variant error.
+    #[must_use]
+    pub fn unknown_variant(
+        variant: impl Into<Cow<'static, str>>,
+        expected: &'static [&'static str],
+    ) -> Self {
+        Self::new(ErrorKind::UnknownVariant {
+            variant: variant.into(),
+            expected,
+            outer: None,
+        })
+    }
+
+    /// Create an unknown variant error with outer context.
+    #[must_use]
+    pub fn unknown_variant_in(
+        variant: impl Into<Cow<'static, str>>,
+        expected: &'static [&'static str],
+        outer: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self::new(ErrorKind::UnknownVariant {
+            variant: variant.into(),
+            expected,
+            outer: Some(outer.into()),
+        })
+    }
+
+    /// Create a length mismatch error.
+    #[must_use]
+    pub fn length_mismatch(expected: impl Into<String>, found: usize) -> Self {
+        Self::new(ErrorKind::LengthMismatch {
+            expected: expected.into(),
+            found,
+            context: None,
+        })
+    }
+
+    /// Create a length mismatch error with context.
+    #[must_use]
+    pub fn length_mismatch_in(
+        expected: impl Into<String>,
+        found: usize,
+        context: &'static str,
+    ) -> Self {
+        Self::new(ErrorKind::LengthMismatch {
+            expected: expected.into(),
+            found,
+            context: Some(context),
+        })
+    }
+
+    /// Create an integer out of bounds error.
+    #[must_use]
+    pub fn integer_out_of_bounds(
+        value: impl Into<Cow<'static, str>>,
+        target_type: &'static str,
+    ) -> Self {
+        Self::new(ErrorKind::IntegerOutOfBounds {
+            value: value.into(),
+            target_type,
+        })
+    }
+
+    // =========================================================================
+    // Suggestions
+    // =========================================================================
+
+    /// Get a suggestion for fixing this error, if applicable.
+    #[must_use]
+    pub fn suggestion(&self) -> Option<String> {
+        self.0.kind.suggestion()
+    }
+}
+
+// =============================================================================
+// ErrorKind enum
+// =============================================================================
+
+/// The specific kind of error that occurred.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    // =========================================================================
+    // General / Infrastructure
+    // =========================================================================
+    /// Generic message (escape hatch for custom errors).
+    Message(String),
+
+    /// Formatting error (from `fmt::Error`).
+    Fmt,
+
+    /// IO error with preserved source for error chaining.
+    Io {
+        /// Human-readable error message.
+        message: String,
+        /// Original IO error (wrapped in Arc for Clone).
+        #[allow(clippy::redundant_allocation)]
+        source: Option<Arc<io::Error>>,
+    },
+
+    /// UTF-8 decoding error with preserved source.
+    Utf8 {
+        /// Human-readable error message.
+        message: String,
+        /// Original UTF-8 error (wrapped in Arc for Clone).
+        source: Option<Arc<Utf8Error>>,
+    },
+
+    // =========================================================================
+    // Lexical / Token Errors
+    // =========================================================================
+    /// Unexpected end of input.
+    Eof,
+
+    /// Unexpected character encountered.
+    UnexpectedChar(char),
+
+    /// Unclosed block comment (`/* ... */`).
+    UnclosedBlockComment,
+
+    /// Unclosed line comment (for `RawValue`).
+    UnclosedLineComment,
+
+    /// Invalid escape sequence in string.
+    InvalidEscape(Cow<'static, str>),
+
+    /// Invalid digit for the number's base.
+    InvalidIntegerDigit {
+        /// The invalid digit.
+        digit: char,
+        /// The number base (2, 8, 10, or 16).
+        base: u8,
+    },
+
+    /// Unexpected leading underscore in number.
+    UnderscoreAtBeginning,
+
+    /// Unexpected underscore in float.
+    FloatUnderscore,
+
+    // =========================================================================
+    // Structural / Syntax Errors
+    // =========================================================================
+    /// Expected a specific token or construct.
+    Expected {
+        /// What was expected (e.g., "closing `]`", "comma").
+        expected: Cow<'static, str>,
+        /// Optional context (e.g., "array", "struct field").
+        context: Option<&'static str>,
+    },
+
+    /// Non-whitespace trailing characters after main value.
+    TrailingCharacters,
+
+    /// Expected end of string literal.
+    ExpectedStringEnd,
+
+    /// Invalid identifier.
+    InvalidIdentifier(String),
+
+    /// Suggest using raw identifier syntax.
+    SuggestRawIdentifier(String),
+
+    /// Expected a `ron::value::RawValue`.
+    ExpectedRawValue,
+
+    // =========================================================================
+    // Type Mismatch Errors
+    // =========================================================================
+    /// Expected one type, found another.
+    TypeMismatch {
+        /// The expected type.
+        expected: String,
+        /// The found type.
+        found: String,
+    },
+
+    /// Wrong number of elements.
+    LengthMismatch {
+        /// Expected count description (e.g., "3 elements").
+        expected: String,
+        /// Actual count found.
+        found: usize,
+        /// Optional context (e.g., "tuple", "array").
+        context: Option<&'static str>,
+    },
+
+    // =========================================================================
+    // Struct/Enum Field Errors
+    // =========================================================================
+    /// Missing required struct field.
+    MissingField {
+        /// The name of the missing field.
+        field: Cow<'static, str>,
+        /// The containing struct name, if known.
+        outer: Option<Cow<'static, str>>,
+    },
+
+    /// Unknown struct field.
+    UnknownField {
+        /// The name of the unknown field.
+        field: Cow<'static, str>,
+        /// The list of expected field names.
+        expected: &'static [&'static str],
+        /// The containing struct name, if known.
+        outer: Option<Cow<'static, str>>,
+    },
+
+    /// Duplicate struct field.
+    DuplicateField {
+        /// The name of the duplicated field.
+        field: Cow<'static, str>,
+        /// The containing struct name, if known.
+        outer: Option<Cow<'static, str>>,
+    },
+
+    /// Unknown enum variant.
+    UnknownVariant {
+        /// The name of the unknown variant.
+        variant: Cow<'static, str>,
+        /// The list of expected variant names.
+        expected: &'static [&'static str],
+        /// The enum name, if known.
+        outer: Option<Cow<'static, str>>,
+    },
+
+    /// Expected a different struct name.
+    ExpectedStructName {
+        /// The expected struct name.
+        expected: Cow<'static, str>,
+        /// The found struct name (if any).
+        found: Option<String>,
+    },
+
+    // =========================================================================
+    // Numeric Errors
+    // =========================================================================
+    /// Integer out of bounds for target type.
+    IntegerOutOfBounds {
+        /// The string representation of the out-of-bounds value.
+        value: Cow<'static, str>,
+        /// The target type that couldn't hold the value.
+        target_type: &'static str,
+    },
+
+    // =========================================================================
+    // Extension / Config Errors
+    // =========================================================================
+    /// Unknown RON extension.
+    NoSuchExtension(String),
+
+    /// Exceeded recursion limit.
+    ExceededRecursionLimit,
+
+    /// Too many struct fields for deserialization (max 64).
+    TooManyFields {
+        /// Number of fields found.
+        count: usize,
+        /// Maximum supported.
+        limit: usize,
+    },
+}
+
+impl ErrorKind {
+    /// Get a suggestion for fixing this error, if applicable.
+    #[must_use]
+    pub fn suggestion(&self) -> Option<String> {
+        match self {
+            ErrorKind::UnknownField {
+                field, expected, ..
+            } => find_similar(field, expected),
+            ErrorKind::UnknownVariant {
+                variant, expected, ..
+            } => find_similar(variant, expected),
+            ErrorKind::SuggestRawIdentifier(ident) => Some(alloc::format!("r#{ident}")),
+            _ => None,
         }
     }
 }
 
-impl fmt::Display for SpannedError {
+/// Find a similar string from a list of expected values.
+fn find_similar(needle: &str, haystack: &[&str]) -> Option<String> {
+    let needle_lower = needle.to_lowercase();
+
+    // Find best match using edit distance
+    haystack
+        .iter()
+        .filter_map(|s| {
+            let s_lower = s.to_lowercase();
+            let dist = edit_distance(&needle_lower, &s_lower);
+            // Only consider matches with edit distance <= 2 (or <= half the length for short strings)
+            let max_dist = (needle.len().max(s.len()) / 2).max(2);
+            if dist <= max_dist {
+                Some((*s, dist))
+            } else {
+                None
+            }
+        })
+        .min_by_key(|(_, dist)| *dist)
+        .map(|(s, _)| s.to_string())
+}
+
+/// Calculate edit distance between two strings.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+
+    // Quick checks
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+
+    // Use two-row optimization for space efficiency
+    let mut prev = (0..=n).collect::<Vec<_>>();
+    let mut curr = vec![0; n + 1];
+
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        core::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[n]
+}
+
+// =============================================================================
+// Display implementations
+// =============================================================================
+
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.span, self.code)
+        // Span prefix (if not synthetic)
+        if !self.0.span.is_synthetic() {
+            write!(f, "{}: ", self.0.span)?;
+        }
+
+        // Path context (reversed - outermost first)
+        if !self.0.path.is_empty() {
+            write!(f, "in ")?;
+            for (i, seg) in self.0.path.iter().rev().enumerate() {
+                if i > 0 {
+                    write!(f, " -> ")?;
+                }
+                write!(f, "{seg}")?;
+            }
+            write!(f, ": ")?;
+        }
+
+        // Error kind message
+        write!(f, "{}", self.0.kind)
     }
 }
 
-impl fmt::Display for Error {
-    #[allow(clippy::too_many_lines, deprecated)]
+impl fmt::Display for ErrorKind {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Error::Fmt => f.write_str("Formatting RON failed"),
-            Error::Io(ref s) | Error::Message(ref s) => f.write_str(s),
-            Error::Eof => f.write_str("Unexpected end of RON"),
-            Error::ExpectedArray => f.write_str("Expected opening `[`"),
-            Error::ExpectedArrayEnd => f.write_str("Expected closing `]`"),
-            Error::ExpectedAttribute => f.write_str("Expected an `#![enable(...)]` attribute"),
-            Error::ExpectedAttributeEnd => {
-                f.write_str("Expected closing `)]` after the enable attribute")
-            }
-            Error::ExpectedBoolean => f.write_str("Expected boolean"),
-            Error::ExpectedComma { context: Some(ctx) } => write!(f, "Expected comma in {ctx}"),
-            Error::ExpectedComma { context: None } => f.write_str("Expected comma"),
-            Error::ExpectedChar => f.write_str("Expected char"),
-            Error::ExpectedByteLiteral => f.write_str("Expected byte literal"),
-            Error::ExpectedFloat => f.write_str("Expected float"),
-            Error::FloatUnderscore => f.write_str("Unexpected underscore in float"),
-            Error::ExpectedInteger => f.write_str("Expected integer"),
-            Error::ExpectedOption => f.write_str("Expected option"),
-            Error::ExpectedOptionEnd | Error::ExpectedStructLikeEnd => {
-                f.write_str("Expected closing `)`")
-            }
-            Error::ExpectedMap => f.write_str("Expected opening `{`"),
-            Error::ExpectedMapColon { context: Some(ctx) } => write!(f, "Expected colon in {ctx}"),
-            Error::ExpectedMapColon { context: None } => f.write_str("Expected colon"),
-            Error::ExpectedMapEnd => f.write_str("Expected closing `}`"),
-            Error::ExpectedDifferentStructName {
-                expected,
-                ref found,
-            } => write!(
-                f,
-                "Expected struct {} but found {}",
-                Identifier(expected),
-                Identifier(found)
-            ),
-            Error::ExpectedStructLike => f.write_str("Expected opening `(`"),
-            Error::ExpectedNamedStructLike(name) => {
-                if name.is_empty() {
-                    f.write_str("Expected only opening `(`, no name, for un-nameable struct")
-                } else {
-                    write!(f, "Expected opening `(` for struct {}", Identifier(name))
-                }
-            }
-            Error::ExpectedUnit => f.write_str("Expected unit"),
-            Error::ExpectedString => f.write_str("Expected string"),
-            Error::ExpectedByteString => f.write_str("Expected byte string"),
-            Error::ExpectedStringEnd => f.write_str("Expected end of string"),
-            Error::ExpectedIdentifier => f.write_str("Expected identifier"),
-            Error::ExpectedValue { context: Some(ctx) } => write!(f, "Expected value in {ctx}"),
-            Error::ExpectedValue { context: None } => f.write_str("Expected value"),
-            Error::InvalidEscape(s) => f.write_str(s),
-            Error::IntegerOutOfBounds {
-                ref value,
-                target_type,
-            } => {
-                write!(f, "Integer {value} is out of bounds for {target_type}")
-            }
-            Error::InvalidIntegerDigit { digit, base } => {
-                write!(f, "Invalid digit {digit:?} for base {base} integers")
-            }
-            Error::NoSuchExtension(ref name) => {
-                write!(f, "No RON extension named {}", Identifier(name))
-            }
-            Error::Utf8Error(ref e) => fmt::Display::fmt(e, f),
-            Error::UnclosedBlockComment => f.write_str("Unclosed block comment"),
-            Error::UnclosedLineComment => f.write_str(
+        match self {
+            // General
+            ErrorKind::Message(s) => f.write_str(s),
+            ErrorKind::Fmt => f.write_str("Formatting RON failed"),
+            ErrorKind::Io { message, .. } => f.write_str(message),
+            ErrorKind::Utf8 { message, .. } => f.write_str(message),
+
+            // Lexical
+            ErrorKind::Eof => f.write_str("Unexpected end of RON"),
+            ErrorKind::UnexpectedChar(c) => write!(f, "Unexpected char {c:?}"),
+            ErrorKind::UnclosedBlockComment => f.write_str("Unclosed block comment"),
+            ErrorKind::UnclosedLineComment => f.write_str(
                 "`ron::value::RawValue` cannot end in unclosed line comment, \
                 try using a block comment or adding a newline",
             ),
-            Error::UnderscoreAtBeginning => {
+            ErrorKind::InvalidEscape(s) => f.write_str(s),
+            ErrorKind::InvalidIntegerDigit { digit, base } => {
+                write!(f, "Invalid digit {digit:?} for base {base} integers")
+            }
+            ErrorKind::UnderscoreAtBeginning => {
                 f.write_str("Unexpected leading underscore in a number")
             }
-            Error::UnexpectedChar(c) => write!(f, "Unexpected char {c:?}"),
-            Error::TrailingCharacters => f.write_str("Non-whitespace trailing characters"),
-            Error::InvalidValueForType {
-                ref expected,
-                ref found,
-            } => {
-                write!(f, "Expected {expected} but found {found} instead")
+            ErrorKind::FloatUnderscore => f.write_str("Unexpected underscore in float"),
+
+            // Structural
+            ErrorKind::Expected {
+                expected,
+                context: Some(ctx),
+            } => write!(f, "Expected {expected} in {ctx}"),
+            ErrorKind::Expected {
+                expected,
+                context: None,
+            } => write!(f, "Expected {expected}"),
+            ErrorKind::TrailingCharacters => f.write_str("Non-whitespace trailing characters"),
+            ErrorKind::ExpectedStringEnd => f.write_str("Expected end of string"),
+            ErrorKind::InvalidIdentifier(s) => write!(f, "Invalid identifier {s:?}"),
+            ErrorKind::SuggestRawIdentifier(s) => write!(
+                f,
+                "Found invalid std identifier {s:?}, try the raw identifier `r#{s}` instead"
+            ),
+            ErrorKind::ExpectedRawValue => f.write_str("Expected a `ron::value::RawValue`"),
+
+            // Type mismatch
+            ErrorKind::TypeMismatch { expected, found } => {
+                write!(f, "expected {expected} but found {found}")
             }
-            Error::ExpectedDifferentLength {
-                ref expected,
+            ErrorKind::LengthMismatch {
+                expected,
                 found,
+                context,
             } => {
-                write!(f, "Expected {expected} but found ")?;
-
+                if let Some(ctx) = context {
+                    write!(f, "{ctx} ")?;
+                }
+                write!(f, "expected {expected} but found ")?;
                 match found {
-                    0 => f.write_str("zero elements")?,
-                    1 => f.write_str("one element")?,
-                    n => write!(f, "{n} elements")?,
+                    0 => f.write_str("zero elements"),
+                    1 => f.write_str("one element"),
+                    n => write!(f, "{n} elements"),
                 }
-
-                f.write_str(" instead")
             }
-            Error::NoSuchEnumVariant {
-                expected,
-                ref found,
-                ref outer,
-            } => {
-                f.write_str("Unknown ")?;
 
-                if outer.is_none() {
-                    f.write_str("enum ")?;
-                }
-
-                write!(f, "variant {}", Identifier(found.as_ref()))?;
-
+            // Fields/variants
+            ErrorKind::MissingField { field, outer } => {
+                write!(f, "missing required field {}", Identifier(field))?;
                 if let Some(outer) = outer {
-                    write!(f, " in enum {}", Identifier(outer.as_ref()))?;
+                    write!(f, " in {}", Identifier(outer))?;
                 }
-
-                write!(
-                    f,
-                    ", {}",
-                    OneOf {
-                        alts: expected,
-                        none: "variants"
-                    }
-                )
+                Ok(())
             }
-            Error::NoSuchStructField {
+            ErrorKind::UnknownField {
+                field,
                 expected,
-                ref found,
-                ref outer,
+                outer,
             } => {
-                write!(f, "Unknown field {}", Identifier(found.as_ref()))?;
-
+                write!(f, "Unknown field {}", Identifier(field))?;
                 if let Some(outer) = outer {
-                    write!(f, " in {}", Identifier(outer.as_ref()))?;
+                    write!(f, " in {}", Identifier(outer))?;
                 }
-
                 write!(
                     f,
                     ", {}",
@@ -390,156 +775,277 @@ impl fmt::Display for Error {
                     }
                 )
             }
-            Error::MissingStructField {
-                ref field,
-                ref outer,
+            ErrorKind::DuplicateField { field, outer } => {
+                write!(f, "Duplicate field {}", Identifier(field))?;
+                if let Some(outer) = outer {
+                    write!(f, " in {}", Identifier(outer))?;
+                }
+                Ok(())
+            }
+            ErrorKind::UnknownVariant {
+                variant,
+                expected,
+                outer,
             } => {
-                write!(f, "Missing required field {}", Identifier(field.as_ref()))?;
-
-                match outer {
-                    Some(outer) => write!(f, " in {}", Identifier(outer.as_ref())),
-                    None => Ok(()),
+                f.write_str("Unknown ")?;
+                if outer.is_none() {
+                    f.write_str("enum ")?;
+                }
+                write!(f, "variant {}", Identifier(variant))?;
+                if let Some(outer) = outer {
+                    write!(f, " in enum {}", Identifier(outer))?;
+                }
+                write!(
+                    f,
+                    ", {}",
+                    OneOf {
+                        alts: expected,
+                        none: "variants"
+                    }
+                )
+            }
+            ErrorKind::ExpectedStructName { expected, found } => {
+                if let Some(found) = found {
+                    write!(
+                        f,
+                        "Expected struct {} but found {}",
+                        Identifier(expected),
+                        Identifier(found)
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Expected the explicit struct name {}, but none was found",
+                        Identifier(expected)
+                    )
                 }
             }
-            Error::DuplicateStructField {
-                ref field,
-                ref outer,
-            } => {
-                write!(f, "Duplicate field {}", Identifier(field.as_ref()))?;
 
-                match outer {
-                    Some(outer) => write!(f, " in {}", Identifier(outer.as_ref())),
-                    None => Ok(()),
-                }
+            // Numeric
+            ErrorKind::IntegerOutOfBounds { value, target_type } => {
+                write!(f, "Integer {value} is out of bounds for {target_type}")
             }
-            Error::InvalidIdentifier(ref invalid) => write!(f, "Invalid identifier {invalid:?}"),
-            Error::SuggestRawIdentifier(ref identifier) => write!(
-                f,
-                "Found invalid std identifier {identifier:?}, try the raw identifier `r#{identifier}` instead"
-            ),
-            Error::ExpectedRawValue => f.write_str("Expected a `ron::value::RawValue`"),
-            Error::ExceededRecursionLimit => f.write_str(
+
+            // Config
+            ErrorKind::NoSuchExtension(name) => {
+                write!(f, "No RON extension named {}", Identifier(name))
+            }
+            ErrorKind::ExceededRecursionLimit => f.write_str(
                 "Exceeded recursion limit, try increasing `ron::Options::recursion_limit`",
             ),
-            Error::TooManyFields { count, limit } => {
+            ErrorKind::TooManyFields { count, limit } => {
                 write!(f, "Struct has {count} fields but maximum is {limit}")
             }
-            Error::ExpectedStructName(ref name) => write!(
-                f,
-                "Expected the explicit struct name {}, but none was found",
-                Identifier(name)
-            ),
         }
     }
 }
 
-impl core::error::Error for SpannedError {}
+// =============================================================================
+// PartialEq / Eq (manual implementation)
+// =============================================================================
 
-impl core::error::Error for Error {}
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.kind == other.0.kind && self.0.span == other.0.span && self.0.path == other.0.path
+    }
+}
+
+impl Eq for Error {}
+
+impl PartialEq for ErrorKind {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare variants, skipping source fields (not meaningful for equality)
+        match (self, other) {
+            (ErrorKind::Message(a), ErrorKind::Message(b)) => a == b,
+            (ErrorKind::Fmt, ErrorKind::Fmt) => true,
+            (ErrorKind::Io { message: a, .. }, ErrorKind::Io { message: b, .. }) => a == b,
+            (ErrorKind::Utf8 { message: a, .. }, ErrorKind::Utf8 { message: b, .. }) => a == b,
+            (ErrorKind::Eof, ErrorKind::Eof) => true,
+            (ErrorKind::UnexpectedChar(a), ErrorKind::UnexpectedChar(b)) => a == b,
+            (ErrorKind::UnclosedBlockComment, ErrorKind::UnclosedBlockComment) => true,
+            (ErrorKind::UnclosedLineComment, ErrorKind::UnclosedLineComment) => true,
+            (ErrorKind::InvalidEscape(a), ErrorKind::InvalidEscape(b)) => a == b,
+            (
+                ErrorKind::InvalidIntegerDigit {
+                    digit: d1,
+                    base: b1,
+                },
+                ErrorKind::InvalidIntegerDigit {
+                    digit: d2,
+                    base: b2,
+                },
+            ) => d1 == d2 && b1 == b2,
+            (ErrorKind::UnderscoreAtBeginning, ErrorKind::UnderscoreAtBeginning) => true,
+            (ErrorKind::FloatUnderscore, ErrorKind::FloatUnderscore) => true,
+            (
+                ErrorKind::Expected {
+                    expected: e1,
+                    context: c1,
+                },
+                ErrorKind::Expected {
+                    expected: e2,
+                    context: c2,
+                },
+            ) => e1 == e2 && c1 == c2,
+            (ErrorKind::TrailingCharacters, ErrorKind::TrailingCharacters) => true,
+            (ErrorKind::ExpectedStringEnd, ErrorKind::ExpectedStringEnd) => true,
+            (ErrorKind::InvalidIdentifier(a), ErrorKind::InvalidIdentifier(b)) => a == b,
+            (ErrorKind::SuggestRawIdentifier(a), ErrorKind::SuggestRawIdentifier(b)) => a == b,
+            (ErrorKind::ExpectedRawValue, ErrorKind::ExpectedRawValue) => true,
+            (
+                ErrorKind::TypeMismatch {
+                    expected: e1,
+                    found: f1,
+                },
+                ErrorKind::TypeMismatch {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
+            (
+                ErrorKind::LengthMismatch {
+                    expected: e1,
+                    found: f1,
+                    context: c1,
+                },
+                ErrorKind::LengthMismatch {
+                    expected: e2,
+                    found: f2,
+                    context: c2,
+                },
+            ) => e1 == e2 && f1 == f2 && c1 == c2,
+            (
+                ErrorKind::MissingField {
+                    field: f1,
+                    outer: o1,
+                },
+                ErrorKind::MissingField {
+                    field: f2,
+                    outer: o2,
+                },
+            ) => f1 == f2 && o1 == o2,
+            (
+                ErrorKind::UnknownField {
+                    field: f1,
+                    expected: e1,
+                    outer: o1,
+                },
+                ErrorKind::UnknownField {
+                    field: f2,
+                    expected: e2,
+                    outer: o2,
+                },
+            ) => f1 == f2 && e1 == e2 && o1 == o2,
+            (
+                ErrorKind::DuplicateField {
+                    field: f1,
+                    outer: o1,
+                },
+                ErrorKind::DuplicateField {
+                    field: f2,
+                    outer: o2,
+                },
+            ) => f1 == f2 && o1 == o2,
+            (
+                ErrorKind::UnknownVariant {
+                    variant: v1,
+                    expected: e1,
+                    outer: o1,
+                },
+                ErrorKind::UnknownVariant {
+                    variant: v2,
+                    expected: e2,
+                    outer: o2,
+                },
+            ) => v1 == v2 && e1 == e2 && o1 == o2,
+            (
+                ErrorKind::ExpectedStructName {
+                    expected: e1,
+                    found: f1,
+                },
+                ErrorKind::ExpectedStructName {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
+            (
+                ErrorKind::IntegerOutOfBounds {
+                    value: v1,
+                    target_type: t1,
+                },
+                ErrorKind::IntegerOutOfBounds {
+                    value: v2,
+                    target_type: t2,
+                },
+            ) => v1 == v2 && t1 == t2,
+            (ErrorKind::NoSuchExtension(a), ErrorKind::NoSuchExtension(b)) => a == b,
+            (ErrorKind::ExceededRecursionLimit, ErrorKind::ExceededRecursionLimit) => true,
+            (
+                ErrorKind::TooManyFields {
+                    count: c1,
+                    limit: l1,
+                },
+                ErrorKind::TooManyFields {
+                    count: c2,
+                    limit: l2,
+                },
+            ) => c1 == c2 && l1 == l2,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ErrorKind {}
+
+// =============================================================================
+// std::error::Error implementation
+// =============================================================================
+
+impl core::error::Error for Error {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match &self.0.kind {
+            ErrorKind::Io {
+                source: Some(e), ..
+            } => Some(e.as_ref()),
+            ErrorKind::Utf8 {
+                source: Some(e), ..
+            } => Some(e.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+// =============================================================================
+// From implementations
+// =============================================================================
 
 impl From<Utf8Error> for Error {
     fn from(e: Utf8Error) -> Self {
-        Error::Utf8Error(e)
+        Error::new(ErrorKind::Utf8 {
+            message: e.to_string(),
+            source: Some(Arc::new(e)),
+        })
     }
 }
 
 impl From<fmt::Error> for Error {
     fn from(_: fmt::Error) -> Self {
-        Error::Fmt
+        Error::new(ErrorKind::Fmt)
     }
 }
 
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
-        Error::Io(e.to_string())
+        Error::new(ErrorKind::Io {
+            message: e.to_string(),
+            source: Some(Arc::new(e)),
+        })
     }
 }
 
-impl From<SpannedError> for Error {
-    fn from(e: SpannedError) -> Self {
-        e.code
-    }
-}
-
-impl Error {
-    /// Convert a [`ValidationErrorKind`] to an [`Error`].
-    ///
-    /// This is the canonical way to create validation-related errors.
-    /// The deprecated error variants (e.g., `IntegerOutOfBounds`, `InvalidValueForType`)
-    /// are mapped from their corresponding `ValidationErrorKind` variants.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ron2::error::Error;
-    /// use ron2::ValidationErrorKind;
-    ///
-    /// let kind = ValidationErrorKind::TypeMismatch {
-    ///     expected: "i32".into(),
-    ///     found: "String".into(),
-    /// };
-    /// let error = Error::from_validation_kind(kind);
-    /// ```
-    #[must_use]
-    #[allow(deprecated)]
-    pub fn from_validation_kind(kind: ValidationErrorKind) -> Self {
-        match kind {
-            ValidationErrorKind::TypeMismatch { expected, found } => {
-                Error::InvalidValueForType { expected, found }
-            }
-            ValidationErrorKind::MissingField { field, outer } => {
-                Error::MissingStructField { field, outer }
-            }
-            ValidationErrorKind::UnknownField {
-                field,
-                expected,
-                outer,
-            } => Error::NoSuchStructField {
-                expected,
-                found: field,
-                outer,
-            },
-            ValidationErrorKind::UnknownVariant {
-                variant,
-                expected,
-                outer,
-            } => Error::NoSuchEnumVariant {
-                expected,
-                found: variant,
-                outer,
-            },
-            ValidationErrorKind::DuplicateField { field, outer } => {
-                Error::DuplicateStructField { field, outer }
-            }
-            ValidationErrorKind::LengthMismatch {
-                expected,
-                found,
-                context,
-            } => Error::ExpectedDifferentLength {
-                expected: if let Some(ctx) = context {
-                    alloc::format!("{ctx} with {expected} elements")
-                } else {
-                    alloc::format!("{expected} elements")
-                },
-                found,
-            },
-            ValidationErrorKind::IntegerOutOfBounds { value, target_type } => {
-                Error::IntegerOutOfBounds { value, target_type }
-            }
-        }
-    }
-}
-
-/// Convert a [`ValidationError`] to a [`SpannedError`].
-///
-/// The span is taken from the [`ValidationError`] if present, otherwise a synthetic span is used.
-impl From<ValidationError> for SpannedError {
-    fn from(e: ValidationError) -> Self {
-        let span = e.span.clone().unwrap_or_else(Span::synthetic);
-        let code = Error::from_validation_kind(e.kind);
-        Self { code, span }
-    }
-}
+// =============================================================================
+// Helper display types
+// =============================================================================
 
 struct OneOf {
     alts: &'static [&'static str],
@@ -559,11 +1065,9 @@ impl fmt::Display for OneOf {
             ),
             [a1, alts @ .., an] => {
                 write!(f, "expected one of {}", Identifier(a1))?;
-
                 for alt in alts {
                     write!(f, ", {}", Identifier(alt))?;
                 }
-
                 write!(f, ", or {} instead", Identifier(an))
             }
         }
@@ -588,153 +1092,117 @@ impl fmt::Display for Identifier<'_> {
     }
 }
 
-#[cfg(test)]
-#[allow(deprecated)]
-mod tests {
-    use alloc::string::String;
+// =============================================================================
+// Tests
+// =============================================================================
 
-    use super::{
-        Error, PathSegment, Position, Span, SpannedError, ValidationError, ValidationErrorKind,
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_is_small() {
+        // Error should be pointer-sized (8 bytes on 64-bit)
+        assert_eq!(
+            core::mem::size_of::<Error>(),
+            core::mem::size_of::<*const ()>()
+        );
+    }
 
     #[test]
     fn error_messages() {
-        check_error_message(&Error::from(core::fmt::Error), "Formatting RON failed");
-        check_error_message(&Error::Message(String::from("custom")), "custom");
-        check_error_message(&Error::Eof, "Unexpected end of RON");
-        check_error_message(&Error::ExpectedArray, "Expected opening `[`");
-        check_error_message(&Error::ExpectedArrayEnd, "Expected closing `]`");
-        check_error_message(
-            &Error::ExpectedAttribute,
-            "Expected an `#![enable(...)]` attribute",
+        check_message(&Error::from(fmt::Error), "Formatting RON failed");
+        check_message(&Error::new(ErrorKind::Message("custom".into())), "custom");
+        check_message(&Error::eof(), "Unexpected end of RON");
+        check_message(
+            &Error::expected("opening `[`", Span::synthetic()),
+            "Expected opening `[`",
         );
-        check_error_message(
-            &Error::ExpectedAttributeEnd,
-            "Expected closing `)]` after the enable attribute",
-        );
-        check_error_message(&Error::ExpectedBoolean, "Expected boolean");
-        check_error_message(&Error::ExpectedComma { context: None }, "Expected comma");
-        check_error_message(
-            &Error::ExpectedComma {
-                context: Some("array"),
-            },
+        check_message(
+            &Error::expected_in("comma", "array", Span::synthetic()),
             "Expected comma in array",
         );
-        check_error_message(&Error::ExpectedChar, "Expected char");
-        check_error_message(&Error::ExpectedByteLiteral, "Expected byte literal");
-        check_error_message(&Error::ExpectedFloat, "Expected float");
-        check_error_message(&Error::FloatUnderscore, "Unexpected underscore in float");
-        check_error_message(&Error::ExpectedInteger, "Expected integer");
-        check_error_message(&Error::ExpectedOption, "Expected option");
-        check_error_message(&Error::ExpectedOptionEnd, "Expected closing `)`");
-        check_error_message(&Error::ExpectedStructLikeEnd, "Expected closing `)`");
-        check_error_message(&Error::ExpectedMap, "Expected opening `{`");
-        check_error_message(&Error::ExpectedMapColon { context: None }, "Expected colon");
-        check_error_message(
-            &Error::ExpectedMapColon {
-                context: Some("struct field"),
-            },
-            "Expected colon in struct field",
+        check_message(
+            &Error::type_mismatch("i32", "String"),
+            "expected i32 but found String",
         );
-        check_error_message(&Error::ExpectedMapEnd, "Expected closing `}`");
-        check_error_message(&Error::ExpectedStructLike, "Expected opening `(`");
-        check_error_message(&Error::ExpectedUnit, "Expected unit");
-        check_error_message(&Error::ExpectedString, "Expected string");
-        check_error_message(&Error::ExpectedByteString, "Expected byte string");
-        check_error_message(&Error::ExpectedStringEnd, "Expected end of string");
-        check_error_message(&Error::ExpectedIdentifier, "Expected identifier");
-        check_error_message(&Error::InvalidEscape("Invalid escape"), "Invalid escape");
-        check_error_message(
-            &Error::IntegerOutOfBounds {
-                value: "256".into(),
-                target_type: "u8",
-            },
+        check_message(
+            &Error::missing_field("name"),
+            "missing required field `name`",
+        );
+        check_message(
+            &Error::missing_field_in("name", "Config"),
+            "missing required field `name` in `Config`",
+        );
+        check_message(
+            &Error::integer_out_of_bounds("256", "u8"),
             "Integer 256 is out of bounds for u8",
         );
-        check_error_message(&Error::UnclosedBlockComment, "Unclosed block comment");
-        check_error_message(
-            &Error::TrailingCharacters,
-            "Non-whitespace trailing characters",
-        );
     }
 
-    fn check_error_message<T: core::fmt::Display>(err: &T, msg: &str) {
-        assert_eq!(alloc::format!("{err}"), msg);
+    fn check_message(err: &Error, expected: &str) {
+        assert_eq!(alloc::format!("{err}"), expected);
     }
 
     #[test]
-    fn spanned_error_into_code() {
+    fn path_context() {
+        let err = Error::type_mismatch("i32", "String")
+            .in_element(0)
+            .in_field("items");
         assert_eq!(
-            Error::from(SpannedError {
-                code: Error::Eof,
-                span: Span {
-                    start: Position { line: 1, col: 1 },
-                    end: Position { line: 1, col: 5 },
-                    start_offset: 0,
-                    end_offset: 4,
-                }
-            }),
-            Error::Eof
+            err.to_string(),
+            "in field 'items' -> element 0: expected i32 but found String"
         );
     }
 
     #[test]
-    fn test_ron_error_reexports() {
-        // Verify helper error types are accessible
-        let pos = Position { line: 1, col: 1 };
-        assert_eq!(pos.line, 1);
-        let span = Span::synthetic();
-        assert!(span.is_synthetic());
-
-        let seg = PathSegment::Field("test".into());
-        assert!(matches!(seg, PathSegment::Field(_)));
-
-        let kind = ValidationErrorKind::TypeMismatch {
-            expected: "String".into(),
-            found: "i32".into(),
-        };
-        let _err = ValidationError::new(kind);
-    }
-
-    #[test]
-    fn test_validation_error_to_spanned_error_conversion() {
+    fn span_display() {
         let span = Span {
             start: Position { line: 3, col: 15 },
             end: Position { line: 3, col: 20 },
             start_offset: 50,
             end_offset: 55,
         };
-
-        let validation_err = ValidationError::with_span(
-            ValidationErrorKind::MissingField {
-                field: "name".into(),
-                outer: Some("Config".into()),
-            },
-            span.clone(),
-        );
-
-        let spanned: SpannedError = validation_err.into();
-
-        // Verify span is preserved
-        assert_eq!(spanned.span, span);
-
-        // Verify error kind is converted correctly
-        match spanned.code {
-            Error::MissingStructField { field, outer } => {
-                assert_eq!(field.as_ref(), "name");
-                assert_eq!(outer.as_deref(), Some("Config"));
-            }
-            _ => panic!("Expected MissingStructField error"),
-        }
+        let err = Error::with_span(ErrorKind::Eof, span);
+        assert_eq!(err.to_string(), "3:15-3:20: Unexpected end of RON");
     }
 
     #[test]
-    fn test_validation_error_without_span_uses_synthetic() {
-        let validation_err = ValidationError::type_mismatch("bool", "string");
+    fn synthetic_span_hidden() {
+        let err = Error::type_mismatch("i32", "String");
+        // Should NOT show span prefix
+        assert!(!err.to_string().contains(':'));
+        assert!(err.to_string().starts_with("expected"));
+    }
 
-        let spanned: SpannedError = validation_err.into();
+    #[test]
+    fn suggestions() {
+        let err = Error::unknown_field("nme", &["name", "age", "email"]);
+        assert_eq!(err.suggestion(), Some("name".to_string()));
 
-        // Verify synthetic span is used
-        assert!(spanned.span.is_synthetic());
+        let err = Error::unknown_variant("Tru", &["True", "False"]);
+        assert_eq!(err.suggestion(), Some("True".to_string()));
+
+        let err = Error::new(ErrorKind::SuggestRawIdentifier("type".into()));
+        assert_eq!(err.suggestion(), Some("r#type".to_string()));
+    }
+
+    #[test]
+    fn error_source_chain() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let err = Error::from(io_err);
+
+        // Should have source
+        assert!(core::error::Error::source(&err).is_some());
+    }
+
+    #[test]
+    fn error_equality() {
+        let err1 = Error::type_mismatch("i32", "String");
+        let err2 = Error::type_mismatch("i32", "String");
+        assert_eq!(err1, err2);
+
+        let err3 = Error::type_mismatch("i32", "bool");
+        assert_ne!(err1, err3);
     }
 }
