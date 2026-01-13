@@ -1,7 +1,3 @@
-// Allow deprecated error variants in test assertions - tests check error behavior
-// regardless of whether the variant is deprecated
-#![allow(deprecated)]
-
 //! Error quality tests for ron-derive deserialization.
 //!
 //! These tests verify that deserialization errors provide:

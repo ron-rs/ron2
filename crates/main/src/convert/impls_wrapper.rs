@@ -3,7 +3,7 @@
 use alloc::{borrow::Cow, boxed::Box, rc::Rc, sync::Arc};
 use core::cell::{Cell, RefCell};
 
-use super::{FromRon, ToRon, invalid_value, spanned_err, spanned_type_mismatch};
+use super::{FromRon, ToRon, extract_seq_elements, invalid_value, spanned_err, spanned_type_mismatch};
 use crate::{
     ast::{Expr, synthetic_option, synthetic_tuple},
     error::Result,
@@ -142,15 +142,6 @@ impl<T: FromRon> FromRon for RefCell<T> {
 // =============================================================================
 // Tuple implementations
 // =============================================================================
-
-/// Helper to extract elements from a sequence-like expression.
-fn extract_seq_elements<'a>(expr: &'a Expr<'a>) -> Option<alloc::vec::Vec<&'a Expr<'a>>> {
-    match expr {
-        Expr::Seq(seq) => Some(seq.items.iter().map(|item| &item.expr).collect()),
-        Expr::Tuple(tuple) => Some(tuple.elements.iter().map(|elem| &elem.expr).collect()),
-        _ => None,
-    }
-}
 
 macro_rules! impl_to_ron_tuple {
     () => {};

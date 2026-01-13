@@ -20,9 +20,9 @@
 //! # Value Example (semantic only)
 //!
 //! ```
-//! use ron2::{from_str, ToRon, FormatConfig};
+//! use ron2::{Options, Value, ToRon, FormatConfig};
 //!
-//! let value = from_str("Point(x: 1, y: 2)").unwrap();
+//! let value: Value = Options::default().from_str("Point(x: 1, y: 2)").unwrap();
 //! // Pretty output (default)
 //! let pretty = value.to_ron().unwrap();
 //! // Compact output (no whitespace)
@@ -73,39 +73,3 @@ pub use crate::{
     options::Options,
     value::{Map, NamedContent, Number, StructFields, Value},
 };
-
-/// Deserialize a Value from a string.
-///
-/// # Example
-///
-/// ```
-/// use ron2::{from_str, Value, Number};
-///
-/// let value = from_str("42").unwrap();
-/// assert_eq!(value, Value::Number(Number::U8(42)));
-/// ```
-#[deprecated]
-pub fn from_str(s: &str) -> Result<Value> {
-    Options::default().from_str(s)
-}
-
-/// Deserialize a Value from bytes.
-///
-/// # Example
-///
-/// ```
-/// use ron2::{from_bytes, Value, Number};
-///
-/// let value = from_bytes(b"42").unwrap();
-/// assert_eq!(value, Value::Number(Number::U8(42)));
-/// ```
-#[deprecated]
-pub fn from_bytes(s: &[u8]) -> Result<Value> {
-    Options::default().from_bytes(s)
-}
-
-/// Deserialize a Value from a reader.
-#[deprecated]
-pub fn from_reader<R: std::io::Read>(rdr: R) -> Result<Value> {
-    Options::default().from_reader(rdr)
-}

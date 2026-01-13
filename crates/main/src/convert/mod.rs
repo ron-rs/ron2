@@ -1,7 +1,3 @@
-// Allow deprecated errors during transition period - internal code uses these variants
-// while they remain available for backward compatibility
-#![allow(deprecated)]
-
 //! Type conversion traits for RON.
 //!
 //! This module provides [`ToRon`] and [`FromRon`] traits for converting
@@ -186,6 +182,15 @@ pub trait FromRonFields: Sized {
 /// Create an invalid value error.
 fn invalid_value(msg: impl Into<String>) -> Error {
     Error::new(crate::error::ErrorKind::Message(msg.into()))
+}
+
+/// Extract elements from a sequence-like expression (Seq or Tuple).
+pub(crate) fn extract_seq_elements<'a>(expr: &'a Expr<'a>) -> Option<alloc::vec::Vec<&'a Expr<'a>>> {
+    match expr {
+        Expr::Seq(seq) => Some(seq.items.iter().map(|item| &item.expr).collect()),
+        Expr::Tuple(tuple) => Some(tuple.elements.iter().map(|elem| &elem.expr).collect()),
+        _ => None,
+    }
 }
 
 /// Get a human-readable type name for an AST expression.

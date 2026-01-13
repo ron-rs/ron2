@@ -26,12 +26,7 @@ mod span;
 pub use path::PathSegment;
 pub use span::{Position, Span};
 
-// Temporary compatibility aliases during migration
-// TODO: Remove these after migration is complete
-#[doc(hidden)]
-pub type SpannedError = Error;
-#[doc(hidden)]
-pub type SpannedResult<T> = Result<T>;
+// Compatibility aliases for schema validation
 #[doc(hidden)]
 pub type ValidationError = Error;
 #[doc(hidden)]

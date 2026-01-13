@@ -8,7 +8,7 @@ use alloc::{
 use core::hash::{BuildHasher, Hash};
 use std::collections::{HashMap, HashSet};
 
-use super::{FromRon, ToRon, invalid_value, spanned_err, spanned_type_mismatch};
+use super::{FromRon, ToRon, extract_seq_elements, invalid_value, spanned_err, spanned_type_mismatch};
 use crate::{
     ast::{Expr, synthetic_map, synthetic_seq},
     error::Result,
@@ -110,15 +110,6 @@ impl<T: ToRon + Eq + Hash, S: core::hash::BuildHasher> ToRon for indexmap::Index
 // =============================================================================
 // FromRon implementations
 // =============================================================================
-
-/// Helper to extract elements from a sequence-like expression.
-fn extract_seq_elements<'a>(expr: &'a Expr<'a>) -> Option<Vec<&'a Expr<'a>>> {
-    match expr {
-        Expr::Seq(seq) => Some(seq.items.iter().map(|item| &item.expr).collect()),
-        Expr::Tuple(tuple) => Some(tuple.elements.iter().map(|elem| &elem.expr).collect()),
-        _ => None,
-    }
-}
 
 impl<T: FromRon> FromRon for Vec<T> {
     fn from_ast(expr: &Expr<'_>) -> Result<Self> {
