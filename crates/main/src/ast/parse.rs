@@ -385,37 +385,19 @@ impl<'a> AstParser<'a> {
 
         // Expect `!`
         if self.peek_kind() != TokenKind::Bang {
-            return Err(Self::error(
-                hash.span,
-                ErrorKind::Expected {
-                    expected: "attribute".into(),
-                    context: None,
-                },
-            ));
+            return Err(Self::error(hash.span, Self::expected("attribute", None)));
         }
         let _bang = self.next_token();
 
         // Expect `[`
         if self.peek_kind() != TokenKind::LBracket {
-            return Err(Self::error(
-                hash.span,
-                ErrorKind::Expected {
-                    expected: "attribute".into(),
-                    context: None,
-                },
-            ));
+            return Err(Self::error(hash.span, Self::expected("attribute", None)));
         }
         let _lbracket = self.next_token();
 
         // Expect identifier
         if self.peek_kind() != TokenKind::Ident {
-            return Err(Self::error(
-                hash.span,
-                ErrorKind::Expected {
-                    expected: "identifier".into(),
-                    context: None,
-                },
-            ));
+            return Err(Self::error(hash.span, Self::expected("identifier", None)));
         }
         let name_tok = self.next_token();
         let name = name_tok.text;
@@ -426,13 +408,7 @@ impl<'a> AstParser<'a> {
                 let _eq = self.next_token();
                 // Expect string value
                 if self.peek_kind() != TokenKind::String {
-                    return Err(Self::error(
-                        name_tok.span,
-                        ErrorKind::Expected {
-                            expected: "string".into(),
-                            context: None,
-                        },
-                    ));
+                    return Err(Self::error(name_tok.span, Self::expected("string", None)));
                 }
                 let value_tok = self.next_token();
                 AttributeContent::Value(Cow::Borrowed(value_tok.text))
@@ -456,13 +432,7 @@ impl<'a> AstParser<'a> {
                         }
                         _ => {
                             let tok = self.next_token();
-                            return Err(Self::error(
-                                tok.span,
-                                ErrorKind::Expected {
-                                    expected: "identifier".into(),
-                                    context: None,
-                                },
-                            ));
+                            return Err(Self::error(tok.span, Self::expected("identifier", None)));
                         }
                     }
                 }
@@ -471,10 +441,7 @@ impl<'a> AstParser<'a> {
                 if self.peek_kind() != TokenKind::RParen {
                     return Err(Self::error(
                         name_tok.span,
-                        ErrorKind::Expected {
-                            expected: "closing `]`".into(),
-                            context: Some("attribute"),
-                        },
+                        Self::expected("closing `]`", Some("attribute")),
                     ));
                 }
                 let _rparen = self.next_token();
@@ -488,10 +455,7 @@ impl<'a> AstParser<'a> {
         if self.peek_kind() != TokenKind::RBracket {
             return Err(Self::error(
                 hash.span,
-                ErrorKind::Expected {
-                    expected: "closing `]`".into(),
-                    context: Some("attribute"),
-                },
+                Self::expected("closing `]`", Some("attribute")),
             ));
         }
         let rbracket = self.next_token();
@@ -519,41 +483,7 @@ impl<'a> AstParser<'a> {
             TokenKind::Eof => Err(Self::error(self.eof_span(), ErrorKind::Eof)),
             TokenKind::Error => {
                 let tok = self.next_token();
-                // Detect specific error types based on token content
-                if tok.text.starts_with("/*") {
-                    Err(Self::error(tok.span, ErrorKind::UnclosedBlockComment))
-                } else if tok.text.starts_with('"') || tok.text.starts_with("r#") {
-                    Err(Self::error(tok.span, ErrorKind::ExpectedStringEnd))
-                } else if tok.text.starts_with("0x")
-                    || tok.text.starts_with("0X")
-                    || tok.text.starts_with("0b")
-                    || tok.text.starts_with("0B")
-                    || tok.text.starts_with("0o")
-                    || tok.text.starts_with("0O")
-                {
-                    // Invalid number with base prefix - point to position after prefix
-                    let prefix_len = 2;
-                    let error_span = Span {
-                        start: Position {
-                            line: tok.span.start.line,
-                            col: tok.span.start.col + prefix_len,
-                        },
-                        end: tok.span.end,
-                        start_offset: tok.span.start_offset + prefix_len,
-                        end_offset: tok.span.end_offset,
-                    };
-                    // Get the first invalid character after the prefix
-                    let invalid_char = tok.text[prefix_len..].chars().next().unwrap_or('?');
-                    Err(Self::error(
-                        error_span,
-                        ErrorKind::UnexpectedChar(invalid_char),
-                    ))
-                } else {
-                    Err(Self::error(
-                        tok.span,
-                        ErrorKind::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
-                    ))
-                }
+                Err(Self::error_for_error_token(&tok))
             }
             _ => {
                 let tok = self.next_token();
@@ -592,35 +522,7 @@ impl<'a> AstParser<'a> {
             }
             TokenKind::Error => {
                 let tok = self.next_token();
-                let err = if tok.text.starts_with("/*") {
-                    Self::error(tok.span, ErrorKind::UnclosedBlockComment)
-                } else if tok.text.starts_with('"') || tok.text.starts_with("r#") {
-                    Self::error(tok.span, ErrorKind::ExpectedStringEnd)
-                } else if tok.text.starts_with("0x")
-                    || tok.text.starts_with("0X")
-                    || tok.text.starts_with("0b")
-                    || tok.text.starts_with("0B")
-                    || tok.text.starts_with("0o")
-                    || tok.text.starts_with("0O")
-                {
-                    let prefix_len = 2;
-                    let error_span = Span {
-                        start: Position {
-                            line: tok.span.start.line,
-                            col: tok.span.start.col + prefix_len,
-                        },
-                        end: tok.span.end,
-                        start_offset: tok.span.start_offset + prefix_len,
-                        end_offset: tok.span.end_offset,
-                    };
-                    let invalid_char = tok.text[prefix_len..].chars().next().unwrap_or('?');
-                    Self::error(error_span, ErrorKind::UnexpectedChar(invalid_char))
-                } else {
-                    Self::error(
-                        tok.span,
-                        ErrorKind::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
-                    )
-                };
+                let err = Self::error_for_error_token(&tok);
                 self.error_expr_from(err, errors)
             }
             _ => {
@@ -631,6 +533,56 @@ impl<'a> AstParser<'a> {
                 );
                 self.error_expr_from(err, errors)
             }
+        }
+    }
+
+    /// Create an `ErrorKind::Expected` with optional context.
+    fn expected(msg: &'static str, ctx: Option<&'static str>) -> ErrorKind {
+        ErrorKind::Expected {
+            expected: Cow::Borrowed(msg),
+            context: ctx,
+        }
+    }
+
+    /// Classify an error token and create the appropriate error.
+    ///
+    /// This handles detection of specific error types based on token content:
+    /// - Unclosed block comments
+    /// - Unclosed strings
+    /// - Invalid numbers with base prefixes
+    /// - Other unexpected characters
+    fn error_for_error_token(tok: &Token<'_>) -> Error {
+        debug_assert_eq!(tok.kind, TokenKind::Error);
+
+        if tok.text.starts_with("/*") {
+            Self::error(tok.span.clone(), ErrorKind::UnclosedBlockComment)
+        } else if tok.text.starts_with('"') || tok.text.starts_with("r#") {
+            Self::error(tok.span.clone(), ErrorKind::ExpectedStringEnd)
+        } else if tok.text.starts_with("0x")
+            || tok.text.starts_with("0X")
+            || tok.text.starts_with("0b")
+            || tok.text.starts_with("0B")
+            || tok.text.starts_with("0o")
+            || tok.text.starts_with("0O")
+        {
+            // Invalid number with base prefix - point to position after prefix
+            let prefix_len = 2;
+            let error_span = Span {
+                start: Position {
+                    line: tok.span.start.line,
+                    col: tok.span.start.col + prefix_len,
+                },
+                end: tok.span.end,
+                start_offset: tok.span.start_offset + prefix_len,
+                end_offset: tok.span.end_offset,
+            };
+            let invalid_char = tok.text[prefix_len..].chars().next().unwrap_or('?');
+            Self::error(error_span, ErrorKind::UnexpectedChar(invalid_char))
+        } else {
+            Self::error(
+                tok.span.clone(),
+                ErrorKind::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
+            )
         }
     }
 
@@ -677,6 +629,19 @@ impl<'a> AstParser<'a> {
         }
 
         self.eof_span()
+    }
+
+    /// Consume a closing delimiter in strict mode, returning an error if missing.
+    fn consume_closing_strict(
+        &mut self,
+        expected: TokenKind,
+        error_kind: ErrorKind,
+    ) -> Result<Span> {
+        if self.peek_kind() == expected {
+            Ok(self.next_token().span)
+        } else {
+            Err(Self::error(self.eof_span(), error_kind))
+        }
     }
 
     /// Parse a tuple `(a, b, c)` or unit `()`.
@@ -797,24 +762,18 @@ impl<'a> AstParser<'a> {
             self.collect_leading_trivia()
         };
 
-        if self.peek_kind() != TokenKind::RParen {
-            return Err(Self::error(
-                self.eof_span(),
-                ErrorKind::Expected {
-                    expected: "closing `)` or `}`".into(),
-                    context: Some("struct"),
-                },
-            ));
-        }
-        let close_paren = self.next_token();
+        let close_paren = self.consume_closing_strict(
+            TokenKind::RParen,
+            Self::expected("closing `)` or `}`", Some("struct")),
+        )?;
 
         Ok(Expr::Tuple(TupleExpr {
-            span: Span::between(&open_paren.span, &close_paren.span),
+            span: Span::between(&open_paren.span, &close_paren),
             open_paren: open_paren.span,
             leading: Trivia::empty(),
             elements,
             trailing,
-            close_paren: close_paren.span,
+            close_paren,
         }))
     }
 
@@ -853,10 +812,7 @@ impl<'a> AstParser<'a> {
                 }
                 errors.push(Self::error(
                     self.peek_span(),
-                    ErrorKind::Expected {
-                        expected: "comma".into(),
-                        context: Some("tuple"),
-                    },
+                    Self::expected("comma", Some("tuple")),
                 ));
             }
         }
@@ -869,10 +825,7 @@ impl<'a> AstParser<'a> {
 
         let close_paren = self.consume_closing(
             TokenKind::RParen,
-            ErrorKind::Expected {
-                expected: "closing `)` or `}`".into(),
-                context: Some("struct"),
-            },
+            Self::expected("closing `)` or `}`", Some("struct")),
             errors,
         );
 
@@ -904,10 +857,7 @@ impl<'a> AstParser<'a> {
                 let tok = self.next_token();
                 return Err(Self::error(
                     tok.span,
-                    ErrorKind::Expected {
-                        expected: "identifier".into(),
-                        context: None,
-                    },
+                    Self::expected("identifier", None),
                 ));
             }
             let name_tok = self.next_token();
@@ -918,10 +868,7 @@ impl<'a> AstParser<'a> {
             if self.peek_kind() != TokenKind::Colon {
                 return Err(Self::error(
                     name_tok.span,
-                    ErrorKind::Expected {
-                        expected: "`:` after map key".into(),
-                        context: Some("struct field"),
-                    },
+                    Self::expected("`:` after map key", Some("struct field")),
                 ));
             }
             let colon_tok = self.next_token();
@@ -961,25 +908,19 @@ impl<'a> AstParser<'a> {
             self.collect_leading_trivia()
         };
 
-        if self.peek_kind() != TokenKind::RParen {
-            return Err(Self::error(
-                open_paren.span,
-                ErrorKind::Expected {
-                    expected: "closing `)` or `}`".into(),
-                    context: Some("struct"),
-                },
-            ));
-        }
-        let close_paren = self.next_token();
+        let close_paren = self.consume_closing_strict(
+            TokenKind::RParen,
+            Self::expected("closing `)` or `}`", Some("struct")),
+        )?;
 
         // Anonymous struct with fields
         Ok(Expr::AnonStruct(AnonStructExpr {
-            span: Span::between(&open_paren.span, &close_paren.span),
+            span: Span::between(&open_paren.span, &close_paren),
             open_paren: open_paren.span,
             leading: Trivia::empty(),
             fields,
             trailing,
-            close_paren: close_paren.span,
+            close_paren,
         }))
     }
 
@@ -1001,10 +942,7 @@ impl<'a> AstParser<'a> {
                     let error_span = self.peek_span();
                     errors.push(Self::error(
                         error_span.clone(),
-                        ErrorKind::Expected {
-                            expected: "identifier".into(),
-                            context: None,
-                        },
+                        Self::expected("identifier", None),
                     ));
                     self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
                     let trailing = self.collect_leading_trivia();
@@ -1022,10 +960,7 @@ impl<'a> AstParser<'a> {
                         value: Expr::Error(ErrorExpr {
                             span: error_span.clone(),
                             error: Error::with_span(
-                                ErrorKind::Expected {
-                                    expected: "identifier".into(),
-                                    context: None,
-                                },
+                                Self::expected("identifier", None),
                                 error_span,
                             ),
                         }),
@@ -1048,10 +983,7 @@ impl<'a> AstParser<'a> {
             } else {
                 errors.push(Self::error(
                     name_tok.span.clone(),
-                    ErrorKind::Expected {
-                        expected: "`:` after map key".into(),
-                        context: Some("struct field"),
-                    },
+                    Self::expected("`:` after map key", Some("struct field")),
                 ));
                 Self::span_at_end(&name_tok.span)
             };
@@ -1060,10 +992,7 @@ impl<'a> AstParser<'a> {
             let value = match self.peek_kind() {
                 TokenKind::Comma | TokenKind::RParen => {
                     let error_span = Self::span_at_end(&colon);
-                    let error_kind = ErrorKind::Expected {
-                        expected: "value".into(),
-                        context: Some("struct field"),
-                    };
+                    let error_kind = Self::expected("value", Some("struct field"));
                     errors.push(Self::error(error_span.clone(), error_kind.clone()));
                     Expr::Error(ErrorExpr {
                         span: error_span.clone(),
@@ -1096,10 +1025,7 @@ impl<'a> AstParser<'a> {
                 if matches!(self.peek_kind(), TokenKind::Ident) {
                     errors.push(Self::error(
                         self.peek_span(),
-                        ErrorKind::Expected {
-                            expected: "comma".into(),
-                            context: Some("struct"),
-                        },
+                        Self::expected("comma", Some("struct")),
                     ));
                 } else {
                     break;
@@ -1115,10 +1041,7 @@ impl<'a> AstParser<'a> {
 
         let close_paren = self.consume_closing(
             TokenKind::RParen,
-            ErrorKind::Expected {
-                expected: "closing `)` or `}`".into(),
-                context: Some("struct"),
-            },
+            Self::expected("closing `)` or `}`", Some("struct")),
             errors,
         );
 
@@ -1170,24 +1093,18 @@ impl<'a> AstParser<'a> {
             self.collect_leading_trivia()
         };
 
-        if self.peek_kind() != TokenKind::RBracket {
-            return Err(Self::error(
-                self.eof_span(),
-                ErrorKind::Expected {
-                    expected: "closing `]`".into(),
-                    context: Some("array"),
-                },
-            ));
-        }
-        let close_bracket = self.next_token();
+        let close_bracket = self.consume_closing_strict(
+            TokenKind::RBracket,
+            Self::expected("closing `]`", Some("array")),
+        )?;
 
         Ok(Expr::Seq(SeqExpr {
-            span: Span::between(&open_bracket.span, &close_bracket.span),
+            span: Span::between(&open_bracket.span, &close_bracket),
             open_bracket: open_bracket.span,
             leading: Trivia::empty(),
             items,
             trailing,
-            close_bracket: close_bracket.span,
+            close_bracket,
         }))
     }
 
@@ -1225,10 +1142,7 @@ impl<'a> AstParser<'a> {
                 }
                 errors.push(Self::error(
                     self.peek_span(),
-                    ErrorKind::Expected {
-                        expected: "comma".into(),
-                        context: Some("array"),
-                    },
+                    Self::expected("comma", Some("array")),
                 ));
             }
         }
@@ -1241,10 +1155,7 @@ impl<'a> AstParser<'a> {
 
         let close_bracket = self.consume_closing(
             TokenKind::RBracket,
-            ErrorKind::Expected {
-                expected: "closing `]`".into(),
-                context: Some("array"),
-            },
+            Self::expected("closing `]`", Some("array")),
             errors,
         );
 
@@ -1279,10 +1190,7 @@ impl<'a> AstParser<'a> {
                 let unexpected = self.next_token();
                 return Err(Self::error(
                     unexpected.span,
-                    ErrorKind::Expected {
-                        expected: "`:` after map key".into(),
-                        context: Some("map entry"),
-                    },
+                    Self::expected("`:` after map key", Some("map entry")),
                 ));
             }
             let colon_tok = self.next_token();
@@ -1317,24 +1225,18 @@ impl<'a> AstParser<'a> {
             self.collect_leading_trivia()
         };
 
-        if self.peek_kind() != TokenKind::RBrace {
-            return Err(Self::error(
-                self.eof_span(),
-                ErrorKind::Expected {
-                    expected: "closing `}`".into(),
-                    context: Some("map"),
-                },
-            ));
-        }
-        let close_brace = self.next_token();
+        let close_brace = self.consume_closing_strict(
+            TokenKind::RBrace,
+            Self::expected("closing `}`", Some("map")),
+        )?;
 
         Ok(Expr::Map(MapExpr {
-            span: Span::between(&open_brace.span, &close_brace.span),
+            span: Span::between(&open_brace.span, &close_brace),
             open_brace: open_brace.span,
             leading: Trivia::empty(),
             entries,
             trailing,
-            close_brace: close_brace.span,
+            close_brace,
         }))
     }
 
@@ -1348,10 +1250,7 @@ impl<'a> AstParser<'a> {
     ) -> MapEntry<'a> {
         errors.push(Self::error(
             self.peek_span(),
-            ErrorKind::Expected {
-                expected: "`:` after map key".into(),
-                context: Some("map entry"),
-            },
+            Self::expected("`:` after map key", Some("map entry")),
         ));
         self.recover_until(&[TokenKind::Comma, TokenKind::RBrace]);
         let trailing = self.collect_leading_trivia();
@@ -1368,10 +1267,7 @@ impl<'a> AstParser<'a> {
             value: Expr::Error(ErrorExpr {
                 span: error_span.clone(),
                 error: Error::with_span(
-                    ErrorKind::Expected {
-                        expected: "value".into(),
-                        context: Some("map entry"),
-                    },
+                    Self::expected("value", Some("map entry")),
                     error_span,
                 ),
             }),
@@ -1430,10 +1326,7 @@ impl<'a> AstParser<'a> {
                 }
                 errors.push(Self::error(
                     self.peek_span(),
-                    ErrorKind::Expected {
-                        expected: "comma".into(),
-                        context: Some("map"),
-                    },
+                    Self::expected("comma", Some("map")),
                 ));
             }
         }
@@ -1446,10 +1339,7 @@ impl<'a> AstParser<'a> {
 
         let close_brace = self.consume_closing(
             TokenKind::RBrace,
-            ErrorKind::Expected {
-                expected: "closing `}`".into(),
-                context: Some("map"),
-            },
+            Self::expected("closing `}`", Some("map")),
             errors,
         );
 
@@ -1525,10 +1415,7 @@ impl<'a> AstParser<'a> {
         if self.peek_kind() != TokenKind::LParen {
             return Err(Self::error(
                 some_tok.span,
-                ErrorKind::Expected {
-                    expected: "`Some` or `None`".into(),
-                    context: None,
-                },
+                Self::expected("`Some` or `None`", None),
             ));
         }
         let open_paren = self.next_token();
@@ -1537,25 +1424,19 @@ impl<'a> AstParser<'a> {
         let expr = self.parse_expr()?;
         let trailing = self.collect_leading_trivia();
 
-        if self.peek_kind() != TokenKind::RParen {
-            return Err(Self::error(
-                self.eof_span(),
-                ErrorKind::Expected {
-                    expected: "closing `)`".into(),
-                    context: Some("option"),
-                },
-            ));
-        }
-        let close_paren = self.next_token();
+        let close_paren = self.consume_closing_strict(
+            TokenKind::RParen,
+            Self::expected("closing `)`", Some("option")),
+        )?;
 
         Ok(Expr::Option(Box::new(OptionExpr {
-            span: Span::between(&some_tok.span, &close_paren.span),
+            span: Span::between(&some_tok.span, &close_paren),
             value: Some(OptionValue {
                 open_paren: open_paren.span,
                 leading,
                 expr,
                 trailing,
-                close_paren: close_paren.span,
+                close_paren,
             }),
         })))
     }
@@ -1565,10 +1446,7 @@ impl<'a> AstParser<'a> {
         if self.peek_kind() != TokenKind::LParen {
             let err = Self::error(
                 some_tok.span,
-                ErrorKind::Expected {
-                    expected: "`Some` or `None`".into(),
-                    context: None,
-                },
+                Self::expected("`Some` or `None`", None),
             );
             return self.error_expr_from(err, errors);
         }
@@ -1580,10 +1458,7 @@ impl<'a> AstParser<'a> {
 
         let close_paren = self.consume_closing(
             TokenKind::RParen,
-            ErrorKind::Expected {
-                expected: "closing `)`".into(),
-                context: Some("option"),
-            },
+            Self::expected("closing `)`", Some("option")),
             errors,
         );
 
@@ -1760,10 +1635,7 @@ impl<'a> AstParser<'a> {
                 }
                 errors.push(Self::error(
                     self.peek_span(),
-                    ErrorKind::Expected {
-                        expected: "comma".into(),
-                        context: Some("tuple"),
-                    },
+                    Self::expected("comma", Some("tuple")),
                 ));
             }
         }
@@ -1793,10 +1665,7 @@ impl<'a> AstParser<'a> {
                 if self.peek_kind() != TokenKind::RParen {
                     return Err(Self::error(
                         open_paren.span,
-                        ErrorKind::Expected {
-                            expected: "closing `)` or `}`".into(),
-                            context: Some("struct"),
-                        },
+                        Self::expected("closing `)` or `}`", Some("struct")),
                     ));
                 }
                 let close_paren = self.next_token();
@@ -1818,10 +1687,7 @@ impl<'a> AstParser<'a> {
                 if self.peek_kind() != TokenKind::RParen {
                     return Err(Self::error(
                         open_paren.span,
-                        ErrorKind::Expected {
-                            expected: "closing `)` or `}`".into(),
-                            context: Some("struct"),
-                        },
+                        Self::expected("closing `)` or `}`", Some("struct")),
                     ));
                 }
                 let close_paren = self.next_token();
@@ -1842,10 +1708,7 @@ impl<'a> AstParser<'a> {
             if self.peek_kind() != TokenKind::RParen {
                 return Err(Self::error(
                     open_paren.span,
-                    ErrorKind::Expected {
-                        expected: "closing `)` or `}`".into(),
-                        context: Some("struct"),
-                    },
+                    Self::expected("closing `)` or `}`", Some("struct")),
                 ));
             }
             let close_paren = self.next_token();
@@ -1881,10 +1744,7 @@ impl<'a> AstParser<'a> {
 
                 let close_paren = self.consume_closing(
                     TokenKind::RParen,
-                    ErrorKind::Expected {
-                        expected: "closing `)` or `}`".into(),
-                        context: Some("struct"),
-                    },
+                    Self::expected("closing `)` or `}`", Some("struct")),
                     errors,
                 );
 
@@ -1903,10 +1763,7 @@ impl<'a> AstParser<'a> {
 
                 let close_paren = self.consume_closing(
                     TokenKind::RParen,
-                    ErrorKind::Expected {
-                        expected: "closing `)` or `}`".into(),
-                        context: Some("struct"),
-                    },
+                    Self::expected("closing `)` or `}`", Some("struct")),
                     errors,
                 );
 
@@ -1924,10 +1781,7 @@ impl<'a> AstParser<'a> {
 
             let close_paren = self.consume_closing(
                 TokenKind::RParen,
-                ErrorKind::Expected {
-                    expected: "closing `)` or `}`".into(),
-                    context: Some("struct"),
-                },
+                Self::expected("closing `)` or `}`", Some("struct")),
                 errors,
             );
 
@@ -2120,10 +1974,7 @@ impl<'a> AstParser<'a> {
                 let tok = self.next_token();
                 return Err(Self::error(
                     tok.span,
-                    ErrorKind::Expected {
-                        expected: "identifier".into(),
-                        context: None,
-                    },
+                    Self::expected("identifier", None),
                 ));
             }
             let name_tok = self.next_token();
@@ -2133,10 +1984,7 @@ impl<'a> AstParser<'a> {
             if self.peek_kind() != TokenKind::Colon {
                 return Err(Self::error(
                     name_tok.span,
-                    ErrorKind::Expected {
-                        expected: "`:` after map key".into(),
-                        context: Some("struct field"),
-                    },
+                    Self::expected("`:` after map key", Some("struct field")),
                 ));
             }
             let colon_tok = self.next_token();
@@ -2219,10 +2067,7 @@ impl<'a> AstParser<'a> {
                     let error_span = self.peek_span();
                     errors.push(Self::error(
                         error_span.clone(),
-                        ErrorKind::Expected {
-                            expected: "identifier".into(),
-                            context: None,
-                        },
+                        Self::expected("identifier", None),
                     ));
                     self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
                     let trailing = self.collect_leading_trivia();
@@ -2240,10 +2085,7 @@ impl<'a> AstParser<'a> {
                         value: Expr::Error(ErrorExpr {
                             span: error_span.clone(),
                             error: Error::with_span(
-                                ErrorKind::Expected {
-                                    expected: "identifier".into(),
-                                    context: None,
-                                },
+                                Self::expected("identifier", None),
                                 error_span,
                             ),
                         }),
@@ -2266,10 +2108,7 @@ impl<'a> AstParser<'a> {
             } else {
                 errors.push(Self::error(
                     name_tok.span.clone(),
-                    ErrorKind::Expected {
-                        expected: "`:` after map key".into(),
-                        context: Some("struct field"),
-                    },
+                    Self::expected("`:` after map key", Some("struct field")),
                 ));
                 Self::span_at_end(&name_tok.span)
             };
@@ -2278,10 +2117,7 @@ impl<'a> AstParser<'a> {
             let value = match self.peek_kind() {
                 TokenKind::Comma | TokenKind::RParen => {
                     let error_span = Self::span_at_end(&colon);
-                    let error_kind = ErrorKind::Expected {
-                        expected: "value".into(),
-                        context: Some("struct field"),
-                    };
+                    let error_kind = Self::expected("value", Some("struct field"));
                     errors.push(Self::error(error_span.clone(), error_kind.clone()));
                     Expr::Error(ErrorExpr {
                         span: error_span.clone(),
@@ -2314,10 +2150,7 @@ impl<'a> AstParser<'a> {
                 if matches!(self.peek_kind(), TokenKind::Ident) {
                     errors.push(Self::error(
                         self.peek_span(),
-                        ErrorKind::Expected {
-                            expected: "comma".into(),
-                            context: Some("struct"),
-                        },
+                        Self::expected("comma", Some("struct")),
                     ));
                 } else {
                     break;
@@ -2433,10 +2266,7 @@ impl<'a> AstParser<'a> {
                 }
                 errors.push(Self::error(
                     self.peek_span(),
-                    ErrorKind::Expected {
-                        expected: "comma".into(),
-                        context: Some("tuple"),
-                    },
+                    Self::expected("comma", Some("tuple")),
                 ));
             }
         }
