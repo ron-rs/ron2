@@ -644,23 +644,55 @@ impl<'a> AstParser<'a> {
         }
     }
 
-    /// Parse a tuple `(a, b, c)` or unit `()`.
-    fn parse_tuple_or_unit(&mut self) -> Result<Expr<'a>> {
+    /// Check if we're at a closing delimiter or EOF.
+    ///
+    /// This is used by lossy parsing loops to determine when to stop.
+    /// Strict loops should just check for the specific closing delimiter.
+    fn at_closing_or_eof(&mut self, closing: TokenKind) -> bool {
+        let kind = self.peek_kind();
+        kind == closing || kind == TokenKind::Eof
+    }
+
+    /// Report a missing comma error in lossy mode.
+    fn report_missing_comma(&mut self, context: &'static str, errors: &mut Vec<Error>) {
+        errors.push(Self::error(
+            self.peek_span(),
+            Self::expected("comma", Some(context)),
+        ));
+    }
+
+    /// Parse tuple/unit prefix, handling the common opening logic.
+    ///
+    /// Returns (open_paren, leading_trivia, close_paren_if_unit, is_named_fields).
+    fn parse_tuple_or_unit_prefix(&mut self) -> (Token<'a>, Trivia<'a>, Option<Span>, bool) {
         let open_paren = self.next_token();
         debug_assert_eq!(open_paren.kind, TokenKind::LParen);
 
         let leading = self.collect_leading_trivia();
 
         // Check for empty tuple (unit)
-        if self.peek_kind() == TokenKind::RParen {
-            let close_paren = self.next_token();
-            return Ok(Expr::Unit(UnitExpr {
-                span: Span::between(&open_paren.span, &close_paren.span),
-            }));
-        }
+        let close_if_unit = if self.peek_kind() == TokenKind::RParen {
+            Some(self.next_token().span)
+        } else {
+            None
+        };
 
         // Check for named field syntax: `x: value`
         let is_named_fields = self.peek_is_named_field();
+
+        (open_paren, leading, close_if_unit, is_named_fields)
+    }
+
+    /// Parse a tuple `(a, b, c)` or unit `()`.
+    fn parse_tuple_or_unit(&mut self) -> Result<Expr<'a>> {
+        let (open_paren, leading, close_if_unit, is_named_fields) =
+            self.parse_tuple_or_unit_prefix();
+
+        if let Some(close_span) = close_if_unit {
+            return Ok(Expr::Unit(UnitExpr {
+                span: Span::between(&open_paren.span, &close_span),
+            }));
+        }
 
         if is_named_fields {
             // Parse as anonymous struct with named fields
@@ -673,19 +705,14 @@ impl<'a> AstParser<'a> {
 
     /// Parse a tuple `(a, b, c)` or unit `()` with error recovery.
     fn parse_tuple_or_unit_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        let open_paren = self.next_token();
-        debug_assert_eq!(open_paren.kind, TokenKind::LParen);
+        let (open_paren, leading, close_if_unit, is_named_fields) =
+            self.parse_tuple_or_unit_prefix();
 
-        let leading = self.collect_leading_trivia();
-
-        if self.peek_kind() == TokenKind::RParen {
-            let close_paren = self.next_token();
+        if let Some(close_span) = close_if_unit {
             return Expr::Unit(UnitExpr {
-                span: Span::between(&open_paren.span, &close_paren.span),
+                span: Span::between(&open_paren.span, &close_span),
             });
         }
-
-        let is_named_fields = self.peek_is_named_field();
 
         if is_named_fields {
             self.parse_fields_body_inner_lossy(open_paren, leading, errors)
@@ -787,9 +814,8 @@ impl<'a> AstParser<'a> {
         let mut elements = Vec::new();
 
         loop {
-            match self.peek_kind() {
-                TokenKind::RParen | TokenKind::Eof => break,
-                _ => {}
+            if self.at_closing_or_eof(TokenKind::RParen) {
+                break;
             }
 
             let expr = self.parse_expr_lossy(errors);
@@ -807,13 +833,10 @@ impl<'a> AstParser<'a> {
             leading = self.collect_leading_trivia();
 
             if !has_comma {
-                if matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+                if self.at_closing_or_eof(TokenKind::RParen) {
                     break;
                 }
-                errors.push(Self::error(
-                    self.peek_span(),
-                    Self::expected("comma", Some("tuple")),
-                ));
+                self.report_missing_comma("tuple", errors);
             }
         }
 
@@ -1117,9 +1140,8 @@ impl<'a> AstParser<'a> {
         let mut items = Vec::new();
 
         loop {
-            match self.peek_kind() {
-                TokenKind::RBracket | TokenKind::Eof => break,
-                _ => {}
+            if self.at_closing_or_eof(TokenKind::RBracket) {
+                break;
             }
 
             let expr = self.parse_expr_lossy(errors);
@@ -1137,13 +1159,10 @@ impl<'a> AstParser<'a> {
             leading = self.collect_leading_trivia();
 
             if !has_comma {
-                if matches!(self.peek_kind(), TokenKind::RBracket | TokenKind::Eof) {
+                if self.at_closing_or_eof(TokenKind::RBracket) {
                     break;
                 }
-                errors.push(Self::error(
-                    self.peek_span(),
-                    Self::expected("comma", Some("array")),
-                ));
+                self.report_missing_comma("array", errors);
             }
         }
 
@@ -1285,9 +1304,8 @@ impl<'a> AstParser<'a> {
         let mut entries = Vec::new();
 
         loop {
-            match self.peek_kind() {
-                TokenKind::RBrace | TokenKind::Eof => break,
-                _ => {}
+            if self.at_closing_or_eof(TokenKind::RBrace) {
+                break;
             }
 
             let key = self.parse_expr_lossy(errors);
@@ -1321,13 +1339,10 @@ impl<'a> AstParser<'a> {
             leading = self.collect_leading_trivia();
 
             if !has_comma {
-                if matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
+                if self.at_closing_or_eof(TokenKind::RBrace) {
                     break;
                 }
-                errors.push(Self::error(
-                    self.peek_span(),
-                    Self::expected("comma", Some("map")),
-                ));
+                self.report_missing_comma("map", errors);
             }
         }
 
