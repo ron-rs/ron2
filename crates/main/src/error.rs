@@ -638,11 +638,7 @@ fn edit_distance(a: &str, b: &str) -> usize {
     for i in 1..=m {
         curr[0] = i;
         for j in 1..=n {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] {
-                0
-            } else {
-                1
-            };
+            let cost = usize::from(a_chars[i - 1] != b_chars[j - 1]);
             curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         core::mem::swap(&mut prev, &mut curr);
@@ -686,8 +682,7 @@ impl fmt::Display for ErrorKind {
             // General
             ErrorKind::Message(s) => f.write_str(s),
             ErrorKind::Fmt => f.write_str("Formatting RON failed"),
-            ErrorKind::Io { message, .. } => f.write_str(message),
-            ErrorKind::Utf8 { message, .. } => f.write_str(message),
+            ErrorKind::Io { message, .. } | ErrorKind::Utf8 { message, .. } => f.write_str(message),
 
             // Lexical
             ErrorKind::Eof => f.write_str("Unexpected end of RON"),
@@ -851,14 +846,23 @@ impl PartialEq for ErrorKind {
     fn eq(&self, other: &Self) -> bool {
         // Compare variants, skipping source fields (not meaningful for equality)
         match (self, other) {
-            (ErrorKind::Message(a), ErrorKind::Message(b)) => a == b,
-            (ErrorKind::Fmt, ErrorKind::Fmt) => true,
-            (ErrorKind::Io { message: a, .. }, ErrorKind::Io { message: b, .. }) => a == b,
-            (ErrorKind::Utf8 { message: a, .. }, ErrorKind::Utf8 { message: b, .. }) => a == b,
-            (ErrorKind::Eof, ErrorKind::Eof) => true,
+            (ErrorKind::Message(a), ErrorKind::Message(b))
+            | (ErrorKind::InvalidIdentifier(a), ErrorKind::InvalidIdentifier(b))
+            | (ErrorKind::SuggestRawIdentifier(a), ErrorKind::SuggestRawIdentifier(b))
+            | (ErrorKind::NoSuchExtension(a), ErrorKind::NoSuchExtension(b))
+            | (ErrorKind::Io { message: a, .. }, ErrorKind::Io { message: b, .. })
+            | (ErrorKind::Utf8 { message: a, .. }, ErrorKind::Utf8 { message: b, .. }) => a == b,
+            (ErrorKind::Fmt, ErrorKind::Fmt)
+            | (ErrorKind::Eof, ErrorKind::Eof)
+            | (ErrorKind::UnclosedBlockComment, ErrorKind::UnclosedBlockComment)
+            | (ErrorKind::UnclosedLineComment, ErrorKind::UnclosedLineComment)
+            | (ErrorKind::UnderscoreAtBeginning, ErrorKind::UnderscoreAtBeginning)
+            | (ErrorKind::FloatUnderscore, ErrorKind::FloatUnderscore)
+            | (ErrorKind::TrailingCharacters, ErrorKind::TrailingCharacters)
+            | (ErrorKind::ExpectedStringEnd, ErrorKind::ExpectedStringEnd)
+            | (ErrorKind::ExpectedRawValue, ErrorKind::ExpectedRawValue)
+            | (ErrorKind::ExceededRecursionLimit, ErrorKind::ExceededRecursionLimit) => true,
             (ErrorKind::UnexpectedChar(a), ErrorKind::UnexpectedChar(b)) => a == b,
-            (ErrorKind::UnclosedBlockComment, ErrorKind::UnclosedBlockComment) => true,
-            (ErrorKind::UnclosedLineComment, ErrorKind::UnclosedLineComment) => true,
             (ErrorKind::InvalidEscape(a), ErrorKind::InvalidEscape(b)) => a == b,
             (
                 ErrorKind::InvalidIntegerDigit {
@@ -870,8 +874,6 @@ impl PartialEq for ErrorKind {
                     base: b2,
                 },
             ) => d1 == d2 && b1 == b2,
-            (ErrorKind::UnderscoreAtBeginning, ErrorKind::UnderscoreAtBeginning) => true,
-            (ErrorKind::FloatUnderscore, ErrorKind::FloatUnderscore) => true,
             (
                 ErrorKind::Expected {
                     expected: e1,
@@ -882,11 +884,6 @@ impl PartialEq for ErrorKind {
                     context: c2,
                 },
             ) => e1 == e2 && c1 == c2,
-            (ErrorKind::TrailingCharacters, ErrorKind::TrailingCharacters) => true,
-            (ErrorKind::ExpectedStringEnd, ErrorKind::ExpectedStringEnd) => true,
-            (ErrorKind::InvalidIdentifier(a), ErrorKind::InvalidIdentifier(b)) => a == b,
-            (ErrorKind::SuggestRawIdentifier(a), ErrorKind::SuggestRawIdentifier(b)) => a == b,
-            (ErrorKind::ExpectedRawValue, ErrorKind::ExpectedRawValue) => true,
             (
                 ErrorKind::TypeMismatch {
                     expected: e1,
@@ -918,6 +915,16 @@ impl PartialEq for ErrorKind {
                     field: f2,
                     outer: o2,
                 },
+            )
+            | (
+                ErrorKind::DuplicateField {
+                    field: f1,
+                    outer: o1,
+                },
+                ErrorKind::DuplicateField {
+                    field: f2,
+                    outer: o2,
+                },
             ) => f1 == f2 && o1 == o2,
             (
                 ErrorKind::UnknownField {
@@ -931,16 +938,6 @@ impl PartialEq for ErrorKind {
                     outer: o2,
                 },
             ) => f1 == f2 && e1 == e2 && o1 == o2,
-            (
-                ErrorKind::DuplicateField {
-                    field: f1,
-                    outer: o1,
-                },
-                ErrorKind::DuplicateField {
-                    field: f2,
-                    outer: o2,
-                },
-            ) => f1 == f2 && o1 == o2,
             (
                 ErrorKind::UnknownVariant {
                     variant: v1,
@@ -973,8 +970,6 @@ impl PartialEq for ErrorKind {
                     target_type: t2,
                 },
             ) => v1 == v2 && t1 == t2,
-            (ErrorKind::NoSuchExtension(a), ErrorKind::NoSuchExtension(b)) => a == b,
-            (ErrorKind::ExceededRecursionLimit, ErrorKind::ExceededRecursionLimit) => true,
             (
                 ErrorKind::TooManyFields {
                     count: c1,

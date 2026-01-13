@@ -647,7 +647,7 @@ impl<'a> AstParser<'a> {
 
     /// Parse tuple/unit prefix, handling the common opening logic.
     ///
-    /// Returns (open_paren, leading_trivia, close_paren_if_unit, is_named_fields).
+    /// Returns (`open_paren`, `leading_trivia`, `close_paren_if_unit`, `is_named_fields`).
     fn parse_tuple_or_unit_prefix(&mut self) -> (Token<'a>, Trivia<'a>, Option<Span>, bool) {
         let open_paren = self.next_token();
         debug_assert_eq!(open_paren.kind, TokenKind::LParen);
@@ -747,10 +747,9 @@ impl<'a> AstParser<'a> {
                 break;
             }
             // Only check for EOF if not after a comma
-            if elements.is_empty() || elements.last().map_or(false, |e: &TupleElement| e.comma.is_none()) {
-                if self.peek_kind() == TokenKind::Eof {
-                    break;
-                }
+            if (elements.is_empty() || elements.last().is_some_and(|e: &TupleElement| e.comma.is_none()))
+                && self.peek_kind() == TokenKind::Eof {
+                break;
             }
 
             let expr = self.parse_expr_lossy(errors);
@@ -988,10 +987,9 @@ impl<'a> AstParser<'a> {
                 break;
             }
             // Only check for EOF if we're not after a comma (allow error in strict mode)
-            if items.is_empty() || items.last().map_or(false, |item: &SeqItem| item.comma.is_none()) {
-                if self.peek_kind() == TokenKind::Eof {
-                    break;
-                }
+            if (items.is_empty() || items.last().is_some_and(|item: &SeqItem| item.comma.is_none()))
+                && self.peek_kind() == TokenKind::Eof {
+                break;
             }
 
             let expr = self.parse_expr_lossy(errors);
@@ -1064,10 +1062,9 @@ impl<'a> AstParser<'a> {
                 break;
             }
             // Only check for EOF if not after a comma
-            if entries.is_empty() || entries.last().map_or(false, |e: &MapEntry| e.comma.is_none()) {
-                if self.peek_kind() == TokenKind::Eof {
-                    break;
-                }
+            if (entries.is_empty() || entries.last().is_some_and(|e: &MapEntry| e.comma.is_none()))
+                && self.peek_kind() == TokenKind::Eof {
+                break;
             }
 
             let key = self.parse_expr_lossy(errors);

@@ -234,124 +234,96 @@ pub trait RonOptional: RonSchemaType {
 }
 
 // =============================================================================
+// Macro Definitions for Repetitive Implementations
+// =============================================================================
+
+/// Implements `RonSchemaType` for primitive types with a direct TypeKind mapping.
+macro_rules! impl_primitive_schema {
+    ($($ty:ty => $variant:ident),* $(,)?) => {
+        $(
+            impl RonSchemaType for $ty {
+                fn type_kind() -> TypeKind {
+                    TypeKind::$variant
+                }
+            }
+        )*
+    };
+}
+
+/// Implements `RonSchemaType` for transparent wrapper types that delegate to their inner type.
+macro_rules! impl_transparent_schema {
+    ($($ty:ident),* $(,)?) => {
+        $(
+            impl<T: RonSchemaType> RonSchemaType for $ty<T> {
+                fn type_kind() -> TypeKind {
+                    T::type_kind()
+                }
+            }
+        )*
+    };
+}
+
+/// Implements `RonSchemaType` and `RonList` for list-like collection types.
+macro_rules! impl_list_schema {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl<T: RonSchemaType> RonSchemaType for $ty {
+                fn type_kind() -> TypeKind {
+                    TypeKind::List(Box::new(T::type_kind()))
+                }
+            }
+
+            impl<T: RonSchemaType> RonList for $ty {
+                type Element = T;
+            }
+        )*
+    };
+}
+
+/// Implements `RonSchemaType` for tuple types.
+macro_rules! impl_tuple_schema {
+    ($($T:ident),+) => {
+        impl<$($T: RonSchemaType),+> RonSchemaType for ($($T,)+) {
+            fn type_kind() -> TypeKind {
+                TypeKind::Tuple(alloc::vec![$($T::type_kind()),+])
+            }
+        }
+    };
+}
+
+/// Recursively generates tuple implementations from 1-tuple to N-tuple.
+macro_rules! impl_tuple_schema_all {
+    () => {};
+    ($first:ident $(, $rest:ident)*) => {
+        impl_tuple_schema!($first $(, $rest)*);
+        impl_tuple_schema_all!($($rest),*);
+    };
+}
+
+// =============================================================================
 // Standard Library Implementations
 // =============================================================================
 
 // Primitives
 
-impl RonSchemaType for bool {
-    fn type_kind() -> TypeKind {
-        TypeKind::Bool
-    }
+impl_primitive_schema! {
+    bool => Bool,
+    i8 => I8, i16 => I16, i32 => I32, i64 => I64, i128 => I128, isize => I64,
+    u8 => U8, u16 => U16, u32 => U32, u64 => U64, u128 => U128, usize => U64,
+    f32 => F32, f64 => F64,
+    char => Char,
+    String => String,
+    () => Unit,
+    std::path::PathBuf => String,
+    std::path::Path => String,
+    std::ffi::OsString => String,
+    std::ffi::OsStr => String,
 }
 
-impl RonSchemaType for i8 {
-    fn type_kind() -> TypeKind {
-        TypeKind::I8
-    }
-}
-
-impl RonSchemaType for i16 {
-    fn type_kind() -> TypeKind {
-        TypeKind::I16
-    }
-}
-
-impl RonSchemaType for i32 {
-    fn type_kind() -> TypeKind {
-        TypeKind::I32
-    }
-}
-
-impl RonSchemaType for i64 {
-    fn type_kind() -> TypeKind {
-        TypeKind::I64
-    }
-}
-
-impl RonSchemaType for i128 {
-    fn type_kind() -> TypeKind {
-        TypeKind::I128
-    }
-}
-
-impl RonSchemaType for isize {
-    fn type_kind() -> TypeKind {
-        // isize is platform-dependent, but we'll represent it as I64 for schema purposes
-        TypeKind::I64
-    }
-}
-
-impl RonSchemaType for u8 {
-    fn type_kind() -> TypeKind {
-        TypeKind::U8
-    }
-}
-
-impl RonSchemaType for u16 {
-    fn type_kind() -> TypeKind {
-        TypeKind::U16
-    }
-}
-
-impl RonSchemaType for u32 {
-    fn type_kind() -> TypeKind {
-        TypeKind::U32
-    }
-}
-
-impl RonSchemaType for u64 {
-    fn type_kind() -> TypeKind {
-        TypeKind::U64
-    }
-}
-
-impl RonSchemaType for u128 {
-    fn type_kind() -> TypeKind {
-        TypeKind::U128
-    }
-}
-
-impl RonSchemaType for usize {
-    fn type_kind() -> TypeKind {
-        // usize is platform-dependent, but we'll represent it as U64 for schema purposes
-        TypeKind::U64
-    }
-}
-
-impl RonSchemaType for f32 {
-    fn type_kind() -> TypeKind {
-        TypeKind::F32
-    }
-}
-
-impl RonSchemaType for f64 {
-    fn type_kind() -> TypeKind {
-        TypeKind::F64
-    }
-}
-
-impl RonSchemaType for char {
-    fn type_kind() -> TypeKind {
-        TypeKind::Char
-    }
-}
-
-impl RonSchemaType for String {
-    fn type_kind() -> TypeKind {
-        TypeKind::String
-    }
-}
-
+// &str is a reference type, not handled by the macro
 impl RonSchemaType for &str {
     fn type_kind() -> TypeKind {
         TypeKind::String
-    }
-}
-
-impl RonSchemaType for () {
-    fn type_kind() -> TypeKind {
-        TypeKind::Unit
     }
 }
 
@@ -367,19 +339,11 @@ impl<T: RonSchemaType> RonOptional for Option<T> {
     type Inner = T;
 }
 
-// Vec<T>
+// List-like collections
 
-impl<T: RonSchemaType> RonSchemaType for Vec<T> {
-    fn type_kind() -> TypeKind {
-        TypeKind::List(Box::new(T::type_kind()))
-    }
-}
+impl_list_schema! { Vec<T>, VecDeque<T>, LinkedList<T>, BTreeSet<T> }
 
-impl<T: RonSchemaType> RonList for Vec<T> {
-    type Element = T;
-}
-
-// Slices and arrays
+// Slices and arrays (special cases with unsized/const generic)
 
 impl<T: RonSchemaType> RonSchemaType for [T] {
     fn type_kind() -> TypeKind {
@@ -429,7 +393,7 @@ impl<K: RonSchemaType, V: RonSchemaType> RonMap for BTreeMap<K, V> {
     type Value = V;
 }
 
-// HashSet and BTreeSet (as lists)
+// HashSet (special case with BuildHasher bound)
 
 impl<T: RonSchemaType, S: BuildHasher> RonSchemaType for HashSet<T, S> {
     fn type_kind() -> TypeKind {
@@ -441,77 +405,11 @@ impl<T: RonSchemaType, S: BuildHasher> RonList for HashSet<T, S> {
     type Element = T;
 }
 
-impl<T: RonSchemaType> RonSchemaType for BTreeSet<T> {
-    fn type_kind() -> TypeKind {
-        TypeKind::List(Box::new(T::type_kind()))
-    }
-}
+// Transparent wrapper types
 
-impl<T: RonSchemaType> RonList for BTreeSet<T> {
-    type Element = T;
-}
+impl_transparent_schema! { Box, Rc, Arc, Cell, RefCell }
 
-// VecDeque
-
-impl<T: RonSchemaType> RonSchemaType for VecDeque<T> {
-    fn type_kind() -> TypeKind {
-        TypeKind::List(Box::new(T::type_kind()))
-    }
-}
-
-impl<T: RonSchemaType> RonList for VecDeque<T> {
-    type Element = T;
-}
-
-// LinkedList
-
-impl<T: RonSchemaType> RonSchemaType for LinkedList<T> {
-    fn type_kind() -> TypeKind {
-        TypeKind::List(Box::new(T::type_kind()))
-    }
-}
-
-impl<T: RonSchemaType> RonList for LinkedList<T> {
-    type Element = T;
-}
-
-// Box<T>
-
-impl<T: RonSchemaType> RonSchemaType for Box<T> {
-    fn type_kind() -> TypeKind {
-        T::type_kind()
-    }
-}
-
-// Rc<T> and Arc<T>
-
-impl<T: RonSchemaType> RonSchemaType for Rc<T> {
-    fn type_kind() -> TypeKind {
-        T::type_kind()
-    }
-}
-
-impl<T: RonSchemaType> RonSchemaType for Arc<T> {
-    fn type_kind() -> TypeKind {
-        T::type_kind()
-    }
-}
-
-// Cell<T> and RefCell<T>
-
-impl<T: RonSchemaType> RonSchemaType for Cell<T> {
-    fn type_kind() -> TypeKind {
-        T::type_kind()
-    }
-}
-
-impl<T: RonSchemaType> RonSchemaType for RefCell<T> {
-    fn type_kind() -> TypeKind {
-        T::type_kind()
-    }
-}
-
-// Mutex<T> and RwLock<T>
+// Mutex and RwLock (special module paths)
 
 impl<T: RonSchemaType> RonSchemaType for std::sync::Mutex<T> {
     fn type_kind() -> TypeKind {
@@ -525,7 +423,7 @@ impl<T: RonSchemaType> RonSchemaType for std::sync::RwLock<T> {
     }
 }
 
-// Cow<T>
+// Cow (special bounds: ToOwned + ?Sized)
 
 impl<T: RonSchemaType + ToOwned + ?Sized> RonSchemaType for Cow<'_, T> {
     fn type_kind() -> TypeKind {
@@ -535,269 +433,11 @@ impl<T: RonSchemaType + ToOwned + ?Sized> RonSchemaType for Cow<'_, T> {
 
 // Tuples (up to 12 elements like serde)
 
-impl<T0: RonSchemaType> RonSchemaType for (T0,) {
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![T0::type_kind()])
-    }
-}
-
-impl<T0: RonSchemaType, T1: RonSchemaType> RonSchemaType for (T0, T1) {
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![T0::type_kind(), T1::type_kind()])
-    }
-}
-
-impl<T0: RonSchemaType, T1: RonSchemaType, T2: RonSchemaType> RonSchemaType for (T0, T1, T2) {
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![T0::type_kind(), T1::type_kind(), T2::type_kind()])
-    }
-}
-
-impl<T0: RonSchemaType, T1: RonSchemaType, T2: RonSchemaType, T3: RonSchemaType> RonSchemaType
-    for (T0, T1, T2, T3)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-        ])
-    }
-}
-
-impl<T0: RonSchemaType, T1: RonSchemaType, T2: RonSchemaType, T3: RonSchemaType, T4: RonSchemaType>
-    RonSchemaType for (T0, T1, T2, T3, T4)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-            T4::type_kind(),
-        ])
-    }
-}
-
-impl<
-    T0: RonSchemaType,
-    T1: RonSchemaType,
-    T2: RonSchemaType,
-    T3: RonSchemaType,
-    T4: RonSchemaType,
-    T5: RonSchemaType,
-> RonSchemaType for (T0, T1, T2, T3, T4, T5)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-            T4::type_kind(),
-            T5::type_kind(),
-        ])
-    }
-}
-
-impl<
-    T0: RonSchemaType,
-    T1: RonSchemaType,
-    T2: RonSchemaType,
-    T3: RonSchemaType,
-    T4: RonSchemaType,
-    T5: RonSchemaType,
-    T6: RonSchemaType,
-> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-            T4::type_kind(),
-            T5::type_kind(),
-            T6::type_kind(),
-        ])
-    }
-}
-
-impl<
-    T0: RonSchemaType,
-    T1: RonSchemaType,
-    T2: RonSchemaType,
-    T3: RonSchemaType,
-    T4: RonSchemaType,
-    T5: RonSchemaType,
-    T6: RonSchemaType,
-    T7: RonSchemaType,
-> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-            T4::type_kind(),
-            T5::type_kind(),
-            T6::type_kind(),
-            T7::type_kind(),
-        ])
-    }
-}
-
-impl<
-    T0: RonSchemaType,
-    T1: RonSchemaType,
-    T2: RonSchemaType,
-    T3: RonSchemaType,
-    T4: RonSchemaType,
-    T5: RonSchemaType,
-    T6: RonSchemaType,
-    T7: RonSchemaType,
-    T8: RonSchemaType,
-> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-            T4::type_kind(),
-            T5::type_kind(),
-            T6::type_kind(),
-            T7::type_kind(),
-            T8::type_kind(),
-        ])
-    }
-}
-
-impl<
-    T0: RonSchemaType,
-    T1: RonSchemaType,
-    T2: RonSchemaType,
-    T3: RonSchemaType,
-    T4: RonSchemaType,
-    T5: RonSchemaType,
-    T6: RonSchemaType,
-    T7: RonSchemaType,
-    T8: RonSchemaType,
-    T9: RonSchemaType,
-> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-            T4::type_kind(),
-            T5::type_kind(),
-            T6::type_kind(),
-            T7::type_kind(),
-            T8::type_kind(),
-            T9::type_kind(),
-        ])
-    }
-}
-
-impl<
-    T0: RonSchemaType,
-    T1: RonSchemaType,
-    T2: RonSchemaType,
-    T3: RonSchemaType,
-    T4: RonSchemaType,
-    T5: RonSchemaType,
-    T6: RonSchemaType,
-    T7: RonSchemaType,
-    T8: RonSchemaType,
-    T9: RonSchemaType,
-    T10: RonSchemaType,
-> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-            T4::type_kind(),
-            T5::type_kind(),
-            T6::type_kind(),
-            T7::type_kind(),
-            T8::type_kind(),
-            T9::type_kind(),
-            T10::type_kind(),
-        ])
-    }
-}
-
-impl<
-    T0: RonSchemaType,
-    T1: RonSchemaType,
-    T2: RonSchemaType,
-    T3: RonSchemaType,
-    T4: RonSchemaType,
-    T5: RonSchemaType,
-    T6: RonSchemaType,
-    T7: RonSchemaType,
-    T8: RonSchemaType,
-    T9: RonSchemaType,
-    T10: RonSchemaType,
-    T11: RonSchemaType,
-> RonSchemaType for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)
-{
-    fn type_kind() -> TypeKind {
-        TypeKind::Tuple(vec![
-            T0::type_kind(),
-            T1::type_kind(),
-            T2::type_kind(),
-            T3::type_kind(),
-            T4::type_kind(),
-            T5::type_kind(),
-            T6::type_kind(),
-            T7::type_kind(),
-            T8::type_kind(),
-            T9::type_kind(),
-            T10::type_kind(),
-            T11::type_kind(),
-        ])
-    }
-}
+impl_tuple_schema_all!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
 
 // PathBuf and Path
 
-impl RonSchemaType for std::path::PathBuf {
-    fn type_kind() -> TypeKind {
-        TypeKind::String
-    }
-}
-
-impl RonSchemaType for std::path::Path {
-    fn type_kind() -> TypeKind {
-        TypeKind::String
-    }
-}
-
-// OsString and OsStr
-
-impl RonSchemaType for std::ffi::OsString {
-    fn type_kind() -> TypeKind {
-        TypeKind::String
-    }
-}
-
-impl RonSchemaType for std::ffi::OsStr {
-    fn type_kind() -> TypeKind {
-        TypeKind::String
-    }
-}
-
-// PhantomData
+// PhantomData (special ?Sized bound)
 
 impl<T: ?Sized> RonSchemaType for PhantomData<T> {
     fn type_kind() -> TypeKind {
