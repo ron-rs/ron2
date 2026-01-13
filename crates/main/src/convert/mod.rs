@@ -23,12 +23,14 @@ mod impls_primitive;
 mod impls_wrapper;
 mod map_access;
 pub mod number;
+mod spanned;
 
 use alloc::string::String;
 use std::io::Read;
 
 pub use map_access::AstMapAccess;
 pub use number::{ParsedInt, parse_int_raw};
+pub use spanned::Spanned;
 
 use crate::{
     Value,

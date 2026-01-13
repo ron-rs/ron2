@@ -445,6 +445,35 @@ impl<T: ?Sized> RonSchemaType for PhantomData<T> {
     }
 }
 
+// Spanned<T> - transparent wrapper that captures source spans
+
+impl<T: RonSchemaType> RonSchemaType for crate::convert::Spanned<T> {
+    fn type_kind() -> TypeKind {
+        // Spanned<T> has the same schema as T (span is deserialization metadata)
+        T::type_kind()
+    }
+
+    fn type_doc() -> Option<&'static str> {
+        // Forward documentation from inner type
+        T::type_doc()
+    }
+
+    fn schema() -> Schema {
+        // Forward complete schema from inner type
+        T::schema()
+    }
+
+    fn type_path() -> Option<&'static str> {
+        // Forward type path from inner type
+        T::type_path()
+    }
+}
+
+// Mark Spanned<T> as optional if T is optional
+impl<T: RonOptional> RonOptional for crate::convert::Spanned<T> {
+    type Inner = T;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,5 +581,48 @@ mod tests {
         );
         assert_eq!(MyMap::<String, i32>::key_type_kind(), TypeKind::String);
         assert_eq!(MyMap::<String, i32>::value_type_kind(), TypeKind::I32);
+    }
+
+    #[test]
+    fn test_spanned_schema_is_transparent() {
+        use crate::convert::Spanned;
+
+        // Spanned<T> has the same schema as T
+        assert_eq!(Spanned::<i32>::type_kind(), i32::type_kind());
+        assert_eq!(Spanned::<String>::type_kind(), String::type_kind());
+        assert_eq!(
+            Spanned::<Option<bool>>::type_kind(),
+            Option::<bool>::type_kind()
+        );
+        assert_eq!(
+            Spanned::<Vec<i32>>::type_kind(),
+            Vec::<i32>::type_kind()
+        );
+    }
+
+    #[test]
+    fn test_spanned_nested_transparency() {
+        use crate::convert::Spanned;
+
+        // Nested Spanned<T> still has the same schema as T
+        assert_eq!(
+            Spanned::<Spanned<i32>>::type_kind(),
+            i32::type_kind()
+        );
+    }
+
+    #[test]
+    fn test_spanned_option_combinations() {
+        use crate::convert::Spanned;
+
+        // Both Option<Spanned<T>> and Spanned<Option<T>> have Option<T> schema
+        assert_eq!(
+            Option::<Spanned<i32>>::type_kind(),
+            Option::<i32>::type_kind()
+        );
+        assert_eq!(
+            Spanned::<Option<i32>>::type_kind(),
+            Option::<i32>::type_kind()
+        );
     }
 }

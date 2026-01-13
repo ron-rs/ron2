@@ -67,7 +67,7 @@ pub mod value;
 // Re-export formatting config types from ast::fmt
 pub use crate::{
     ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing},
-    convert::{AstMapAccess, FromRon, FromRonFields, ParsedInt, ToRon, parse_int_raw},
+    convert::{AstMapAccess, FromRon, FromRonFields, ParsedInt, Spanned, ToRon, parse_int_raw},
     error::{Error, ErrorKind, PathSegment, Position, Result, Span},
     extensions::Extensions,
     options::Options,
