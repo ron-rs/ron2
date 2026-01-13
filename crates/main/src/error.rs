@@ -87,6 +87,14 @@ pub enum Error {
     ExpectedByteString,
     ExpectedStringEnd,
     ExpectedIdentifier,
+    /// Expected a value expression.
+    ///
+    /// The optional context indicates where the value was expected
+    /// (e.g., "struct field", "map entry").
+    ExpectedValue {
+        /// Optional context about where the value was expected.
+        context: Option<&'static str>,
+    },
 
     InvalidEscape(&'static str),
 
@@ -290,6 +298,8 @@ impl fmt::Display for Error {
             Error::ExpectedByteString => f.write_str("Expected byte string"),
             Error::ExpectedStringEnd => f.write_str("Expected end of string"),
             Error::ExpectedIdentifier => f.write_str("Expected identifier"),
+            Error::ExpectedValue { context: Some(ctx) } => write!(f, "Expected value in {ctx}"),
+            Error::ExpectedValue { context: None } => f.write_str("Expected value"),
             Error::InvalidEscape(s) => f.write_str(s),
             Error::IntegerOutOfBounds {
                 ref value,

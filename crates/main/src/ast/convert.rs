@@ -80,6 +80,10 @@ pub fn expr_to_value(expr: &Expr<'_>) -> SpannedResult<Value> {
         Expr::Tuple(tuple) => tuple_to_value(tuple),
         Expr::AnonStruct(s) => anon_struct_to_value(s),
         Expr::Struct(s) => struct_to_value(s),
+        Expr::Error(err) => Err(SpannedError {
+            code: err.error.clone(),
+            span: err.span.clone(),
+        }),
     }
 }
 

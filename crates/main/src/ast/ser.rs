@@ -150,6 +150,11 @@ impl<'a, W: Write> AstSerializer<'a, W> {
             Expr::Tuple(tuple) => self.write_tuple(tuple)?,
             Expr::AnonStruct(s) => self.write_anon_struct(s)?,
             Expr::Struct(s) => self.write_struct(s)?,
+            Expr::Error(_) => {
+                return Err(crate::error::Error::Message(
+                    "cannot serialize error expression".to_string(),
+                ));
+            }
         }
         Ok(())
     }

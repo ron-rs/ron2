@@ -425,6 +425,9 @@ impl<'a> Formatter<'a> {
             Expr::Tuple(tuple) => self.format_tuple(tuple),
             Expr::AnonStruct(s) => self.format_anon_struct(s),
             Expr::Struct(s) => self.format_struct(s),
+            Expr::Error(_) => {
+                self.output.push_str("/* parse error */");
+            }
         }
     }
 

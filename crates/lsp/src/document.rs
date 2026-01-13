@@ -116,42 +116,46 @@ impl Document {
         self.type_attr = None;
         self.schema_attr = None;
 
-        match ast::parse_document(&self.content) {
-            Ok(doc) => {
-                // Extract attributes from AST
-                for attr in &doc.attributes {
-                    match attr.name.as_ref() {
-                        "type" => {
-                            if let AttributeContent::Value(v) = &attr.content {
-                                self.type_attr = Some(strip_string_quotes(v));
-                            }
-                        }
-                        "schema" => {
-                            if let AttributeContent::Value(v) = &attr.content {
-                                self.schema_attr = Some(strip_string_quotes(v));
-                            }
-                        }
-                        _ => {}
+        let (doc, errors) = ast::parse_document_lossy(&self.content);
+
+        let mut type_attr = None;
+        let mut schema_attr = None;
+
+        for attr in &doc.attributes {
+            match attr.name.as_ref() {
+                "type" => {
+                    if let AttributeContent::Value(v) = &attr.content {
+                        type_attr = Some(strip_string_quotes(v));
                     }
                 }
-
-                // Convert to Value for schema validation
-                self.parsed_value = ast::to_value(&doc).and_then(|r| r.ok());
-
-                // Store owned AST for position queries
-                self.ast = Some(doc.into_owned());
+                "schema" => {
+                    if let AttributeContent::Value(v) = &attr.content {
+                        schema_attr = Some(strip_string_quotes(v));
+                    }
+                }
+                _ => {}
             }
-            Err(err) => {
-                // AST parsing failed - fall back to text-based attribute extraction
-                // so completions and schema resolution still work
-                self.extract_attributes_from_text();
+        }
 
-                self.parse_error = Some(ParseError {
-                    message: format!("{}", err.code),
-                    line: err.span.start.line.saturating_sub(1),
-                    col: err.span.start.col.saturating_sub(1),
-                });
-            }
+        let parsed_value = ast::to_value(&doc).and_then(|r| r.ok());
+        let ast_doc = doc.into_owned();
+
+        let parse_error = errors.first().map(|err| ParseError {
+            message: format!("{}", err.code),
+            line: err.span.start.line.saturating_sub(1),
+            col: err.span.start.col.saturating_sub(1),
+        });
+
+        self.type_attr = type_attr;
+        self.schema_attr = schema_attr;
+        self.parsed_value = parsed_value;
+        self.ast = Some(ast_doc);
+        self.parse_error = parse_error;
+
+        if self.parse_error.is_some() {
+            // AST parsing failed - fall back to text-based attribute extraction
+            // so completions and schema resolution still work
+            self.extract_attributes_from_text();
         }
     }
 
@@ -161,12 +165,16 @@ impl Document {
             let trimmed = line.trim();
 
             if let Some(rest) = trimmed.strip_prefix("#![type") {
-                if let Some(value) = extract_attribute_value_from_text(rest) {
-                    self.type_attr = Some(value);
+                if self.type_attr.is_none() {
+                    if let Some(value) = extract_attribute_value_from_text(rest) {
+                        self.type_attr = Some(value);
+                    }
                 }
             } else if let Some(rest) = trimmed.strip_prefix("#![schema") {
-                if let Some(value) = extract_attribute_value_from_text(rest) {
-                    self.schema_attr = Some(value);
+                if self.schema_attr.is_none() {
+                    if let Some(value) = extract_attribute_value_from_text(rest) {
+                        self.schema_attr = Some(value);
+                    }
                 }
             }
         }
@@ -235,6 +243,26 @@ impl Document {
         // After a colon, we're expecting a value
         if trimmed.ends_with(':') {
             return CompletionContext::Value;
+        }
+
+        if let Some(ast) = self.ast.as_ref() {
+            if let Some(expr) = ast.value.as_ref() {
+                let span = expr.span();
+                if offset >= span.start_offset && offset <= span.end_offset {
+                    if find_field_containing_offset(expr, offset).is_some() {
+                        return CompletionContext::Value;
+                    }
+                    match expr {
+                        ast::Expr::AnonStruct(_) => return CompletionContext::FieldName,
+                        ast::Expr::Struct(s) => {
+                            if matches!(s.body, Some(ast::StructBody::Fields(_))) {
+                                return CompletionContext::FieldName;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
         // After an open paren, comma, or at root level in a struct
@@ -338,6 +366,11 @@ fn extract_fields_with_spans_from_expr(expr: &ast::Expr<'_>) -> Vec<(String, ron
     }
 }
 
+/// Check if a span is synthetic (zero-width, created during error recovery).
+fn is_synthetic_span(span: &ron2::error::Span) -> bool {
+    span.start_offset == span.end_offset
+}
+
 /// Find the field name whose value contains the given offset.
 fn find_field_containing_offset(expr: &ast::Expr<'_>, offset: usize) -> Option<String> {
     let fields: Vec<&ast::StructField<'_>> = match expr {
@@ -354,6 +387,9 @@ fn find_field_containing_offset(expr: &ast::Expr<'_>, offset: usize) -> Option<S
 
     // Find the field whose value span contains the offset
     for field in &fields {
+        if is_synthetic_span(&field.colon) {
+            continue;
+        }
         let value_span = field.value.span();
         if offset >= value_span.start_offset && offset <= value_span.end_offset {
             return Some(field.name.name.to_string());
@@ -362,6 +398,9 @@ fn find_field_containing_offset(expr: &ast::Expr<'_>, offset: usize) -> Option<S
 
     // Also check if we're after the colon but before any value (typing a new value)
     for field in &fields {
+        if is_synthetic_span(&field.colon) {
+            continue;
+        }
         // If offset is after the colon and before or at the value start
         if offset > field.colon.end_offset {
             let value_span = field.value.span();

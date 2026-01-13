@@ -253,6 +253,7 @@ pub fn expr_type_name(expr: &Expr<'_>) -> &'static str {
         Expr::Tuple(_) => "tuple",
         Expr::AnonStruct(_) => "struct",
         Expr::Struct(_) => "named",
+        Expr::Error(_) => "error",
     }
 }
 

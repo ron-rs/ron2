@@ -90,6 +90,7 @@ fn find_field_at_cursor_text(doc: &Document, line: u32, col: u32) -> Option<Stri
     let mut in_string = false;
     let mut escape_next = false;
     let mut paren_depth = 0i32;
+    let mut brace_depth = 0i32;
     let mut colon_pos = None;
 
     for (i, c) in before.char_indices() {
@@ -102,7 +103,11 @@ fn find_field_at_cursor_text(doc: &Document, line: u32, col: u32) -> Option<Stri
             '"' => in_string = !in_string,
             '(' if !in_string => paren_depth += 1,
             ')' if !in_string => paren_depth -= 1,
-            ':' if !in_string && paren_depth > 0 => colon_pos = Some(i),
+            '{' if !in_string => brace_depth += 1,
+            '}' if !in_string => brace_depth -= 1,
+            ':' if !in_string && (paren_depth > 0 || brace_depth == 0) => {
+                colon_pos = Some(i);
+            }
             _ => {}
         }
     }

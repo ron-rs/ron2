@@ -50,10 +50,10 @@ pub use convert::{
 pub use fmt::{
     CommentMode, CompactTypes, Compaction, FormatConfig, Spacing, format_document, format_expr,
 };
-pub use parse::parse_document;
+pub use parse::{parse_document, parse_document_lossy};
 pub use ser::{serialize_document, serialize_document_to};
 
-use crate::error::Span;
+use crate::error::{Error, Span};
 
 // ============================================================================
 // into_owned() macro
@@ -318,6 +318,8 @@ pub enum Expr<'a> {
     AnonStruct(AnonStructExpr<'a>),
     /// Named struct: `Name(...)` or `Name { ... }`.
     Struct(StructExpr<'a>),
+    /// Placeholder expression produced during lossy parsing.
+    Error(ErrorExpr),
 }
 
 impl Expr<'_> {
@@ -338,6 +340,7 @@ impl Expr<'_> {
             Self::Tuple(e) => &e.span,
             Self::AnonStruct(e) => &e.span,
             Self::Struct(e) => &e.span,
+            Self::Error(e) => &e.span,
         }
     }
 
@@ -358,8 +361,18 @@ impl Expr<'_> {
             Self::Tuple(t) => Expr::Tuple(t.into_owned()),
             Self::AnonStruct(a) => Expr::AnonStruct(a.into_owned()),
             Self::Struct(s) => Expr::Struct(s.into_owned()),
+            Self::Error(e) => Expr::Error(e),
         }
     }
+}
+
+/// Error placeholder used by lossy parsing for invalid expressions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErrorExpr {
+    /// Span covering the invalid expression.
+    pub span: Span,
+    /// The parsing error captured at this location.
+    pub error: Error,
 }
 
 // ============================================================================

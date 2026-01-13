@@ -10,9 +10,9 @@ use super::unescape;
 use crate::{
     ast::{
         AnonStructExpr, Attribute, AttributeContent, BoolExpr, ByteExpr, BytesExpr, CharExpr,
-        Comment, CommentKind, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr, NumberExpr,
-        NumberKind, OptionExpr, OptionValue, SeqExpr, SeqItem, StringExpr, StructBody, StructExpr,
-        StructField, Trivia, TupleBody, TupleElement, TupleExpr, UnitExpr,
+        Comment, CommentKind, Document, ErrorExpr, Expr, FieldsBody, Ident, MapEntry, MapExpr,
+        NumberExpr, NumberKind, OptionExpr, OptionValue, SeqExpr, SeqItem, StringExpr, StructBody,
+        StructExpr, StructField, Trivia, TupleBody, TupleElement, TupleExpr, UnitExpr,
     },
     error::{Error, Position, Span, SpannedError, SpannedResult},
     lexer::Lexer,
@@ -31,6 +31,16 @@ pub fn parse_document(source: &str) -> SpannedResult<Document<'_>> {
     let lexer = Lexer::new(source).with_trivia(true);
     let mut parser = AstParser::new(source, lexer);
     parser.parse_document()
+}
+
+/// Parse RON source into an AST document with error recovery.
+///
+/// Returns the parsed document plus any errors encountered.
+#[must_use]
+pub fn parse_document_lossy(source: &str) -> (Document<'_>, Vec<SpannedError>) {
+    let lexer = Lexer::new(source).with_trivia(true);
+    let mut parser = AstParser::new(source, lexer);
+    parser.parse_document_lossy()
 }
 
 /// AST parser that consumes tokens and builds AST nodes.
@@ -72,6 +82,35 @@ impl<'a> AstParser<'a> {
             }
         }
         TokenKind::Eof
+    }
+
+    /// Peek at the span of the next non-trivia token without consuming.
+    fn peek_span(&mut self) -> Span {
+        if let Some(tok) = self.lookahead.last() {
+            return tok.span.clone();
+        }
+
+        while let Some(tok) = self.tokens.peek() {
+            if tok.kind.is_trivia() {
+                if let Some(tok) = self.tokens.next() {
+                    self.trivia_buffer.push(tok);
+                }
+            } else {
+                return tok.span.clone();
+            }
+        }
+
+        self.eof_span()
+    }
+
+    /// Create a zero-width span at the end of the given span.
+    fn span_at_end(span: &Span) -> Span {
+        Span {
+            start: span.end,
+            end: span.end,
+            start_offset: span.end_offset,
+            end_offset: span.end_offset,
+        }
     }
 
     /// Peek at the next two non-trivia token kinds without consuming.
@@ -254,6 +293,40 @@ impl<'a> AstParser<'a> {
         })
     }
 
+    /// Parse a complete document with error recovery.
+    fn parse_document_lossy(&mut self) -> (Document<'a>, Vec<SpannedError>) {
+        let mut errors = Vec::new();
+
+        let leading = self.collect_leading_trivia();
+        let attributes = self.parse_attributes_lossy(&mut errors);
+        let pre_value = self.collect_leading_trivia();
+
+        let value = match self.peek_kind() {
+            TokenKind::Eof => None,
+            _ => Some(self.parse_expr_lossy(&mut errors)),
+        };
+
+        let trailing = self.collect_leading_trivia();
+
+        if self.peek_kind() != TokenKind::Eof {
+            let tok = self.next_token();
+            errors.push(Self::error(tok.span, Error::TrailingCharacters));
+            self.recover_until(&[TokenKind::Eof]);
+        }
+
+        (
+            Document {
+                source: Cow::Borrowed(self.source),
+                leading,
+                attributes,
+                pre_value,
+                value,
+                trailing,
+            },
+            errors,
+        )
+    }
+
     /// Collect leading trivia without consuming a non-trivia token.
     fn collect_leading_trivia(&mut self) -> Trivia<'a> {
         // Peek to force trivia collection
@@ -272,6 +345,27 @@ impl<'a> AstParser<'a> {
         }
 
         Ok(attributes)
+    }
+
+    /// Parse inner attributes (`#![...]`) with error recovery.
+    fn parse_attributes_lossy(&mut self, errors: &mut Vec<SpannedError>) -> Vec<Attribute<'a>> {
+        let mut attributes = Vec::new();
+
+        while self.peek_kind() == TokenKind::Hash {
+            let leading = self.drain_trivia();
+            match self.parse_attribute(leading) {
+                Ok(attr) => attributes.push(attr),
+                Err(err) => {
+                    errors.push(err);
+                    self.recover_until(&[TokenKind::RBracket, TokenKind::Eof]);
+                    if self.peek_kind() == TokenKind::RBracket {
+                        let _ = self.next_token();
+                    }
+                }
+            }
+        }
+
+        attributes
     }
 
     /// Parse a single attribute.
@@ -423,6 +517,120 @@ impl<'a> AstParser<'a> {
         }
     }
 
+    /// Parse an expression with error recovery.
+    fn parse_expr_lossy(&mut self, errors: &mut Vec<SpannedError>) -> Expr<'a> {
+        match self.peek_kind() {
+            TokenKind::LParen => self.parse_tuple_or_unit_lossy(errors),
+            TokenKind::LBracket => self.parse_seq_lossy(errors),
+            TokenKind::LBrace => self.parse_map_lossy(errors),
+            TokenKind::Ident => self.parse_ident_expr_lossy(errors),
+            TokenKind::Integer => self.parse_integer(),
+            TokenKind::Float => self.parse_float(),
+            TokenKind::String => match self.parse_string() {
+                Ok(expr) => expr,
+                Err(err) => self.error_expr_from(err, errors),
+            },
+            TokenKind::ByteString => match self.parse_bytes() {
+                Ok(expr) => expr,
+                Err(err) => self.error_expr_from(err, errors),
+            },
+            TokenKind::Char => match self.parse_char() {
+                Ok(expr) => expr,
+                Err(err) => self.error_expr_from(err, errors),
+            },
+            TokenKind::Eof => {
+                let err = Self::error(self.eof_span(), Error::Eof);
+                self.error_expr_from(err, errors)
+            }
+            TokenKind::Error => {
+                let tok = self.next_token();
+                let err = if tok.text.starts_with("/*") {
+                    Self::error(tok.span, Error::UnclosedBlockComment)
+                } else if tok.text.starts_with('"') || tok.text.starts_with("r#") {
+                    Self::error(tok.span, Error::ExpectedStringEnd)
+                } else if tok.text.starts_with("0x")
+                    || tok.text.starts_with("0X")
+                    || tok.text.starts_with("0b")
+                    || tok.text.starts_with("0B")
+                    || tok.text.starts_with("0o")
+                    || tok.text.starts_with("0O")
+                {
+                    let prefix_len = 2;
+                    let error_span = Span {
+                        start: Position {
+                            line: tok.span.start.line,
+                            col: tok.span.start.col + prefix_len,
+                        },
+                        end: tok.span.end,
+                        start_offset: tok.span.start_offset + prefix_len,
+                        end_offset: tok.span.end_offset,
+                    };
+                    let invalid_char = tok.text[prefix_len..].chars().next().unwrap_or('?');
+                    Self::error(error_span, Error::UnexpectedChar(invalid_char))
+                } else {
+                    Self::error(
+                        tok.span,
+                        Error::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
+                    )
+                };
+                self.error_expr_from(err, errors)
+            }
+            _ => {
+                let tok = self.next_token();
+                let err = Self::error(
+                    tok.span,
+                    Error::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
+                );
+                self.error_expr_from(err, errors)
+            }
+        }
+    }
+
+    fn error_expr_from(&mut self, err: SpannedError, errors: &mut Vec<SpannedError>) -> Expr<'a> {
+        let span = err.span.clone();
+        let error = err.code.clone();
+        errors.push(err);
+        self.recover_until(&[
+            TokenKind::Comma,
+            TokenKind::RParen,
+            TokenKind::RBracket,
+            TokenKind::RBrace,
+        ]);
+        Expr::Error(ErrorExpr { span, error })
+    }
+
+    /// Advance the parser until a synchronization token or EOF is found.
+    fn recover_until(&mut self, sync: &[TokenKind]) {
+        self.trivia_buffer.clear();
+        loop {
+            let kind = self.peek_kind();
+            if kind == TokenKind::Eof || sync.contains(&kind) {
+                break;
+            }
+            let _ = self.next_token();
+        }
+    }
+
+    /// Consume a closing delimiter or recover to it, returning a synthetic span if missing.
+    fn consume_closing(
+        &mut self,
+        expected: TokenKind,
+        error: Error,
+        errors: &mut Vec<SpannedError>,
+    ) -> Span {
+        if self.peek_kind() == expected {
+            return self.next_token().span;
+        }
+
+        errors.push(Self::error(self.peek_span(), error));
+        self.recover_until(&[expected, TokenKind::Eof]);
+        if self.peek_kind() == expected {
+            return self.next_token().span;
+        }
+
+        self.eof_span()
+    }
+
     /// Parse a tuple `(a, b, c)` or unit `()`.
     fn parse_tuple_or_unit(&mut self) -> SpannedResult<Expr<'a>> {
         let open_paren = self.next_token();
@@ -452,6 +660,34 @@ impl<'a> AstParser<'a> {
         } else {
             // Parse as tuple
             self.parse_tuple_inner(open_paren, leading)
+        }
+    }
+
+    /// Parse a tuple `(a, b, c)` or unit `()` with error recovery.
+    fn parse_tuple_or_unit_lossy(&mut self, errors: &mut Vec<SpannedError>) -> Expr<'a> {
+        let open_paren = self.next_token();
+        debug_assert_eq!(open_paren.kind, TokenKind::LParen);
+
+        let leading = self.collect_leading_trivia();
+
+        if self.peek_kind() == TokenKind::RParen {
+            let close_paren = self.next_token();
+            return Expr::Unit(UnitExpr {
+                span: Span {
+                    start: open_paren.span.start,
+                    end: close_paren.span.end,
+                    start_offset: open_paren.span.start_offset,
+                    end_offset: close_paren.span.end_offset,
+                },
+            });
+        }
+
+        let is_named_fields = self.peek_is_named_field();
+
+        if is_named_fields {
+            self.parse_fields_body_inner_lossy(open_paren, leading, errors)
+        } else {
+            self.parse_tuple_inner_lossy(open_paren, leading, errors)
         }
     }
 
@@ -524,6 +760,78 @@ impl<'a> AstParser<'a> {
             trailing,
             close_paren: close_paren.span,
         }))
+    }
+
+    /// Parse a tuple expression with error recovery.
+    fn parse_tuple_inner_lossy(
+        &mut self,
+        open_paren: Token<'a>,
+        mut leading: Trivia<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> Expr<'a> {
+        let mut elements = Vec::new();
+
+        loop {
+            match self.peek_kind() {
+                TokenKind::RParen | TokenKind::Eof => break,
+                _ => {}
+            }
+
+            let expr = self.parse_expr_lossy(errors);
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            elements.push(TupleElement {
+                leading,
+                expr,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                if matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+                    break;
+                }
+                errors.push(Self::error(
+                    self.peek_span(),
+                    Error::ExpectedComma {
+                        context: Some("tuple"),
+                    },
+                ));
+            }
+        }
+
+        let trailing = if elements.is_empty() {
+            leading
+        } else {
+            self.collect_leading_trivia()
+        };
+
+        let close_paren =
+            self.consume_closing(TokenKind::RParen, Error::ExpectedStructLikeEnd, errors);
+
+        Expr::Tuple(TupleExpr {
+            span: Span {
+                start: open_paren.span.start,
+                end: close_paren.end,
+                start_offset: open_paren.span.start_offset,
+                end_offset: close_paren.end_offset,
+            },
+            open_paren: open_paren.span,
+            leading: Trivia::empty(),
+            elements,
+            trailing,
+            close_paren,
+        })
     }
 
     /// Parse a fields body starting after opening paren.
@@ -621,6 +929,150 @@ impl<'a> AstParser<'a> {
         }))
     }
 
+    /// Parse a fields body starting after opening paren with error recovery.
+    #[allow(clippy::too_many_lines)]
+    fn parse_fields_body_inner_lossy(
+        &mut self,
+        open_paren: Token<'a>,
+        mut leading: Trivia<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> Expr<'a> {
+        let mut fields = Vec::new();
+
+        loop {
+            match self.peek_kind() {
+                TokenKind::RParen | TokenKind::Eof => break,
+                TokenKind::Ident => {}
+                _ => {
+                    let error_span = self.peek_span();
+                    errors.push(Self::error(error_span.clone(), Error::ExpectedIdentifier));
+                    self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
+                    let trailing = self.collect_leading_trivia();
+                    let comma = if self.peek_kind() == TokenKind::Comma {
+                        let comma_tok = self.next_token();
+                        Some(comma_tok.span)
+                    } else {
+                        None
+                    };
+                    let has_comma = comma.is_some();
+                    // Create a placeholder field to preserve structure
+                    fields.push(StructField {
+                        leading,
+                        name: Ident {
+                            span: error_span.clone(),
+                            name: Cow::Borrowed(""),
+                        },
+                        pre_colon: Trivia::empty(),
+                        colon: Self::span_at_end(&error_span),
+                        post_colon: Trivia::empty(),
+                        value: Expr::Error(ErrorExpr {
+                            span: error_span,
+                            error: Error::ExpectedIdentifier,
+                        }),
+                        trailing,
+                        comma,
+                    });
+                    leading = self.collect_leading_trivia();
+                    if !has_comma {
+                        break;
+                    }
+                    continue;
+                }
+            }
+
+            let name_tok = self.next_token();
+            let pre_colon = self.collect_leading_trivia();
+
+            let colon = if self.peek_kind() == TokenKind::Colon {
+                self.next_token().span
+            } else {
+                errors.push(Self::error(
+                    name_tok.span.clone(),
+                    Error::ExpectedMapColon {
+                        context: Some("struct field"),
+                    },
+                ));
+                Self::span_at_end(&name_tok.span)
+            };
+
+            let post_colon = self.collect_leading_trivia();
+            let value = match self.peek_kind() {
+                TokenKind::Comma | TokenKind::RParen => {
+                    let error = Error::ExpectedValue {
+                        context: Some("struct field"),
+                    };
+                    errors.push(Self::error(Self::span_at_end(&colon), error.clone()));
+                    Expr::Error(ErrorExpr {
+                        span: Self::span_at_end(&colon),
+                        error,
+                    })
+                }
+                _ => self.parse_expr_lossy(errors),
+            };
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            fields.push(StructField {
+                leading,
+                name: Ident {
+                    span: name_tok.span.clone(),
+                    name: Cow::Borrowed(name_tok.text),
+                },
+                pre_colon,
+                colon,
+                post_colon,
+                value,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                if matches!(self.peek_kind(), TokenKind::Ident) {
+                    errors.push(Self::error(
+                        self.peek_span(),
+                        Error::ExpectedComma {
+                            context: Some("struct"),
+                        },
+                    ));
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let trailing = if fields.is_empty() {
+            leading
+        } else {
+            self.collect_leading_trivia()
+        };
+
+        let close_paren =
+            self.consume_closing(TokenKind::RParen, Error::ExpectedStructLikeEnd, errors);
+
+        Expr::AnonStruct(AnonStructExpr {
+            span: Span {
+                start: open_paren.span.start,
+                end: close_paren.end,
+                start_offset: open_paren.span.start_offset,
+                end_offset: close_paren.end_offset,
+            },
+            open_paren: open_paren.span,
+            leading: Trivia::empty(),
+            fields,
+            trailing,
+            close_paren,
+        })
+    }
+
     /// Parse a sequence `[a, b, c]`.
     fn parse_seq(&mut self) -> SpannedResult<Expr<'a>> {
         let open_bracket = self.next_token();
@@ -683,6 +1135,77 @@ impl<'a> AstParser<'a> {
             trailing,
             close_bracket: close_bracket.span,
         }))
+    }
+
+    /// Parse a sequence `[a, b, c]` with error recovery.
+    fn parse_seq_lossy(&mut self, errors: &mut Vec<SpannedError>) -> Expr<'a> {
+        let open_bracket = self.next_token();
+        debug_assert_eq!(open_bracket.kind, TokenKind::LBracket);
+
+        let mut leading = self.collect_leading_trivia();
+        let mut items = Vec::new();
+
+        loop {
+            match self.peek_kind() {
+                TokenKind::RBracket | TokenKind::Eof => break,
+                _ => {}
+            }
+
+            let expr = self.parse_expr_lossy(errors);
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            items.push(SeqItem {
+                leading,
+                expr,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                if matches!(self.peek_kind(), TokenKind::RBracket | TokenKind::Eof) {
+                    break;
+                }
+                errors.push(Self::error(
+                    self.peek_span(),
+                    Error::ExpectedComma {
+                        context: Some("array"),
+                    },
+                ));
+            }
+        }
+
+        let trailing = if items.is_empty() {
+            leading
+        } else {
+            self.collect_leading_trivia()
+        };
+
+        let close_bracket =
+            self.consume_closing(TokenKind::RBracket, Error::ExpectedArrayEnd, errors);
+
+        Expr::Seq(SeqExpr {
+            span: Span {
+                start: open_bracket.span.start,
+                end: close_bracket.end,
+                start_offset: open_bracket.span.start_offset,
+                end_offset: close_bracket.end_offset,
+            },
+            open_bracket: open_bracket.span,
+            leading: Trivia::empty(),
+            items,
+            trailing,
+            close_bracket,
+        })
     }
 
     /// Parse a map `{key: value, ...}`.
@@ -769,6 +1292,137 @@ impl<'a> AstParser<'a> {
         }))
     }
 
+    /// Create a map entry with missing colon during error recovery.
+    fn recover_map_entry_missing_colon(
+        &mut self,
+        leading: Trivia<'a>,
+        key: Expr<'a>,
+        pre_colon: Trivia<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> MapEntry<'a> {
+        errors.push(Self::error(
+            self.peek_span(),
+            Error::ExpectedMapColon {
+                context: Some("map entry"),
+            },
+        ));
+        self.recover_until(&[TokenKind::Comma, TokenKind::RBrace]);
+        let trailing = self.collect_leading_trivia();
+        let comma = if self.peek_kind() == TokenKind::Comma {
+            let comma_tok = self.next_token();
+            Some(comma_tok.span)
+        } else {
+            None
+        };
+        let colon_span = pre_colon
+            .span
+            .clone()
+            .unwrap_or_else(|| self.eof_span());
+        let key_span = key.span().clone();
+        MapEntry {
+            leading,
+            key,
+            pre_colon,
+            colon: Self::span_at_end(&colon_span),
+            post_colon: Trivia::empty(),
+            value: Expr::Error(ErrorExpr {
+                span: Self::span_at_end(&key_span),
+                error: Error::ExpectedValue {
+                    context: Some("map entry"),
+                },
+            }),
+            trailing,
+            comma,
+        }
+    }
+
+    /// Parse a map `{key: value, ...}` with error recovery.
+    fn parse_map_lossy(&mut self, errors: &mut Vec<SpannedError>) -> Expr<'a> {
+        let open_brace = self.next_token();
+        debug_assert_eq!(open_brace.kind, TokenKind::LBrace);
+
+        let mut leading = self.collect_leading_trivia();
+        let mut entries = Vec::new();
+
+        loop {
+            match self.peek_kind() {
+                TokenKind::RBrace | TokenKind::Eof => break,
+                _ => {}
+            }
+
+            let key = self.parse_expr_lossy(errors);
+            let pre_colon = self.collect_leading_trivia();
+
+            if self.peek_kind() != TokenKind::Colon {
+                let entry =
+                    self.recover_map_entry_missing_colon(leading, key, pre_colon, errors);
+                leading = self.collect_leading_trivia();
+                entries.push(entry);
+                continue;
+            }
+            let colon_tok = self.next_token();
+
+            let post_colon = self.collect_leading_trivia();
+            let value = self.parse_expr_lossy(errors);
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            entries.push(MapEntry {
+                leading,
+                key,
+                pre_colon,
+                colon: colon_tok.span,
+                post_colon,
+                value,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                if matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
+                    break;
+                }
+                errors.push(Self::error(
+                    self.peek_span(),
+                    Error::ExpectedComma {
+                        context: Some("map"),
+                    },
+                ));
+            }
+        }
+
+        let trailing = if entries.is_empty() {
+            leading
+        } else {
+            self.collect_leading_trivia()
+        };
+
+        let close_brace = self.consume_closing(TokenKind::RBrace, Error::ExpectedMapEnd, errors);
+
+        Expr::Map(MapExpr {
+            span: Span {
+                start: open_brace.span.start,
+                end: close_brace.end,
+                start_offset: open_brace.span.start_offset,
+                end_offset: close_brace.end_offset,
+            },
+            open_brace: open_brace.span,
+            leading: Trivia::empty(),
+            entries,
+            trailing,
+            close_brace,
+        })
+    }
+
     /// Parse an identifier-starting expression.
     /// Could be: bool, option, named struct, enum variant.
     fn parse_ident_expr(&mut self) -> SpannedResult<Expr<'a>> {
@@ -795,6 +1449,34 @@ impl<'a> AstParser<'a> {
                 kind: NumberKind::SpecialFloat,
             })),
             _ => self.parse_struct_or_variant(&ident_tok),
+        }
+    }
+
+    /// Parse an identifier-starting expression with error recovery.
+    fn parse_ident_expr_lossy(&mut self, errors: &mut Vec<SpannedError>) -> Expr<'a> {
+        let ident_tok = self.next_token();
+        debug_assert_eq!(ident_tok.kind, TokenKind::Ident);
+
+        match ident_tok.text {
+            "true" => Expr::Bool(BoolExpr {
+                span: ident_tok.span,
+                value: true,
+            }),
+            "false" => Expr::Bool(BoolExpr {
+                span: ident_tok.span,
+                value: false,
+            }),
+            "None" => Expr::Option(Box::new(OptionExpr {
+                span: ident_tok.span,
+                value: None,
+            })),
+            "Some" => self.parse_some_lossy(ident_tok, errors),
+            "inf" | "NaN" => Expr::Number(NumberExpr {
+                span: ident_tok.span,
+                raw: Cow::Borrowed(ident_tok.text),
+                kind: NumberKind::SpecialFloat,
+            }),
+            _ => self.parse_struct_or_variant_lossy(&ident_tok, errors),
         }
     }
 
@@ -829,6 +1511,41 @@ impl<'a> AstParser<'a> {
                 close_paren: close_paren.span,
             }),
         })))
+    }
+
+    /// Parse `Some(value)` with error recovery.
+    fn parse_some_lossy(
+        &mut self,
+        some_tok: Token<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> Expr<'a> {
+        if self.peek_kind() != TokenKind::LParen {
+            let err = Self::error(some_tok.span, Error::ExpectedOption);
+            return self.error_expr_from(err, errors);
+        }
+        let open_paren = self.next_token();
+
+        let leading = self.collect_leading_trivia();
+        let expr = self.parse_expr_lossy(errors);
+        let trailing = self.collect_leading_trivia();
+
+        let close_paren = self.consume_closing(TokenKind::RParen, Error::ExpectedOptionEnd, errors);
+
+        Expr::Option(Box::new(OptionExpr {
+            span: Span {
+                start: some_tok.span.start,
+                end: close_paren.end,
+                start_offset: some_tok.span.start_offset,
+                end_offset: close_paren.end_offset,
+            },
+            value: Some(OptionValue {
+                open_paren: open_paren.span,
+                leading,
+                expr,
+                trailing,
+                close_paren,
+            }),
+        }))
     }
 
     /// Parse a struct or enum variant: `Name(...)` or `Name`.
@@ -893,6 +1610,63 @@ impl<'a> AstParser<'a> {
         }))
     }
 
+    /// Parse a struct or enum variant with error recovery.
+    fn parse_struct_or_variant_lossy(
+        &mut self,
+        name_tok: &Token<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> Expr<'a> {
+        let name = Ident {
+            span: name_tok.span.clone(),
+            name: Cow::Borrowed(name_tok.text),
+        };
+
+        let pre_body = self.collect_leading_trivia();
+
+        let body = match self.peek_kind() {
+            TokenKind::LParen => {
+                let open_paren = self.next_token();
+                let leading = self.collect_leading_trivia();
+
+                if self.peek_kind() == TokenKind::RParen {
+                    let close_paren = self.next_token();
+                    Some(StructBody::Tuple(TupleBody {
+                        open_paren: open_paren.span,
+                        leading,
+                        elements: Vec::new(),
+                        trailing: Trivia::empty(),
+                        close_paren: close_paren.span,
+                    }))
+                } else {
+                    Some(self.parse_struct_body_contents_lossy(open_paren, leading, errors))
+                }
+            }
+            _ => None,
+        };
+
+        let span = if let Some(ref b) = body {
+            let end_span = match b {
+                StructBody::Tuple(t) => &t.close_paren,
+                StructBody::Fields(f) => &f.close_brace,
+            };
+            Span {
+                start: name_tok.span.start,
+                end: end_span.end,
+                start_offset: name_tok.span.start_offset,
+                end_offset: end_span.end_offset,
+            }
+        } else {
+            name_tok.span.clone()
+        };
+
+        Expr::Struct(StructExpr {
+            span,
+            name,
+            pre_body,
+            body,
+        })
+    }
+
     /// Parse tuple elements until closing paren.
     fn parse_tuple_elements(
         &mut self,
@@ -931,6 +1705,56 @@ impl<'a> AstParser<'a> {
         }
 
         Ok(elements)
+    }
+
+    /// Parse tuple elements until closing paren with error recovery.
+    fn parse_tuple_elements_lossy(
+        &mut self,
+        mut leading: Trivia<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> Vec<TupleElement<'a>> {
+        let mut elements = Vec::new();
+
+        loop {
+            match self.peek_kind() {
+                TokenKind::RParen | TokenKind::Eof => break,
+                _ => {}
+            }
+
+            let expr = self.parse_expr_lossy(errors);
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            elements.push(TupleElement {
+                leading,
+                expr,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                if matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+                    break;
+                }
+                errors.push(Self::error(
+                    self.peek_span(),
+                    Error::ExpectedComma {
+                        context: Some("tuple"),
+                    },
+                ));
+            }
+        }
+
+        elements
     }
 
     /// Parse the body contents of a named struct: either named fields or tuple elements.
@@ -1001,6 +1825,69 @@ impl<'a> AstParser<'a> {
                 trailing,
                 close_paren: close_paren.span,
             })))
+        }
+    }
+
+    /// Parse the body contents of a named struct with error recovery.
+    fn parse_struct_body_contents_lossy(
+        &mut self,
+        open_paren: Token<'a>,
+        leading: Trivia<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> StructBody<'a> {
+        if self.peek_kind() == TokenKind::Ident {
+            let first_tok = self.next_token();
+            let post_ident_trivia = self.collect_leading_trivia();
+
+            if self.peek_kind() == TokenKind::Colon {
+                let (fields, trailing) = self.parse_struct_fields_from_first_lossy(
+                    leading,
+                    &first_tok,
+                    post_ident_trivia,
+                    errors,
+                );
+
+                let close_paren =
+                    self.consume_closing(TokenKind::RParen, Error::ExpectedStructLikeEnd, errors);
+
+                StructBody::Fields(FieldsBody {
+                    open_brace: open_paren.span,
+                    leading: Trivia::empty(),
+                    fields,
+                    trailing,
+                    close_brace: close_paren,
+                })
+            } else {
+                let first_expr =
+                    self.ident_token_to_expr_lossy(first_tok, post_ident_trivia, errors);
+                let (elements, trailing) =
+                    self.parse_tuple_elements_from_first_lossy(leading, first_expr, errors);
+
+                let close_paren =
+                    self.consume_closing(TokenKind::RParen, Error::ExpectedStructLikeEnd, errors);
+
+                StructBody::Tuple(TupleBody {
+                    open_paren: open_paren.span,
+                    leading: Trivia::empty(),
+                    elements,
+                    trailing,
+                    close_paren,
+                })
+            }
+        } else {
+            let elements = self.parse_tuple_elements_lossy(leading, errors);
+            let trailing = self.collect_leading_trivia();
+
+            let close_paren =
+                self.consume_closing(TokenKind::RParen, Error::ExpectedStructLikeEnd, errors);
+
+            StructBody::Tuple(TupleBody {
+                open_paren: open_paren.span,
+                leading: Trivia::empty(),
+                elements,
+                trailing,
+                close_paren,
+            })
         }
     }
 
@@ -1079,6 +1966,84 @@ impl<'a> AstParser<'a> {
                     pre_body,
                     body,
                 }))
+            }
+        }
+    }
+
+    /// Convert an identifier token to an expression with error recovery.
+    fn ident_token_to_expr_lossy(
+        &mut self,
+        tok: Token<'a>,
+        pre_body: Trivia<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> Expr<'a> {
+        match tok.text {
+            "true" => Expr::Bool(BoolExpr {
+                span: tok.span,
+                value: true,
+            }),
+            "false" => Expr::Bool(BoolExpr {
+                span: tok.span,
+                value: false,
+            }),
+            "None" => Expr::Option(Box::new(OptionExpr {
+                span: tok.span,
+                value: None,
+            })),
+            "Some" => self.parse_some_lossy(tok, errors),
+            "inf" | "NaN" => Expr::Number(NumberExpr {
+                span: tok.span,
+                raw: Cow::Borrowed(tok.text),
+                kind: NumberKind::SpecialFloat,
+            }),
+            _ => {
+                let name = Ident {
+                    span: tok.span.clone(),
+                    name: Cow::Borrowed(tok.text),
+                };
+
+                let body = match self.peek_kind() {
+                    TokenKind::LParen => {
+                        let open_paren = self.next_token();
+                        let leading = self.collect_leading_trivia();
+
+                        if self.peek_kind() == TokenKind::RParen {
+                            let close_paren = self.next_token();
+                            Some(StructBody::Tuple(TupleBody {
+                                open_paren: open_paren.span,
+                                leading,
+                                elements: Vec::new(),
+                                trailing: Trivia::empty(),
+                                close_paren: close_paren.span,
+                            }))
+                        } else {
+                            Some(self.parse_struct_body_contents_lossy(open_paren, leading, errors))
+                        }
+                    }
+                    _ => None,
+                };
+
+                let span = if let Some(ref b) = body {
+                    let end_span = match b {
+                        StructBody::Tuple(t) => &t.close_paren,
+                        StructBody::Fields(f) => &f.close_brace,
+                    };
+                    Span {
+                        start: tok.span.start,
+                        end: end_span.end,
+                        start_offset: tok.span.start_offset,
+                        end_offset: end_span.end_offset,
+                    }
+                } else {
+                    tok.span.clone()
+                };
+
+                Expr::Struct(StructExpr {
+                    span,
+                    name,
+                    pre_body,
+                    body,
+                })
             }
         }
     }
@@ -1189,6 +2154,165 @@ impl<'a> AstParser<'a> {
         Ok((fields, leading))
     }
 
+    /// Parse struct fields starting with the first field name already consumed, with recovery.
+    #[allow(clippy::too_many_lines)]
+    fn parse_struct_fields_from_first_lossy(
+        &mut self,
+        leading: Trivia<'a>,
+        first_name: &Token<'a>,
+        pre_colon: Trivia<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> (Vec<StructField<'a>>, Trivia<'a>) {
+        let mut fields = Vec::new();
+
+        let colon_tok = self.next_token();
+        debug_assert_eq!(colon_tok.kind, TokenKind::Colon);
+
+        let post_colon = self.collect_leading_trivia();
+        let value = self.parse_expr_lossy(errors);
+        let trailing = self.collect_leading_trivia();
+
+        let comma = if self.peek_kind() == TokenKind::Comma {
+            let comma_tok = self.next_token();
+            Some(comma_tok.span)
+        } else {
+            None
+        };
+        let has_comma = comma.is_some();
+
+        fields.push(StructField {
+            leading,
+            name: Ident {
+                span: first_name.span.clone(),
+                name: Cow::Borrowed(first_name.text),
+            },
+            pre_colon,
+            colon: colon_tok.span,
+            post_colon,
+            value,
+            trailing,
+            comma,
+        });
+
+        if !has_comma {
+            return (fields, self.collect_leading_trivia());
+        }
+
+        let mut leading = self.collect_leading_trivia();
+
+        loop {
+            match self.peek_kind() {
+                TokenKind::RParen | TokenKind::Eof => break,
+                TokenKind::Ident => {}
+                _ => {
+                    let error_span = self.peek_span();
+                    errors.push(Self::error(error_span.clone(), Error::ExpectedIdentifier));
+                    self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
+                    let trailing = self.collect_leading_trivia();
+                    let comma = if self.peek_kind() == TokenKind::Comma {
+                        let comma_tok = self.next_token();
+                        Some(comma_tok.span)
+                    } else {
+                        None
+                    };
+                    let has_comma = comma.is_some();
+                    // Create a placeholder field to preserve structure
+                    fields.push(StructField {
+                        leading,
+                        name: Ident {
+                            span: error_span.clone(),
+                            name: Cow::Borrowed(""),
+                        },
+                        pre_colon: Trivia::empty(),
+                        colon: Self::span_at_end(&error_span),
+                        post_colon: Trivia::empty(),
+                        value: Expr::Error(ErrorExpr {
+                            span: error_span,
+                            error: Error::ExpectedIdentifier,
+                        }),
+                        trailing,
+                        comma,
+                    });
+                    leading = self.collect_leading_trivia();
+                    if !has_comma {
+                        break;
+                    }
+                    continue;
+                }
+            }
+
+            let name_tok = self.next_token();
+            let pre_colon = self.collect_leading_trivia();
+
+            let colon = if self.peek_kind() == TokenKind::Colon {
+                self.next_token().span
+            } else {
+                errors.push(Self::error(
+                    name_tok.span.clone(),
+                    Error::ExpectedMapColon {
+                        context: Some("struct field"),
+                    },
+                ));
+                Self::span_at_end(&name_tok.span)
+            };
+
+            let post_colon = self.collect_leading_trivia();
+            let value = match self.peek_kind() {
+                TokenKind::Comma | TokenKind::RParen => {
+                    let error = Error::ExpectedValue {
+                        context: Some("struct field"),
+                    };
+                    errors.push(Self::error(Self::span_at_end(&colon), error.clone()));
+                    Expr::Error(ErrorExpr {
+                        span: Self::span_at_end(&colon),
+                        error,
+                    })
+                }
+                _ => self.parse_expr_lossy(errors),
+            };
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            fields.push(StructField {
+                leading,
+                name: Ident {
+                    span: name_tok.span.clone(),
+                    name: Cow::Borrowed(name_tok.text),
+                },
+                pre_colon,
+                colon,
+                post_colon,
+                value,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                if matches!(self.peek_kind(), TokenKind::Ident) {
+                    errors.push(Self::error(
+                        self.peek_span(),
+                        Error::ExpectedComma {
+                            context: Some("struct"),
+                        },
+                    ));
+                } else {
+                    break;
+                }
+            }
+        }
+
+        (fields, leading)
+    }
+
     /// Parse tuple elements starting with the first expression already parsed.
     fn parse_tuple_elements_from_first(
         &mut self,
@@ -1253,6 +2377,79 @@ impl<'a> AstParser<'a> {
         }
 
         Ok((elements, leading))
+    }
+
+    /// Parse tuple elements starting with the first expression, with recovery.
+    fn parse_tuple_elements_from_first_lossy(
+        &mut self,
+        leading: Trivia<'a>,
+        first_expr: Expr<'a>,
+        errors: &mut Vec<SpannedError>,
+    ) -> (Vec<TupleElement<'a>>, Trivia<'a>) {
+        let mut elements = Vec::new();
+
+        let trailing = self.collect_leading_trivia();
+        let comma = if self.peek_kind() == TokenKind::Comma {
+            let comma_tok = self.next_token();
+            Some(comma_tok.span)
+        } else {
+            None
+        };
+        let has_comma = comma.is_some();
+
+        elements.push(TupleElement {
+            leading,
+            expr: first_expr,
+            trailing,
+            comma,
+        });
+
+        if !has_comma {
+            return (elements, self.collect_leading_trivia());
+        }
+
+        let mut leading = self.collect_leading_trivia();
+
+        loop {
+            match self.peek_kind() {
+                TokenKind::RParen | TokenKind::Eof => break,
+                _ => {}
+            }
+
+            let expr = self.parse_expr_lossy(errors);
+            let trailing = self.collect_leading_trivia();
+
+            let comma = if self.peek_kind() == TokenKind::Comma {
+                let comma_tok = self.next_token();
+                Some(comma_tok.span)
+            } else {
+                None
+            };
+            let has_comma = comma.is_some();
+
+            elements.push(TupleElement {
+                leading,
+                expr,
+                trailing,
+                comma,
+            });
+
+            leading = self.collect_leading_trivia();
+
+            if !has_comma {
+                if matches!(self.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
+                    break;
+                }
+                errors.push(Self::error(
+                    self.peek_span(),
+                    Error::ExpectedComma {
+                        context: Some("tuple"),
+                    },
+                ));
+            }
+        }
+
+        (elements, leading)
     }
 
     /// Parse an integer literal.
@@ -1807,5 +3004,189 @@ mod tests {
             }
             _ => panic!("expected anonymous struct"),
         }
+    }
+
+    // =========================================================================
+    // Lossy parsing tests (error recovery)
+    // =========================================================================
+
+    #[test]
+    fn lossy_missing_closing_paren() {
+        let (doc, errors) = parse_document_lossy("(x: 1, y: 2");
+        assert_eq!(errors.len(), 1);
+        match &doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert_eq!(s.fields[0].name.name, "x");
+                assert_eq!(s.fields[1].name.name, "y");
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn lossy_missing_closing_bracket() {
+        let (doc, errors) = parse_document_lossy("[1, 2, 3");
+        assert_eq!(errors.len(), 1);
+        match &doc.value {
+            Some(Expr::Seq(seq)) => {
+                assert_eq!(seq.items.len(), 3);
+            }
+            _ => panic!("expected sequence"),
+        }
+    }
+
+    #[test]
+    fn lossy_missing_closing_brace() {
+        let (doc, errors) = parse_document_lossy(r#"{"a": 1"#);
+        assert_eq!(errors.len(), 1);
+        match &doc.value {
+            Some(Expr::Map(map)) => {
+                assert_eq!(map.entries.len(), 1);
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn lossy_missing_comma_in_struct() {
+        let (doc, errors) = parse_document_lossy("(x: 1 y: 2)");
+        assert_eq!(errors.len(), 1);
+        match &doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn lossy_invalid_token_in_struct() {
+        let (doc, errors) = parse_document_lossy("(x: @, y: 2)");
+        assert_eq!(errors.len(), 1);
+        match &doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert!(matches!(s.fields[0].value, Expr::Error(_)));
+                assert!(matches!(s.fields[1].value, Expr::Number(_)));
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn lossy_invalid_field_name() {
+        // Input starts with a number, so parser sees this as a tuple first.
+        // "y: 2" in tuple context will cause a colon error.
+        let (doc, errors) = parse_document_lossy("(123, y: 2)");
+        // Errors occur because "y: 2" looks like a map entry in tuple context
+        assert!(!errors.is_empty());
+        match &doc.value {
+            Some(Expr::Tuple(t)) => {
+                // First element is the number, second involves recovery
+                assert!(!t.elements.is_empty());
+            }
+            _ => panic!("expected tuple, got {:?}", doc.value),
+        }
+    }
+
+    #[test]
+    fn lossy_invalid_token_as_field_name() {
+        // @ is not an identifier, so parser can't know it's meant to be a field.
+        // It parses as a tuple with error elements.
+        let (doc, errors) = parse_document_lossy("(@: 1, y: 2)");
+        assert!(!errors.is_empty());
+        match &doc.value {
+            Some(Expr::Tuple(t)) => {
+                // Contains error expressions for invalid tokens
+                assert!(!t.elements.is_empty());
+            }
+            _ => panic!("expected tuple, got {:?}", doc.value),
+        }
+    }
+
+    #[test]
+    fn lossy_invalid_token_in_existing_struct() {
+        // Start with a valid field so parser knows it's a struct,
+        // then encounter an invalid token where a field name is expected.
+        let (doc, errors) = parse_document_lossy("(x: 1, @: 2, y: 3)");
+        assert!(!errors.is_empty());
+        match &doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                // Should have 3 fields: x, placeholder for @, and y
+                assert_eq!(s.fields.len(), 3);
+                assert_eq!(s.fields[0].name.name, "x");
+                assert_eq!(s.fields[1].name.name, ""); // placeholder
+                assert_eq!(s.fields[2].name.name, "y");
+            }
+            _ => panic!("expected anonymous struct, got {:?}", doc.value),
+        }
+    }
+
+    #[test]
+    fn lossy_multiple_errors() {
+        let (doc, errors) = parse_document_lossy("(x: @, y: #)");
+        assert_eq!(errors.len(), 2);
+        match &doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert!(matches!(s.fields[0].value, Expr::Error(_)));
+                assert!(matches!(s.fields[1].value, Expr::Error(_)));
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn lossy_nested_recovery() {
+        let (doc, errors) = parse_document_lossy("(x: [1, @, 3], y: 2)");
+        assert_eq!(errors.len(), 1);
+        match &doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                match &s.fields[0].value {
+                    Expr::Seq(seq) => {
+                        assert_eq!(seq.items.len(), 3);
+                        assert!(matches!(seq.items[1].expr, Expr::Error(_)));
+                    }
+                    _ => panic!("expected sequence"),
+                }
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn lossy_missing_value_after_colon() {
+        let (doc, errors) = parse_document_lossy("(x:, y: 2)");
+        assert_eq!(errors.len(), 1);
+        match &doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+                assert!(matches!(s.fields[0].value, Expr::Error(_)));
+                assert!(matches!(s.fields[1].value, Expr::Number(_)));
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn lossy_valid_document_no_errors() {
+        let (doc, errors) = parse_document_lossy("(x: 1, y: 2)");
+        assert!(errors.is_empty());
+        match &doc.value {
+            Some(Expr::AnonStruct(s)) => {
+                assert_eq!(s.fields.len(), 2);
+            }
+            _ => panic!("expected anonymous struct"),
+        }
+    }
+
+    #[test]
+    fn lossy_preserves_attributes() {
+        let (doc, errors) = parse_document_lossy(r#"#![type = "foo::Bar"] (x: 1"#);
+        assert_eq!(errors.len(), 1); // missing closing paren
+        assert_eq!(doc.attributes.len(), 1);
+        assert_eq!(doc.attributes[0].name, "type");
     }
 }
