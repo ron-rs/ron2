@@ -102,6 +102,20 @@ impl Span {
     pub fn slice<'a>(&self, source: &'a str) -> &'a str {
         &source[self.start_offset..self.end_offset]
     }
+
+    /// Create a span covering from the start of `start` to the end of `end`.
+    ///
+    /// This is useful for creating spans that cover a range of tokens,
+    /// such as the span of a tuple from `(` to `)`.
+    #[must_use]
+    pub fn between(start: &Span, end: &Span) -> Self {
+        Self {
+            start: start.start,
+            end: end.end,
+            start_offset: start.start_offset,
+            end_offset: end.end_offset,
+        }
+    }
 }
 
 impl fmt::Display for Span {

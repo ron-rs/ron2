@@ -444,15 +444,8 @@ impl<'a> AstParser<'a> {
         }
         let rbracket = self.next_token();
 
-        let span = Span {
-            start: hash.span.start,
-            end: rbracket.span.end,
-            start_offset: hash.span.start_offset,
-            end_offset: rbracket.span.end_offset,
-        };
-
         Ok(Attribute {
-            span,
+            span: Span::between(&hash.span, &rbracket.span),
             leading,
             name: Cow::Borrowed(name),
             content,
@@ -642,12 +635,7 @@ impl<'a> AstParser<'a> {
         if self.peek_kind() == TokenKind::RParen {
             let close_paren = self.next_token();
             return Ok(Expr::Unit(UnitExpr {
-                span: Span {
-                    start: open_paren.span.start,
-                    end: close_paren.span.end,
-                    start_offset: open_paren.span.start_offset,
-                    end_offset: close_paren.span.end_offset,
-                },
+                span: Span::between(&open_paren.span, &close_paren.span),
             }));
         }
 
@@ -673,12 +661,7 @@ impl<'a> AstParser<'a> {
         if self.peek_kind() == TokenKind::RParen {
             let close_paren = self.next_token();
             return Expr::Unit(UnitExpr {
-                span: Span {
-                    start: open_paren.span.start,
-                    end: close_paren.span.end,
-                    start_offset: open_paren.span.start_offset,
-                    end_offset: close_paren.span.end_offset,
-                },
+                span: Span::between(&open_paren.span, &close_paren.span),
             });
         }
 
@@ -696,6 +679,29 @@ impl<'a> AstParser<'a> {
         // Check if we have `ident:` pattern using two-token lookahead
         let (first, second) = self.peek_two_kinds();
         first == TokenKind::Ident && second == TokenKind::Colon
+    }
+
+    /// Try to parse an empty tuple body `()`.
+    ///
+    /// If the next token is `)`, consumes it and returns `Ok` with an empty `TupleBody`.
+    /// Otherwise returns `Err` with the trivia passed back without consuming any tokens.
+    fn try_parse_empty_tuple_body(
+        &mut self,
+        open_paren: &Span,
+        leading: Trivia<'a>,
+    ) -> Result<TupleBody<'a>, Trivia<'a>> {
+        if self.peek_kind() == TokenKind::RParen {
+            let close_paren = self.next_token();
+            Ok(TupleBody {
+                open_paren: open_paren.clone(),
+                leading,
+                elements: Vec::new(),
+                trailing: Trivia::empty(),
+                close_paren: close_paren.span,
+            })
+        } else {
+            Err(leading)
+        }
     }
 
     /// Parse a tuple expression starting after the opening paren.
@@ -748,12 +754,7 @@ impl<'a> AstParser<'a> {
         let close_paren = self.next_token();
 
         Ok(Expr::Tuple(TupleExpr {
-            span: Span {
-                start: open_paren.span.start,
-                end: close_paren.span.end,
-                start_offset: open_paren.span.start_offset,
-                end_offset: close_paren.span.end_offset,
-            },
+            span: Span::between(&open_paren.span, &close_paren.span),
             open_paren: open_paren.span,
             leading: Trivia::empty(),
             elements,
@@ -820,12 +821,7 @@ impl<'a> AstParser<'a> {
             self.consume_closing(TokenKind::RParen, Error::ExpectedStructLikeEnd, errors);
 
         Expr::Tuple(TupleExpr {
-            span: Span {
-                start: open_paren.span.start,
-                end: close_paren.end,
-                start_offset: open_paren.span.start_offset,
-                end_offset: close_paren.end_offset,
-            },
+            span: Span::between(&open_paren.span, &close_paren),
             open_paren: open_paren.span,
             leading: Trivia::empty(),
             elements,
@@ -915,12 +911,7 @@ impl<'a> AstParser<'a> {
 
         // Anonymous struct with fields
         Ok(Expr::AnonStruct(AnonStructExpr {
-            span: Span {
-                start: open_paren.span.start,
-                end: close_paren.span.end,
-                start_offset: open_paren.span.start_offset,
-                end_offset: close_paren.span.end_offset,
-            },
+            span: Span::between(&open_paren.span, &close_paren.span),
             open_paren: open_paren.span,
             leading: Trivia::empty(),
             fields,
@@ -1059,12 +1050,7 @@ impl<'a> AstParser<'a> {
             self.consume_closing(TokenKind::RParen, Error::ExpectedStructLikeEnd, errors);
 
         Expr::AnonStruct(AnonStructExpr {
-            span: Span {
-                start: open_paren.span.start,
-                end: close_paren.end,
-                start_offset: open_paren.span.start_offset,
-                end_offset: close_paren.end_offset,
-            },
+            span: Span::between(&open_paren.span, &close_paren),
             open_paren: open_paren.span,
             leading: Trivia::empty(),
             fields,
@@ -1123,12 +1109,7 @@ impl<'a> AstParser<'a> {
         let close_bracket = self.next_token();
 
         Ok(Expr::Seq(SeqExpr {
-            span: Span {
-                start: open_bracket.span.start,
-                end: close_bracket.span.end,
-                start_offset: open_bracket.span.start_offset,
-                end_offset: close_bracket.span.end_offset,
-            },
+            span: Span::between(&open_bracket.span, &close_bracket.span),
             open_bracket: open_bracket.span,
             leading: Trivia::empty(),
             items,
@@ -1194,12 +1175,7 @@ impl<'a> AstParser<'a> {
             self.consume_closing(TokenKind::RBracket, Error::ExpectedArrayEnd, errors);
 
         Expr::Seq(SeqExpr {
-            span: Span {
-                start: open_bracket.span.start,
-                end: close_bracket.end,
-                start_offset: open_bracket.span.start_offset,
-                end_offset: close_bracket.end_offset,
-            },
+            span: Span::between(&open_bracket.span, &close_bracket),
             open_bracket: open_bracket.span,
             leading: Trivia::empty(),
             items,
@@ -1278,12 +1254,7 @@ impl<'a> AstParser<'a> {
         let close_brace = self.next_token();
 
         Ok(Expr::Map(MapExpr {
-            span: Span {
-                start: open_brace.span.start,
-                end: close_brace.span.end,
-                start_offset: open_brace.span.start_offset,
-                end_offset: close_brace.span.end_offset,
-            },
+            span: Span::between(&open_brace.span, &close_brace.span),
             open_brace: open_brace.span,
             leading: Trivia::empty(),
             entries,
@@ -1409,12 +1380,7 @@ impl<'a> AstParser<'a> {
         let close_brace = self.consume_closing(TokenKind::RBrace, Error::ExpectedMapEnd, errors);
 
         Expr::Map(MapExpr {
-            span: Span {
-                start: open_brace.span.start,
-                end: close_brace.end,
-                start_offset: open_brace.span.start_offset,
-                end_offset: close_brace.end_offset,
-            },
+            span: Span::between(&open_brace.span, &close_brace),
             open_brace: open_brace.span,
             leading: Trivia::empty(),
             entries,
@@ -1497,12 +1463,7 @@ impl<'a> AstParser<'a> {
         let close_paren = self.next_token();
 
         Ok(Expr::Option(Box::new(OptionExpr {
-            span: Span {
-                start: some_tok.span.start,
-                end: close_paren.span.end,
-                start_offset: some_tok.span.start_offset,
-                end_offset: close_paren.span.end_offset,
-            },
+            span: Span::between(&some_tok.span, &close_paren.span),
             value: Some(OptionValue {
                 open_paren: open_paren.span,
                 leading,
@@ -1532,12 +1493,7 @@ impl<'a> AstParser<'a> {
         let close_paren = self.consume_closing(TokenKind::RParen, Error::ExpectedOptionEnd, errors);
 
         Expr::Option(Box::new(OptionExpr {
-            span: Span {
-                start: some_tok.span.start,
-                end: close_paren.end,
-                start_offset: some_tok.span.start_offset,
-                end_offset: close_paren.end_offset,
-            },
+            span: Span::between(&some_tok.span, &close_paren),
             value: Some(OptionValue {
                 open_paren: open_paren.span,
                 leading,
@@ -1568,20 +1524,13 @@ impl<'a> AstParser<'a> {
                 let open_paren = self.next_token();
                 let leading = self.collect_leading_trivia();
 
-                // Check for empty tuple/struct
-                if self.peek_kind() == TokenKind::RParen {
-                    let close_paren = self.next_token();
-                    Some(StructBody::Tuple(TupleBody {
-                        open_paren: open_paren.span,
-                        leading,
-                        elements: Vec::new(),
-                        trailing: Trivia::empty(),
-                        close_paren: close_paren.span,
-                    }))
-                } else {
-                    // Determine if this is named fields or tuple elements
-                    // by looking at the first token and what follows
-                    self.parse_struct_body_contents(open_paren, leading)?
+                match self.try_parse_empty_tuple_body(&open_paren.span, leading) {
+                    Ok(tuple_body) => Some(StructBody::Tuple(tuple_body)),
+                    Err(leading) => {
+                        // Determine if this is named fields or tuple elements
+                        // by looking at the first token and what follows
+                        self.parse_struct_body_contents(open_paren, leading)?
+                    }
                 }
             }
             _ => None,
@@ -1592,12 +1541,7 @@ impl<'a> AstParser<'a> {
                 StructBody::Tuple(t) => &t.close_paren,
                 StructBody::Fields(f) => &f.close_brace,
             };
-            Span {
-                start: name_tok.span.start,
-                end: end_span.end,
-                start_offset: name_tok.span.start_offset,
-                end_offset: end_span.end_offset,
-            }
+            Span::between(&name_tok.span, end_span)
         } else {
             name_tok.span.clone()
         };
@@ -1628,17 +1572,11 @@ impl<'a> AstParser<'a> {
                 let open_paren = self.next_token();
                 let leading = self.collect_leading_trivia();
 
-                if self.peek_kind() == TokenKind::RParen {
-                    let close_paren = self.next_token();
-                    Some(StructBody::Tuple(TupleBody {
-                        open_paren: open_paren.span,
-                        leading,
-                        elements: Vec::new(),
-                        trailing: Trivia::empty(),
-                        close_paren: close_paren.span,
-                    }))
-                } else {
-                    Some(self.parse_struct_body_contents_lossy(open_paren, leading, errors))
+                match self.try_parse_empty_tuple_body(&open_paren.span, leading) {
+                    Ok(tuple_body) => Some(StructBody::Tuple(tuple_body)),
+                    Err(leading) => {
+                        Some(self.parse_struct_body_contents_lossy(open_paren, leading, errors))
+                    }
                 }
             }
             _ => None,
@@ -1649,12 +1587,7 @@ impl<'a> AstParser<'a> {
                 StructBody::Tuple(t) => &t.close_paren,
                 StructBody::Fields(f) => &f.close_brace,
             };
-            Span {
-                start: name_tok.span.start,
-                end: end_span.end,
-                start_offset: name_tok.span.start_offset,
-                end_offset: end_span.end_offset,
-            }
+            Span::between(&name_tok.span, end_span)
         } else {
             name_tok.span.clone()
         };
@@ -1929,17 +1862,11 @@ impl<'a> AstParser<'a> {
                         let open_paren = self.next_token();
                         let leading = self.collect_leading_trivia();
 
-                        if self.peek_kind() == TokenKind::RParen {
-                            let close_paren = self.next_token();
-                            Some(StructBody::Tuple(TupleBody {
-                                open_paren: open_paren.span,
-                                leading,
-                                elements: Vec::new(),
-                                trailing: Trivia::empty(),
-                                close_paren: close_paren.span,
-                            }))
-                        } else {
-                            self.parse_struct_body_contents(open_paren, leading)?
+                        match self.try_parse_empty_tuple_body(&open_paren.span, leading) {
+                            Ok(tuple_body) => Some(StructBody::Tuple(tuple_body)),
+                            Err(leading) => {
+                                self.parse_struct_body_contents(open_paren, leading)?
+                            }
                         }
                     }
                     _ => None,
@@ -1950,12 +1877,7 @@ impl<'a> AstParser<'a> {
                         StructBody::Tuple(t) => &t.close_paren,
                         StructBody::Fields(f) => &f.close_brace,
                     };
-                    Span {
-                        start: tok.span.start,
-                        end: end_span.end,
-                        start_offset: tok.span.start_offset,
-                        end_offset: end_span.end_offset,
-                    }
+                    Span::between(&tok.span, end_span)
                 } else {
                     tok.span.clone()
                 };
@@ -2007,17 +1929,11 @@ impl<'a> AstParser<'a> {
                         let open_paren = self.next_token();
                         let leading = self.collect_leading_trivia();
 
-                        if self.peek_kind() == TokenKind::RParen {
-                            let close_paren = self.next_token();
-                            Some(StructBody::Tuple(TupleBody {
-                                open_paren: open_paren.span,
-                                leading,
-                                elements: Vec::new(),
-                                trailing: Trivia::empty(),
-                                close_paren: close_paren.span,
-                            }))
-                        } else {
-                            Some(self.parse_struct_body_contents_lossy(open_paren, leading, errors))
+                        match self.try_parse_empty_tuple_body(&open_paren.span, leading) {
+                            Ok(tuple_body) => Some(StructBody::Tuple(tuple_body)),
+                            Err(leading) => {
+                                Some(self.parse_struct_body_contents_lossy(open_paren, leading, errors))
+                            }
                         }
                     }
                     _ => None,
@@ -2028,12 +1944,7 @@ impl<'a> AstParser<'a> {
                         StructBody::Tuple(t) => &t.close_paren,
                         StructBody::Fields(f) => &f.close_brace,
                     };
-                    Span {
-                        start: tok.span.start,
-                        end: end_span.end,
-                        start_offset: tok.span.start_offset,
-                        end_offset: end_span.end_offset,
-                    }
+                    Span::between(&tok.span, end_span)
                 } else {
                     tok.span.clone()
                 };
