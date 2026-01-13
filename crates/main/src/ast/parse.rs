@@ -1169,35 +1169,8 @@ impl<'a> AstParser<'a> {
 
     /// Parse an identifier-starting expression.
     /// Could be: bool, option, named struct, enum variant.
-    fn parse_ident_expr(&mut self) -> Result<Expr<'a>> {
-        let ident_tok = self.next_token();
-        debug_assert_eq!(ident_tok.kind, TokenKind::Ident);
-
-        match ident_tok.text {
-            "true" => Ok(Expr::Bool(BoolExpr {
-                span: ident_tok.span,
-                value: true,
-            })),
-            "false" => Ok(Expr::Bool(BoolExpr {
-                span: ident_tok.span,
-                value: false,
-            })),
-            "None" => Ok(Expr::Option(Box::new(OptionExpr {
-                span: ident_tok.span,
-                value: None,
-            }))),
-            "Some" => self.parse_some(ident_tok),
-            "inf" | "NaN" => Ok(Expr::Number(NumberExpr {
-                span: ident_tok.span,
-                raw: Cow::Borrowed(ident_tok.text),
-                kind: NumberKind::SpecialFloat,
-            })),
-            _ => self.parse_struct_or_variant(&ident_tok),
-        }
-    }
-
-    /// Parse an identifier-starting expression with error recovery.
-    fn parse_ident_expr_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+    /// Parse an identifier-starting expression (internal unified implementation).
+    fn parse_ident_expr_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let ident_tok = self.next_token();
         debug_assert_eq!(ident_tok.kind, TokenKind::Ident);
 
@@ -1214,7 +1187,7 @@ impl<'a> AstParser<'a> {
                 span: ident_tok.span,
                 value: None,
             })),
-            "Some" => self.parse_some_lossy(ident_tok, errors),
+            "Some" => self.parse_some_inner(ident_tok, errors),
             "inf" | "NaN" => Expr::Number(NumberExpr {
                 span: ident_tok.span,
                 raw: Cow::Borrowed(ident_tok.text),
@@ -1222,6 +1195,21 @@ impl<'a> AstParser<'a> {
             }),
             _ => self.parse_struct_or_variant_lossy(&ident_tok, errors),
         }
+    }
+
+    fn parse_ident_expr(&mut self) -> Result<Expr<'a>> {
+        let mut errors = Vec::new();
+        let expr = self.parse_ident_expr_inner(&mut errors);
+        if errors.is_empty() {
+            Ok(expr)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse an identifier-starting expression with error recovery.
+    fn parse_ident_expr_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+        self.parse_ident_expr_inner(errors)
     }
 
     /// Parse `Some(value)`.
@@ -1279,52 +1267,8 @@ impl<'a> AstParser<'a> {
     /// Tuple structs also use parens: `Point(1, 2)`.
     /// The parser looks ahead to detect if the first element is `ident: value` (struct)
     /// or just a value (tuple).
-    fn parse_struct_or_variant(&mut self, name_tok: &Token<'a>) -> Result<Expr<'a>> {
-        let name = Ident {
-            span: name_tok.span.clone(),
-            name: Cow::Borrowed(name_tok.text),
-        };
-
-        // Collect trivia between name and body (e.g., "Point ( ... )" has space)
-        let pre_body = self.collect_leading_trivia();
-
-        let body = match self.peek_kind() {
-            TokenKind::LParen => {
-                let open_paren = self.next_token();
-                let leading = self.collect_leading_trivia();
-
-                match self.try_parse_empty_tuple_body(&open_paren.span, leading) {
-                    Ok(tuple_body) => Some(StructBody::Tuple(tuple_body)),
-                    Err(leading) => {
-                        // Determine if this is named fields or tuple elements
-                        // by looking at the first token and what follows
-                        self.parse_struct_body_contents(open_paren, leading)?
-                    }
-                }
-            }
-            _ => None,
-        };
-
-        let span = if let Some(ref b) = body {
-            let end_span = match b {
-                StructBody::Tuple(t) => &t.close_paren,
-                StructBody::Fields(f) => &f.close_brace,
-            };
-            Span::between(&name_tok.span, end_span)
-        } else {
-            name_tok.span.clone()
-        };
-
-        Ok(Expr::Struct(StructExpr {
-            span,
-            name,
-            pre_body,
-            body,
-        }))
-    }
-
-    /// Parse a struct or enum variant with error recovery.
-    fn parse_struct_or_variant_lossy(
+    /// Parse a struct or enum variant (internal unified implementation).
+    fn parse_struct_or_variant_inner(
         &mut self,
         name_tok: &Token<'a>,
         errors: &mut Vec<Error>,
@@ -1369,39 +1313,27 @@ impl<'a> AstParser<'a> {
         })
     }
 
-    /// Parse tuple elements until closing paren.
-    fn parse_tuple_elements(&mut self, mut leading: Trivia<'a>) -> Result<Vec<TupleElement<'a>>> {
-        let mut elements = Vec::new();
-
-        loop {
-            if self.peek_kind() == TokenKind::RParen {
-                break;
-            }
-
-            let expr = self.parse_expr()?;
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            elements.push(TupleElement {
-                leading,
-                expr,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma {
-                break;
-            }
+    fn parse_struct_or_variant(&mut self, name_tok: &Token<'a>) -> Result<Expr<'a>> {
+        let mut errors = Vec::new();
+        let expr = self.parse_struct_or_variant_inner(name_tok, &mut errors);
+        if errors.is_empty() {
+            Ok(expr)
+        } else {
+            Err(errors.remove(0))
         }
-
-        Ok(elements)
     }
 
-    /// Parse tuple elements until closing paren with error recovery.
-    fn parse_tuple_elements_lossy(
+    /// Parse a struct or enum variant with error recovery.
+    fn parse_struct_or_variant_lossy(
+        &mut self,
+        name_tok: &Token<'a>,
+        errors: &mut Vec<Error>,
+    ) -> Expr<'a> {
+        self.parse_struct_or_variant_inner(name_tok, errors)
+    }
+
+    /// Parse tuple elements until closing paren (internal unified implementation).
+    fn parse_tuple_elements_inner(
         &mut self,
         mut leading: Trivia<'a>,
         errors: &mut Vec<Error>,
@@ -1414,7 +1346,7 @@ impl<'a> AstParser<'a> {
                 _ => {}
             }
 
-            let expr = self.parse_expr_lossy(errors);
+            let expr = self.parse_expr_inner(errors);
             let trailing = self.collect_leading_trivia();
 
             let (comma, has_comma) = self.consume_comma();
@@ -1442,88 +1374,27 @@ impl<'a> AstParser<'a> {
         elements
     }
 
-    /// Parse the body contents of a named struct: either named fields or tuple elements.
-    /// Determines the type by looking at the first token: if it's `ident:`, it's named fields.
-    fn parse_struct_body_contents(
-        &mut self,
-        open_paren: Token<'a>,
-        leading: Trivia<'a>,
-    ) -> Result<Option<StructBody<'a>>> {
-        // Check if first token is an identifier
-        if self.peek_kind() == TokenKind::Ident {
-            // Consume the identifier
-            let first_tok = self.next_token();
-            let post_ident_trivia = self.collect_leading_trivia();
-
-            // Check if followed by colon (named field)
-            if self.peek_kind() == TokenKind::Colon {
-                // Named fields: Point(x: 1, y: 2)
-                let (fields, trailing) =
-                    self.parse_struct_fields_from_first(leading, &first_tok, post_ident_trivia)?;
-
-                if self.peek_kind() != TokenKind::RParen {
-                    return Err(Self::error(
-                        open_paren.span,
-                        Self::expected("closing `)` or `}`", Some("struct")),
-                    ));
-                }
-                let close_paren = self.next_token();
-
-                Ok(Some(StructBody::Fields(FieldsBody {
-                    open_brace: open_paren.span,
-                    leading: Trivia::empty(),
-                    fields,
-                    trailing,
-                    close_brace: close_paren.span,
-                })))
-            } else {
-                // Tuple elements: Point(x, y) where x is a struct/enum name
-                // Convert the identifier to an expression
-                let first_expr = self.ident_token_to_expr(first_tok, post_ident_trivia)?;
-                let (elements, trailing) =
-                    self.parse_tuple_elements_from_first(leading, first_expr)?;
-
-                if self.peek_kind() != TokenKind::RParen {
-                    return Err(Self::error(
-                        open_paren.span,
-                        Self::expected("closing `)` or `}`", Some("struct")),
-                    ));
-                }
-                let close_paren = self.next_token();
-
-                Ok(Some(StructBody::Tuple(TupleBody {
-                    open_paren: open_paren.span,
-                    leading: Trivia::empty(),
-                    elements,
-                    trailing,
-                    close_paren: close_paren.span,
-                })))
-            }
+    fn parse_tuple_elements(&mut self, leading: Trivia<'a>) -> Result<Vec<TupleElement<'a>>> {
+        let mut errors = Vec::new();
+        let elements = self.parse_tuple_elements_inner(leading, &mut errors);
+        if errors.is_empty() {
+            Ok(elements)
         } else {
-            // Not starting with identifier, must be tuple elements
-            let elements = self.parse_tuple_elements(leading)?;
-            let trailing = self.collect_leading_trivia();
-
-            if self.peek_kind() != TokenKind::RParen {
-                return Err(Self::error(
-                    open_paren.span,
-                    Self::expected("closing `)` or `}`", Some("struct")),
-                ));
-            }
-            let close_paren = self.next_token();
-
-            Ok(Some(StructBody::Tuple(TupleBody {
-                open_paren: open_paren.span,
-                leading: Trivia::empty(),
-                elements,
-                trailing,
-                close_paren: close_paren.span,
-            })))
+            Err(errors.remove(0))
         }
     }
 
-    /// Parse the body contents of a named struct with error recovery.
-    fn parse_struct_body_contents_lossy(
+    /// Parse tuple elements until closing paren with error recovery.
+    fn parse_tuple_elements_lossy(
+        &mut self,
+        leading: Trivia<'a>,
+        errors: &mut Vec<Error>,
+    ) -> Vec<TupleElement<'a>> {
+        self.parse_tuple_elements_inner(leading, errors)
+    }
+
+    /// Parse the body contents of a named struct (internal unified implementation).
+    fn parse_struct_body_contents_inner(
         &mut self,
         open_paren: Token<'a>,
         leading: Trivia<'a>,
@@ -1575,7 +1446,7 @@ impl<'a> AstParser<'a> {
                 })
             }
         } else {
-            let elements = self.parse_tuple_elements_lossy(leading, errors);
+            let elements = self.parse_tuple_elements_inner(leading, errors);
             let trailing = self.collect_leading_trivia();
 
             let close_paren = self.consume_closing(
@@ -1594,70 +1465,32 @@ impl<'a> AstParser<'a> {
         }
     }
 
-    /// Convert an identifier token to an expression.
-    /// Handles booleans, None, Some, inf/NaN, and named structs.
-    fn ident_token_to_expr(&mut self, tok: Token<'a>, pre_body: Trivia<'a>) -> Result<Expr<'a>> {
-        match tok.text {
-            "true" => Ok(Expr::Bool(BoolExpr {
-                span: tok.span,
-                value: true,
-            })),
-            "false" => Ok(Expr::Bool(BoolExpr {
-                span: tok.span,
-                value: false,
-            })),
-            "None" => Ok(Expr::Option(Box::new(OptionExpr {
-                span: tok.span,
-                value: None,
-            }))),
-            "Some" => self.parse_some(tok),
-            "inf" | "NaN" => Ok(Expr::Number(NumberExpr {
-                span: tok.span,
-                raw: Cow::Borrowed(tok.text),
-                kind: NumberKind::SpecialFloat,
-            })),
-            _ => {
-                // Named struct/enum - check for body
-                let name = Ident {
-                    span: tok.span.clone(),
-                    name: Cow::Borrowed(tok.text),
-                };
-
-                let body = match self.peek_kind() {
-                    TokenKind::LParen => {
-                        let open_paren = self.next_token();
-                        let leading = self.collect_leading_trivia();
-
-                        match self.try_parse_empty_tuple_body(&open_paren.span, leading) {
-                            Ok(tuple_body) => Some(StructBody::Tuple(tuple_body)),
-                            Err(leading) => self.parse_struct_body_contents(open_paren, leading)?,
-                        }
-                    }
-                    _ => None,
-                };
-
-                let span = if let Some(ref b) = body {
-                    let end_span = match b {
-                        StructBody::Tuple(t) => &t.close_paren,
-                        StructBody::Fields(f) => &f.close_brace,
-                    };
-                    Span::between(&tok.span, end_span)
-                } else {
-                    tok.span.clone()
-                };
-
-                Ok(Expr::Struct(StructExpr {
-                    span,
-                    name,
-                    pre_body,
-                    body,
-                }))
-            }
+    fn parse_struct_body_contents(
+        &mut self,
+        open_paren: Token<'a>,
+        leading: Trivia<'a>,
+    ) -> Result<Option<StructBody<'a>>> {
+        let mut errors = Vec::new();
+        let body = self.parse_struct_body_contents_inner(open_paren, leading, &mut errors);
+        if errors.is_empty() {
+            Ok(Some(body))
+        } else {
+            Err(errors.remove(0))
         }
     }
 
-    /// Convert an identifier token to an expression with error recovery.
-    fn ident_token_to_expr_lossy(
+    /// Parse the body contents of a named struct with error recovery.
+    fn parse_struct_body_contents_lossy(
+        &mut self,
+        open_paren: Token<'a>,
+        leading: Trivia<'a>,
+        errors: &mut Vec<Error>,
+    ) -> StructBody<'a> {
+        self.parse_struct_body_contents_inner(open_paren, leading, errors)
+    }
+
+    /// Convert an identifier token to an expression (internal unified implementation).
+    fn ident_token_to_expr_inner(
         &mut self,
         tok: Token<'a>,
         pre_body: Trivia<'a>,
@@ -1676,7 +1509,7 @@ impl<'a> AstParser<'a> {
                 span: tok.span,
                 value: None,
             })),
-            "Some" => self.parse_some_lossy(tok, errors),
+            "Some" => self.parse_some_inner(tok, errors),
             "inf" | "NaN" => Expr::Number(NumberExpr {
                 span: tok.span,
                 raw: Cow::Borrowed(tok.text),
@@ -1696,7 +1529,7 @@ impl<'a> AstParser<'a> {
                         match self.try_parse_empty_tuple_body(&open_paren.span, leading) {
                             Ok(tuple_body) => Some(StructBody::Tuple(tuple_body)),
                             Err(leading) => Some(
-                                self.parse_struct_body_contents_lossy(open_paren, leading, errors),
+                                self.parse_struct_body_contents_inner(open_paren, leading, errors),
                             ),
                         }
                     }
@@ -1723,104 +1556,30 @@ impl<'a> AstParser<'a> {
         }
     }
 
-    /// Parse struct fields starting with the first field name already consumed.
-    fn parse_struct_fields_from_first(
-        &mut self,
-        leading: Trivia<'a>,
-        first_name: &Token<'a>,
-        pre_colon: Trivia<'a>,
-    ) -> Result<(Vec<StructField<'a>>, Trivia<'a>)> {
-        let mut fields = Vec::new();
-
-        // Parse the first field (name already consumed)
-        let colon_tok = self.next_token();
-        debug_assert_eq!(colon_tok.kind, TokenKind::Colon);
-
-        let post_colon = self.collect_leading_trivia();
-        let value = self.parse_expr()?;
-        let trailing = self.collect_leading_trivia();
-
-        let (comma, has_comma) = self.consume_comma();
-
-        fields.push(StructField {
-            leading,
-            name: Ident {
-                span: first_name.span.clone(),
-                name: Cow::Borrowed(first_name.text),
-            },
-            pre_colon,
-            colon: colon_tok.span,
-            post_colon,
-            value,
-            trailing,
-            comma,
-        });
-
-        if !has_comma {
-            return Ok((fields, self.collect_leading_trivia()));
+    fn ident_token_to_expr(&mut self, tok: Token<'a>, pre_body: Trivia<'a>) -> Result<Expr<'a>> {
+        let mut errors = Vec::new();
+        let expr = self.ident_token_to_expr_inner(tok, pre_body, &mut errors);
+        if errors.is_empty() {
+            Ok(expr)
+        } else {
+            Err(errors.remove(0))
         }
-
-        // Parse remaining fields
-        let mut leading = self.collect_leading_trivia();
-
-        loop {
-            if self.peek_kind() == TokenKind::RParen {
-                break;
-            }
-
-            // Expect field name
-            if self.peek_kind() != TokenKind::Ident {
-                let tok = self.next_token();
-                return Err(Self::error(
-                    tok.span,
-                    Self::expected("identifier", None),
-                ));
-            }
-            let name_tok = self.next_token();
-
-            let pre_colon = self.collect_leading_trivia();
-
-            if self.peek_kind() != TokenKind::Colon {
-                return Err(Self::error(
-                    name_tok.span,
-                    Self::expected("`:` after map key", Some("struct field")),
-                ));
-            }
-            let colon_tok = self.next_token();
-
-            let post_colon = self.collect_leading_trivia();
-            let value = self.parse_expr()?;
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            fields.push(StructField {
-                leading,
-                name: Ident {
-                    span: name_tok.span.clone(),
-                    name: Cow::Borrowed(name_tok.text),
-                },
-                pre_colon,
-                colon: colon_tok.span,
-                post_colon,
-                value,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma {
-                break;
-            }
-        }
-
-        Ok((fields, leading))
     }
 
-    /// Parse struct fields starting with the first field name already consumed, with recovery.
+    /// Convert an identifier token to an expression with error recovery.
+    fn ident_token_to_expr_lossy(
+        &mut self,
+        tok: Token<'a>,
+        pre_body: Trivia<'a>,
+        errors: &mut Vec<Error>,
+    ) -> Expr<'a> {
+        self.ident_token_to_expr_inner(tok, pre_body, errors)
+    }
+
+    /// Parse struct fields starting with the first field name already consumed.
+    /// Parse struct fields starting with the first field name already consumed (internal).
     #[allow(clippy::too_many_lines)]
-    fn parse_struct_fields_from_first_lossy(
+    fn parse_struct_fields_from_first_inner(
         &mut self,
         leading: Trivia<'a>,
         first_name: &Token<'a>,
@@ -1833,7 +1592,7 @@ impl<'a> AstParser<'a> {
         debug_assert_eq!(colon_tok.kind, TokenKind::Colon);
 
         let post_colon = self.collect_leading_trivia();
-        let value = self.parse_expr_lossy(errors);
+        let value = self.parse_expr_inner(errors);
         let trailing = self.collect_leading_trivia();
 
         let (comma, has_comma) = self.consume_comma();
@@ -1923,7 +1682,7 @@ impl<'a> AstParser<'a> {
                         error: Error::with_span(error_kind, error_span),
                     })
                 }
-                _ => self.parse_expr_lossy(errors),
+                _ => self.parse_expr_inner(errors),
             };
             let trailing = self.collect_leading_trivia();
 
@@ -1960,62 +1719,34 @@ impl<'a> AstParser<'a> {
         (fields, leading)
     }
 
-    /// Parse tuple elements starting with the first expression already parsed.
-    fn parse_tuple_elements_from_first(
+    fn parse_struct_fields_from_first(
         &mut self,
         leading: Trivia<'a>,
-        first_expr: Expr<'a>,
-    ) -> Result<(Vec<TupleElement<'a>>, Trivia<'a>)> {
-        let mut elements = Vec::new();
-
-        // Handle the first element
-        let trailing = self.collect_leading_trivia();
-
-        let (comma, has_comma) = self.consume_comma();
-
-        elements.push(TupleElement {
-            leading,
-            expr: first_expr,
-            trailing,
-            comma,
-        });
-
-        if !has_comma {
-            return Ok((elements, self.collect_leading_trivia()));
+        first_name: &Token<'a>,
+        pre_colon: Trivia<'a>,
+    ) -> Result<(Vec<StructField<'a>>, Trivia<'a>)> {
+        let mut errors = Vec::new();
+        let result = self.parse_struct_fields_from_first_inner(leading, first_name, pre_colon, &mut errors);
+        if errors.is_empty() {
+            Ok(result)
+        } else {
+            Err(errors.remove(0))
         }
-
-        // Parse remaining elements
-        let mut leading = self.collect_leading_trivia();
-
-        loop {
-            if self.peek_kind() == TokenKind::RParen {
-                break;
-            }
-
-            let expr = self.parse_expr()?;
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            elements.push(TupleElement {
-                leading,
-                expr,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma {
-                break;
-            }
-        }
-
-        Ok((elements, leading))
     }
 
-    /// Parse tuple elements starting with the first expression, with recovery.
-    fn parse_tuple_elements_from_first_lossy(
+    /// Parse struct fields starting with the first field name already consumed, with recovery.
+    fn parse_struct_fields_from_first_lossy(
+        &mut self,
+        leading: Trivia<'a>,
+        first_name: &Token<'a>,
+        pre_colon: Trivia<'a>,
+        errors: &mut Vec<Error>,
+    ) -> (Vec<StructField<'a>>, Trivia<'a>) {
+        self.parse_struct_fields_from_first_inner(leading, first_name, pre_colon, errors)
+    }
+
+    /// Parse tuple elements starting with the first expression already parsed (internal).
+    fn parse_tuple_elements_from_first_inner(
         &mut self,
         leading: Trivia<'a>,
         first_expr: Expr<'a>,
@@ -2045,7 +1776,7 @@ impl<'a> AstParser<'a> {
                 _ => {}
             }
 
-            let expr = self.parse_expr_lossy(errors);
+            let expr = self.parse_expr_inner(errors);
             let trailing = self.collect_leading_trivia();
 
             let (comma, has_comma) = self.consume_comma();
@@ -2071,6 +1802,31 @@ impl<'a> AstParser<'a> {
         }
 
         (elements, leading)
+    }
+
+    /// Parse tuple elements starting with the first expression already parsed.
+    fn parse_tuple_elements_from_first(
+        &mut self,
+        leading: Trivia<'a>,
+        first_expr: Expr<'a>,
+    ) -> Result<(Vec<TupleElement<'a>>, Trivia<'a>)> {
+        let mut errors = Vec::new();
+        let result = self.parse_tuple_elements_from_first_inner(leading, first_expr, &mut errors);
+        if errors.is_empty() {
+            Ok(result)
+        } else {
+            Err(errors.remove(0))
+        }
+    }
+
+    /// Parse tuple elements starting with the first expression, with recovery.
+    fn parse_tuple_elements_from_first_lossy(
+        &mut self,
+        leading: Trivia<'a>,
+        first_expr: Expr<'a>,
+        errors: &mut Vec<Error>,
+    ) -> (Vec<TupleElement<'a>>, Trivia<'a>) {
+        self.parse_tuple_elements_from_first_inner(leading, first_expr, errors)
     }
 
     /// Parse an integer literal.
