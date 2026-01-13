@@ -174,7 +174,7 @@ pub enum FieldDefault {
 /// #[ron(explicit)]
 /// flags: Option<bool>,  // Must be Some(true), Some(false), or None
 /// ```
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FieldAttrs {
     /// Rename this field in RON.
     pub rename: Option<String>,

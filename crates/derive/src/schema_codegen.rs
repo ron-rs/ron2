@@ -8,6 +8,7 @@ use syn::{DeriveInput, Fields, GenericArgument, GenericParam, PathArguments, Typ
 
 use crate::{
     attr::{extract_doc_comment, ContainerAttrs, FieldAttrs, VariantAttrs},
+    field_util::{validate_transparent_struct, FieldSkipMode, TransparentField},
     type_mapper::{type_to_type_kind_with_generics, PrimitiveKind},
 };
 
@@ -26,7 +27,7 @@ pub fn impl_ron_schema(
     let generics = collect_generic_idents(&input.generics);
     let type_kind_tokens = match &input.data {
         syn::Data::Struct(data_struct) => {
-            generate_struct_kind(&data_struct.fields, container_attrs, &generics)?
+            generate_struct_kind(name, &data_struct.fields, container_attrs, &generics)?
         }
         syn::Data::Enum(data_enum) => generate_enum_kind(data_enum, container_attrs, &generics)?,
         syn::Data::Union(_) => {
@@ -86,13 +87,14 @@ pub fn impl_ron_schema(
 
 /// Generate TypeKind tokens for a struct's fields.
 pub fn generate_struct_kind(
+    name: &syn::Ident,
     fields: &Fields,
     container_attrs: &ContainerAttrs,
     generics: &HashSet<String>,
 ) -> syn::Result<TokenStream2> {
     // Handle transparent structs - return the inner type's TypeKind
     if container_attrs.transparent {
-        return generate_transparent_struct_kind(fields, generics);
+        return generate_transparent_struct_kind(name, fields, generics);
     }
 
     match fields {
@@ -141,50 +143,18 @@ pub fn generate_struct_kind(
 ///
 /// Returns the inner type's TypeKind directly.
 fn generate_transparent_struct_kind(
+    name: &syn::Ident,
     fields: &Fields,
     generics: &HashSet<String>,
 ) -> syn::Result<TokenStream2> {
-    match fields {
-        Fields::Named(named) => {
-            // Find the single non-skipped field
-            let mut active_fields = Vec::new();
-            for f in &named.named {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-                if !attrs.skip {
-                    active_fields.push(f);
-                }
-            }
+    let transparent = validate_transparent_struct(name, fields, FieldSkipMode::Any)?;
 
-            if active_fields.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    &named.named,
-                    "#[ron(transparent)] requires exactly one non-skipped field",
-                ));
-            }
+    let ty = match transparent {
+        TransparentField::Named { ty, .. } => ty,
+        TransparentField::Unnamed { ty } => ty,
+    };
 
-            Ok(type_to_type_kind_with_generics(
-                &active_fields[0].ty,
-                generics,
-            ))
-        }
-        Fields::Unnamed(unnamed) => {
-            if unnamed.unnamed.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    unnamed,
-                    "#[ron(transparent)] requires exactly one field for tuple structs",
-                ));
-            }
-
-            Ok(type_to_type_kind_with_generics(
-                &unnamed.unnamed[0].ty,
-                generics,
-            ))
-        }
-        Fields::Unit => Err(syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "#[ron(transparent)] cannot be used on unit structs",
-        )),
-    }
+    Ok(type_to_type_kind_with_generics(ty, generics))
 }
 
 /// Generate TypeKind tokens for an enum.
@@ -309,6 +279,7 @@ fn generate_child_schemas(
     match &input.data {
         syn::Data::Struct(data_struct) => {
             collect_struct_children(
+                &input.ident,
                 &data_struct.fields,
                 container_attrs,
                 &generics,
@@ -351,13 +322,14 @@ fn collect_generic_idents(generics: &syn::Generics) -> HashSet<String> {
 }
 
 fn collect_struct_children(
+    name: &syn::Ident,
     fields: &Fields,
     container_attrs: &ContainerAttrs,
     generics: &HashSet<String>,
     out: &mut Vec<syn::Path>,
 ) -> syn::Result<()> {
     if container_attrs.transparent {
-        return collect_transparent_struct_children(fields, generics, out);
+        return collect_transparent_struct_children(name, fields, generics, out);
     }
 
     match fields {
@@ -382,47 +354,19 @@ fn collect_struct_children(
 }
 
 fn collect_transparent_struct_children(
+    name: &syn::Ident,
     fields: &Fields,
     generics: &HashSet<String>,
     out: &mut Vec<syn::Path>,
 ) -> syn::Result<()> {
-    match fields {
-        Fields::Named(named) => {
-            let mut active_fields = Vec::new();
-            for f in &named.named {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-                if !attrs.skip {
-                    active_fields.push(f);
-                }
-            }
+    let transparent = validate_transparent_struct(name, fields, FieldSkipMode::Any)?;
 
-            if active_fields.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    &named.named,
-                    "#[ron(transparent)] requires exactly one non-skipped field",
-                ));
-            }
+    let ty = match transparent {
+        TransparentField::Named { ty, .. } => ty,
+        TransparentField::Unnamed { ty } => ty,
+    };
 
-            collect_child_types_from_type(&active_fields[0].ty, generics, out);
-        }
-        Fields::Unnamed(unnamed) => {
-            if unnamed.unnamed.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    unnamed,
-                    "#[ron(transparent)] requires exactly one field for tuple structs",
-                ));
-            }
-
-            collect_child_types_from_type(&unnamed.unnamed[0].ty, generics, out);
-        }
-        Fields::Unit => {
-            return Err(syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "#[ron(transparent)] cannot be used on unit structs",
-            ));
-        }
-    }
-
+    collect_child_types_from_type(ty, generics, out);
     Ok(())
 }
 

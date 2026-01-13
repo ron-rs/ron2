@@ -7,7 +7,10 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, Ident};
 
-use crate::attr::{ContainerAttrs, FieldAttrs, FieldDefault, VariantAttrs};
+use crate::{
+    attr::{ContainerAttrs, FieldAttrs, FieldDefault, VariantAttrs},
+    field_util::{validate_transparent_struct, FieldSkipMode, TransparentField},
+};
 
 /// Generate FromRon implementation for a type.
 pub fn derive_from_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
@@ -218,14 +221,7 @@ fn derive_named_struct_de(
         quote! {}
     };
 
-    let deny_unknown = if container_attrs.deny_unknown_fields {
-        let known_fields_slice: Vec<_> = known_fields.iter().map(|s| quote! { #s }).collect();
-        quote! {
-            access.deny_unknown_fields(&[#(#known_fields_slice),*])?;
-        }
-    } else {
-        quote! {}
-    };
+    let deny_unknown = generate_deny_unknown_check(container_attrs, &known_fields);
 
     Ok(quote! {
         match expr {
@@ -294,6 +290,21 @@ fn derive_named_struct_de(
             }
         }
     })
+}
+
+/// Generate the deny_unknown_fields check if enabled.
+fn generate_deny_unknown_check(
+    container_attrs: &ContainerAttrs,
+    known_fields: &[String],
+) -> TokenStream2 {
+    if container_attrs.deny_unknown_fields {
+        let known_fields_slice: Vec<_> = known_fields.iter().map(|s| quote! { #s }).collect();
+        quote! {
+            access.deny_unknown_fields(&[#(#known_fields_slice),*])?;
+        }
+    } else {
+        quote! {}
+    }
 }
 
 /// Generate deserialization for a tuple struct.
@@ -436,68 +447,34 @@ fn derive_unit_struct_de(
 ///
 /// Transparent structs deserialize as their single inner field directly.
 fn derive_transparent_struct_de(name: &Ident, fields: &Fields) -> syn::Result<TokenStream2> {
-    match fields {
-        Fields::Named(named) => {
-            // Find the single non-skipped field
-            let mut active_fields = Vec::new();
-            for field in &named.named {
-                let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
-                if !field_attrs.should_skip_deserializing() {
-                    active_fields.push(field);
-                }
-            }
+    let transparent = validate_transparent_struct(name, fields, FieldSkipMode::Deserializing)?;
 
-            if active_fields.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    name,
-                    "#[ron(transparent)] requires exactly one non-skipped field",
-                ));
-            }
-
-            let field = active_fields[0];
-            let field_ident = field.ident.as_ref().unwrap();
-            let field_ty = &field.ty;
-
+    match transparent {
+        TransparentField::Named {
+            ident,
+            ty,
+            skipped_fields,
+            ..
+        } => {
             // Generate default values for skipped fields
-            let mut skipped_fields = Vec::new();
-            for f in &named.named {
-                let attrs = FieldAttrs::from_ast(&f.attrs)?;
-                if attrs.should_skip_deserializing() {
-                    let ident = f.ident.as_ref().unwrap();
-                    let ty = &f.ty;
-                    skipped_fields.push(quote! {
-                        #ident: <#ty as ::std::default::Default>::default()
-                    });
+            let skipped_inits = skipped_fields.iter().map(|(name, ty)| {
+                quote! {
+                    #name: <#ty as ::std::default::Default>::default()
                 }
-            }
+            });
 
             Ok(quote! {
-                let inner = <#field_ty as ::ron2::FromRon>::from_ast(expr)?;
+                let inner = <#ty as ::ron2::FromRon>::from_ast(expr)?;
                 Ok(#name {
-                    #field_ident: inner,
-                    #(#skipped_fields,)*
+                    #ident: inner,
+                    #(#skipped_inits,)*
                 })
             })
         }
-        Fields::Unnamed(unnamed) => {
-            // For tuple structs, must have exactly one field
-            if unnamed.unnamed.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    name,
-                    "#[ron(transparent)] requires exactly one field for tuple structs",
-                ));
-            }
-
-            let field_ty = &unnamed.unnamed[0].ty;
-            Ok(quote! {
-                let inner = <#field_ty as ::ron2::FromRon>::from_ast(expr)?;
-                Ok(#name(inner))
-            })
-        }
-        Fields::Unit => Err(syn::Error::new_spanned(
-            name,
-            "#[ron(transparent)] cannot be used on unit structs",
-        )),
+        TransparentField::Unnamed { ty } => Ok(quote! {
+            let inner = <#ty as ::ron2::FromRon>::from_ast(expr)?;
+            Ok(#name(inner))
+        }),
     }
 }
 

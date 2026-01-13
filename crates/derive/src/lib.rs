@@ -91,6 +91,7 @@
 //!
 mod attr;
 mod de;
+mod field_util;
 mod schema_codegen;
 mod ser;
 mod type_mapper;

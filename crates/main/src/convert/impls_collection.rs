@@ -8,7 +8,9 @@ use alloc::{
 use core::hash::{BuildHasher, Hash};
 use std::collections::{HashMap, HashSet};
 
-use super::{FromRon, ToRon, extract_seq_elements, invalid_value, spanned_err, spanned_type_mismatch};
+use super::{
+    FromRon, ToRon, extract_seq_elements, invalid_value, spanned_err, spanned_type_mismatch,
+};
 use crate::{
     ast::{Expr, synthetic_map, synthetic_seq},
     error::Result,

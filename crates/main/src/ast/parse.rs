@@ -747,8 +747,12 @@ impl<'a> AstParser<'a> {
                 break;
             }
             // Only check for EOF if not after a comma
-            if (elements.is_empty() || elements.last().is_some_and(|e: &TupleElement| e.comma.is_none()))
-                && self.peek_kind() == TokenKind::Eof {
+            if (elements.is_empty()
+                || elements
+                    .last()
+                    .is_some_and(|e: &TupleElement| e.comma.is_none()))
+                && self.peek_kind() == TokenKind::Eof
+            {
                 break;
             }
 
@@ -852,10 +856,7 @@ impl<'a> AstParser<'a> {
                         post_colon: Trivia::empty(),
                         value: Expr::Error(ErrorExpr {
                             span: error_span.clone(),
-                            error: Error::with_span(
-                                Self::expected("identifier", None),
-                                error_span,
-                            ),
+                            error: Error::with_span(Self::expected("identifier", None), error_span),
                         }),
                         trailing,
                         comma,
@@ -987,8 +988,12 @@ impl<'a> AstParser<'a> {
                 break;
             }
             // Only check for EOF if we're not after a comma (allow error in strict mode)
-            if (items.is_empty() || items.last().is_some_and(|item: &SeqItem| item.comma.is_none()))
-                && self.peek_kind() == TokenKind::Eof {
+            if (items.is_empty()
+                || items
+                    .last()
+                    .is_some_and(|item: &SeqItem| item.comma.is_none()))
+                && self.peek_kind() == TokenKind::Eof
+            {
                 break;
             }
 
@@ -1063,7 +1068,8 @@ impl<'a> AstParser<'a> {
             }
             // Only check for EOF if not after a comma
             if (entries.is_empty() || entries.last().is_some_and(|e: &MapEntry| e.comma.is_none()))
-                && self.peek_kind() == TokenKind::Eof {
+                && self.peek_kind() == TokenKind::Eof
+            {
                 break;
             }
 
@@ -1213,10 +1219,7 @@ impl<'a> AstParser<'a> {
     /// Parse `Some(value)` (internal unified implementation).
     fn parse_some_inner(&mut self, some_tok: Token<'a>, errors: &mut Vec<Error>) -> Expr<'a> {
         if self.peek_kind() != TokenKind::LParen {
-            let err = Self::error(
-                some_tok.span,
-                Self::expected("`Some` or `None`", None),
-            );
+            let err = Self::error(some_tok.span, Self::expected("`Some` or `None`", None));
             return self.error_expr_from(err, errors);
         }
         let open_paren = self.next_token();
@@ -1639,10 +1642,7 @@ impl<'a> AstParser<'a> {
                         post_colon: Trivia::empty(),
                         value: Expr::Error(ErrorExpr {
                             span: error_span.clone(),
-                            error: Error::with_span(
-                                Self::expected("identifier", None),
-                                error_span,
-                            ),
+                            error: Error::with_span(Self::expected("identifier", None), error_span),
                         }),
                         trailing,
                         comma,
@@ -1723,7 +1723,8 @@ impl<'a> AstParser<'a> {
         pre_colon: Trivia<'a>,
     ) -> Result<(Vec<StructField<'a>>, Trivia<'a>)> {
         let mut errors = Vec::new();
-        let result = self.parse_struct_fields_from_first_inner(leading, first_name, pre_colon, &mut errors);
+        let result =
+            self.parse_struct_fields_from_first_inner(leading, first_name, pre_colon, &mut errors);
         if errors.is_empty() {
             Ok(result)
         } else {

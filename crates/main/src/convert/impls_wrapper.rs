@@ -3,7 +3,9 @@
 use alloc::{borrow::Cow, boxed::Box, rc::Rc, sync::Arc};
 use core::cell::{Cell, RefCell};
 
-use super::{FromRon, ToRon, extract_seq_elements, invalid_value, spanned_err, spanned_type_mismatch};
+use super::{
+    FromRon, ToRon, extract_seq_elements, invalid_value, spanned_err, spanned_type_mismatch,
+};
 use crate::{
     ast::{Expr, synthetic_option, synthetic_tuple},
     error::Result,

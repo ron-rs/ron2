@@ -185,7 +185,9 @@ fn invalid_value(msg: impl Into<String>) -> Error {
 }
 
 /// Extract elements from a sequence-like expression (Seq or Tuple).
-pub(crate) fn extract_seq_elements<'a>(expr: &'a Expr<'a>) -> Option<alloc::vec::Vec<&'a Expr<'a>>> {
+pub(crate) fn extract_seq_elements<'a>(
+    expr: &'a Expr<'a>,
+) -> Option<alloc::vec::Vec<&'a Expr<'a>>> {
     match expr {
         Expr::Seq(seq) => Some(seq.items.iter().map(|item| &item.expr).collect()),
         Expr::Tuple(tuple) => Some(tuple.elements.iter().map(|elem| &elem.expr).collect()),
