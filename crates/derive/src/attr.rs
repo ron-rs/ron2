@@ -82,48 +82,33 @@ pub struct ContainerAttrs {
 impl ContainerAttrs {
     /// Parse container attributes from a list of attributes.
     pub fn from_ast(attrs: &[Attribute]) -> syn::Result<Self> {
-        let mut result = Self::default();
-
-        for attr in attrs {
-            let is_ron = attr.path().is_ident("ron");
-
-            if !is_ron {
-                continue;
-            }
-
-            let nested = attr.parse_args_with(
-                syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-            )?;
-
-            for meta in nested {
-                match &meta {
-                    Meta::Path(path) => {
-                        if path.is_ident("deny_unknown_fields") {
-                            result.deny_unknown_fields = true;
-                        } else if path.is_ident("transparent") {
-                            result.transparent = true;
-                        }
+        parse_ron_attrs(attrs, |result: &mut Self, meta| {
+            match meta {
+                Meta::Path(path) => {
+                    if path.is_ident("deny_unknown_fields") {
+                        result.deny_unknown_fields = true;
+                    } else if path.is_ident("transparent") {
+                        result.transparent = true;
                     }
-                    Meta::NameValue(nv) => {
-                        if nv.path.is_ident("rename") {
-                            result.rename = Some(get_lit_str(&nv.value)?);
-                        } else if nv.path.is_ident("rename_all") {
-                            let s = get_lit_str(&nv.value)?;
-                            result.rename_all = RenameRule::from_str(&s);
-                            if result.rename_all.is_none() {
-                                return Err(syn::Error::new_spanned(
-                                    &nv.value,
-                                    format!("unknown rename rule: {}", s),
-                                ));
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                Meta::NameValue(nv) => {
+                    if nv.path.is_ident("rename") {
+                        result.rename = Some(get_lit_str(&nv.value)?);
+                    } else if nv.path.is_ident("rename_all") {
+                        let s = get_lit_str(&nv.value)?;
+                        result.rename_all = RenameRule::from_str(&s);
+                        if result.rename_all.is_none() {
+                            return Err(syn::Error::new_spanned(
+                                &nv.value,
+                                format!("unknown rename rule: {}", s),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
             }
-        }
-
-        Ok(result)
+            Ok(())
+        })
     }
 
     /// Get the effective field name, applying rename_all if set.
@@ -197,62 +182,43 @@ pub struct FieldAttrs {
 impl FieldAttrs {
     /// Parse field attributes from a list of attributes.
     pub fn from_ast(attrs: &[Attribute]) -> syn::Result<Self> {
-        let mut result = Self::default();
-
-        for attr in attrs {
-            let is_ron = attr.path().is_ident("ron");
-
-            if !is_ron {
-                continue;
-            }
-
-            let nested = attr.parse_args_with(
-                syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-            )?;
-
-            for meta in nested {
-                match &meta {
-                    Meta::Path(path) => {
-                        if path.is_ident("skip") {
-                            result.skip = true;
-                        } else if path.is_ident("skip_serializing") {
-                            result.skip_serializing = true;
-                        } else if path.is_ident("skip_deserializing") {
-                            result.skip_deserializing = true;
-                        } else if path.is_ident("default") {
-                            result.default = FieldDefault::Default;
-                        } else if path.is_ident("flatten") {
-                            result.flatten = true;
-                        } else if path.is_ident("explicit") {
-                            result.explicit = true;
-                        }
+        parse_ron_attrs(attrs, |result: &mut Self, meta| {
+            match meta {
+                Meta::Path(path) => {
+                    if path.is_ident("skip") {
+                        result.skip = true;
+                    } else if path.is_ident("skip_serializing") {
+                        result.skip_serializing = true;
+                    } else if path.is_ident("skip_deserializing") {
+                        result.skip_deserializing = true;
+                    } else if path.is_ident("default") {
+                        result.default = FieldDefault::Default;
+                    } else if path.is_ident("flatten") {
+                        result.flatten = true;
+                    } else if path.is_ident("explicit") {
+                        result.explicit = true;
                     }
-                    Meta::NameValue(nv) => {
-                        if nv.path.is_ident("rename") {
-                            result.rename = Some(get_lit_str(&nv.value)?);
-                        } else if nv.path.is_ident("default") {
-                            // #[ron(default = "path::to::fn")]
-                            let path = get_expr_path(&nv.value)?;
-                            result.default = FieldDefault::Path(path);
-                        } else if nv.path.is_ident("skip_serializing_if") {
-                            result.skip_serializing_if = Some(get_expr_path(&nv.value)?);
-                        }
-                    }
-                    _ => {}
                 }
+                Meta::NameValue(nv) => {
+                    if nv.path.is_ident("rename") {
+                        result.rename = Some(get_lit_str(&nv.value)?);
+                    } else if nv.path.is_ident("default") {
+                        // #[ron(default = "path::to::fn")]
+                        let path = get_expr_path(&nv.value)?;
+                        result.default = FieldDefault::Path(path);
+                    } else if nv.path.is_ident("skip_serializing_if") {
+                        result.skip_serializing_if = Some(get_expr_path(&nv.value)?);
+                    }
+                }
+                _ => {}
             }
-        }
-
-        Ok(result)
+            Ok(())
+        })
     }
 
     /// Get the effective field name, considering rename.
     pub fn effective_name(&self, original: &str, container: &ContainerAttrs) -> String {
-        if let Some(ref rename) = self.rename {
-            rename.clone()
-        } else {
-            container.rename_field(original)
-        }
+        effective_name_impl(self.rename.as_ref(), original, container)
     }
 
     /// Check if this field should be skipped for serialization.
@@ -283,46 +249,27 @@ pub struct VariantAttrs {
 impl VariantAttrs {
     /// Parse variant attributes from a list of attributes.
     pub fn from_ast(attrs: &[Attribute]) -> syn::Result<Self> {
-        let mut result = Self::default();
-
-        for attr in attrs {
-            let is_ron = attr.path().is_ident("ron");
-
-            if !is_ron {
-                continue;
-            }
-
-            let nested = attr.parse_args_with(
-                syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-            )?;
-
-            for meta in nested {
-                match &meta {
-                    Meta::Path(path) => {
-                        if path.is_ident("skip") {
-                            result.skip = true;
-                        }
+        parse_ron_attrs(attrs, |result: &mut Self, meta| {
+            match meta {
+                Meta::Path(path) => {
+                    if path.is_ident("skip") {
+                        result.skip = true;
                     }
-                    Meta::NameValue(nv) => {
-                        if nv.path.is_ident("rename") {
-                            result.rename = Some(get_lit_str(&nv.value)?);
-                        }
-                    }
-                    _ => {}
                 }
+                Meta::NameValue(nv) => {
+                    if nv.path.is_ident("rename") {
+                        result.rename = Some(get_lit_str(&nv.value)?);
+                    }
+                }
+                _ => {}
             }
-        }
-
-        Ok(result)
+            Ok(())
+        })
     }
 
     /// Get the effective variant name.
     pub fn effective_name(&self, original: &str, container: &ContainerAttrs) -> String {
-        if let Some(ref rename) = self.rename {
-            rename.clone()
-        } else {
-            container.rename_field(original)
-        }
+        effective_name_impl(self.rename.as_ref(), original, container)
     }
 }
 
@@ -357,6 +304,51 @@ pub fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
 // =============================================================================
 // Helper functions
 // =============================================================================
+
+/// Parse `#[ron(...)]` attributes using a callback handler.
+///
+/// This helper consolidates the common pattern of:
+/// 1. Iterating through attributes
+/// 2. Filtering for "ron" ident
+/// 3. Parsing nested Meta items
+/// 4. Processing each Meta with custom logic
+fn parse_ron_attrs<T, F>(attrs: &[Attribute], mut handler: F) -> syn::Result<T>
+where
+    T: Default,
+    F: FnMut(&mut T, &Meta) -> syn::Result<()>,
+{
+    let mut result = T::default();
+
+    for attr in attrs {
+        if !attr.path().is_ident("ron") {
+            continue;
+        }
+
+        let nested = attr.parse_args_with(
+            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
+        )?;
+
+        for meta in nested {
+            handler(&mut result, &meta)?;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Get the effective name for a field or variant.
+///
+/// Returns the explicit rename if provided, otherwise applies the container's
+/// rename_all rule to the original name.
+fn effective_name_impl(
+    explicit_rename: Option<&String>,
+    original: &str,
+    container: &ContainerAttrs,
+) -> String {
+    explicit_rename
+        .cloned()
+        .unwrap_or_else(|| container.rename_field(original))
+}
 
 /// Extract a string literal from an expression.
 fn get_lit_str(expr: &Expr) -> syn::Result<String> {
