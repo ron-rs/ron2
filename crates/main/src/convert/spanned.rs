@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn test_new_and_accessors() {
         let span = make_span(1, 1);
-        let spanned = Spanned::new(42, span.clone());
+        let spanned = Spanned::new(42, span);
 
         assert_eq!(spanned.value, 42);
         assert_eq!(*spanned.get(), 42);
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn test_map() {
         let span = make_span(1, 1);
-        let spanned = Spanned::new(42, span.clone());
+        let spanned = Spanned::new(42, span);
         let doubled = spanned.map(|x| x * 2);
 
         assert_eq!(doubled.value, 84);
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn test_try_map_success() {
         let span = make_span(1, 1);
-        let spanned = Spanned::new("42", span.clone());
+        let spanned = Spanned::new("42", span);
         let parsed: core::result::Result<Spanned<i32>, _> = spanned.try_map(str::parse);
 
         let parsed = parsed.unwrap();
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn test_to_ron_discards_span() {
         let span = make_span(5, 10);
-        let spanned = Spanned::new(42, span.clone());
+        let spanned = Spanned::new(42, span);
 
         let serialized = spanned.to_ron().unwrap();
         assert_eq!(serialized, "42");
@@ -601,8 +601,8 @@ world"
         let span1 = make_span(1, 1);
         let span2 = make_span(2, 2);
 
-        let spanned1 = Spanned::new(42, span1.clone());
-        let spanned2 = Spanned::new(42, span1.clone());
+        let spanned1 = Spanned::new(42, span1);
+        let spanned2 = Spanned::new(42, span1);
         let spanned3 = Spanned::new(42, span2);
         let spanned4 = Spanned::new(100, span1);
 

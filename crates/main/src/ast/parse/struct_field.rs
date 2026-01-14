@@ -66,7 +66,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                 _ => {
                     let error_span = self.peek_span();
                     errors.push(Self::error(
-                        error_span.clone(),
+                        error_span,
                         Self::expected("identifier", None),
                     ));
                     self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
@@ -76,14 +76,14 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                     fields.push(StructField {
                         leading,
                         name: Ident {
-                            span: error_span.clone(),
+                            span: error_span,
                             name: Cow::Borrowed(""),
                         },
                         pre_colon: Trivia::empty(),
                         colon: Self::span_at_end(&error_span),
                         post_colon: Trivia::empty(),
                         value: Expr::Error(ErrorExpr {
-                            span: error_span.clone(),
+                            span: error_span,
                             error: Error::with_span(Self::expected("identifier", None), error_span),
                         }),
                         trailing,
@@ -115,9 +115,9 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                 TokenKind::Comma | TokenKind::RParen => {
                     let error_span = Self::span_at_end(&colon);
                     let error_kind = Self::expected("value", Some("struct field"));
-                    errors.push(Self::error(error_span.clone(), error_kind.clone()));
+                    errors.push(Self::error(error_span, error_kind.clone()));
                     Expr::Error(ErrorExpr {
-                        span: error_span.clone(),
+                        span: error_span,
                         error: Error::with_span(error_kind, error_span),
                     })
                 }
@@ -472,7 +472,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                 _ => {
                     let error_span = self.peek_span();
                     errors.push(Self::error(
-                        error_span.clone(),
+                        error_span,
                         Self::expected("identifier", None),
                     ));
                     self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
@@ -482,14 +482,14 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                     fields.push(StructField {
                         leading,
                         name: Ident {
-                            span: error_span.clone(),
+                            span: error_span,
                             name: Cow::Borrowed(""),
                         },
                         pre_colon: Trivia::empty(),
                         colon: Self::span_at_end(&error_span),
                         post_colon: Trivia::empty(),
                         value: Expr::Error(ErrorExpr {
-                            span: error_span.clone(),
+                            span: error_span,
                             error: Error::with_span(Self::expected("identifier", None), error_span),
                         }),
                         trailing,
@@ -521,9 +521,9 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                 TokenKind::Comma | TokenKind::RParen => {
                     let error_span = Self::span_at_end(&colon);
                     let error_kind = Self::expected("value", Some("struct field"));
-                    errors.push(Self::error(error_span.clone(), error_kind.clone()));
+                    errors.push(Self::error(error_span, error_kind.clone()));
                     Expr::Error(ErrorExpr {
-                        span: error_span.clone(),
+                        span: error_span,
                         error: Error::with_span(error_kind, error_span),
                     })
                 }

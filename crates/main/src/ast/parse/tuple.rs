@@ -95,7 +95,7 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
         if self.peek_kind() == TokenKind::RParen {
             let close_paren = self.next_token();
             Ok(TupleBody {
-                open_paren: open_paren.clone(),
+                open_paren: *open_paren,
                 leading,
                 elements: Vec::new(),
                 trailing: Trivia::empty(),

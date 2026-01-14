@@ -114,7 +114,7 @@ impl<'a> CollectionParser<'a> for AstParser<'a> {
                 let (comma, _) = self.consume_comma();
                 let colon_span = pre_colon.span.unwrap_or_else(|| self.eof_span());
                 let key_span = key.span();
-                let error_span = Self::span_at_end(&key_span);
+                let error_span = Self::span_at_end(key_span);
                 entries.push(MapEntry {
                     leading,
                     key,
@@ -122,7 +122,7 @@ impl<'a> CollectionParser<'a> for AstParser<'a> {
                     colon: Self::span_at_end(&colon_span),
                     post_colon: Trivia::empty(),
                     value: Expr::Error(ErrorExpr {
-                        span: error_span.clone(),
+                        span: error_span,
                         error: Error::with_span(
                             Self::expected("value", Some("map entry")),
                             error_span,

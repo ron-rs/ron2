@@ -109,7 +109,7 @@ fn validate_config(config: &ServerConfig) -> Vec<ValidationError> {
     // Check port range
     if config.port.value == 0 {
         errors.push(
-            ValidationError::new("port cannot be 0", config.port.span.clone())
+            ValidationError::new("port cannot be 0", config.port.span)
                 .with_help("valid port range is 1-65535"),
         );
     }
@@ -122,7 +122,7 @@ fn validate_config(config: &ServerConfig) -> Vec<ValidationError> {
                     "max_connections ({}) must be >= min_connections ({})",
                     config.max_connections.value, config.min_connections.value
                 ),
-                config.max_connections.span.clone(),
+                config.max_connections.span,
             )
             .with_help("increase max_connections or decrease min_connections"),
         );
@@ -133,7 +133,7 @@ fn validate_config(config: &ServerConfig) -> Vec<ValidationError> {
         errors.push(
             ValidationError::new(
                 "max_connections seems unusually high",
-                config.max_connections.span.clone(),
+                config.max_connections.span,
             )
             .with_help("consider a more reasonable limit (< 10000)"),
         );

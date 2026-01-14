@@ -349,14 +349,14 @@ fn extract_fields_with_spans_from_expr(expr: &ast::Expr<'_>) -> Vec<(String, ron
         ast::Expr::AnonStruct(s) => s
             .fields
             .iter()
-            .map(|f| (f.name.name.to_string(), f.name.span.clone()))
+            .map(|f| (f.name.name.to_string(), f.name.span))
             .collect(),
         ast::Expr::Struct(s) => {
             if let Some(ast::StructBody::Fields(fields)) = &s.body {
                 fields
                     .fields
                     .iter()
-                    .map(|f| (f.name.name.to_string(), f.name.span.clone()))
+                    .map(|f| (f.name.name.to_string(), f.name.span))
                     .collect()
             } else {
                 vec![]

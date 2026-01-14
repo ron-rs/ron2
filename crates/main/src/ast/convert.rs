@@ -37,7 +37,7 @@ impl<T> SpanExt<T> for Result<T> {
         self.map_err(|err| {
             // If already has a span, preserve it; otherwise attach new span
             if err.span().is_synthetic() {
-                Error::with_span(err.kind().clone(), span.clone())
+                Error::with_span(err.kind().clone(), *span)
             } else {
                 err
             }

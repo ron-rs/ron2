@@ -169,7 +169,7 @@ impl<'a> AstMapAccess<'a> {
                     field: Cow::Borrowed(name),
                     outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
                 },
-                self.struct_span.clone(),
+                self.struct_span,
             )),
         }
     }
@@ -272,7 +272,7 @@ impl<'a> AstMapAccess<'a> {
                     field: Cow::Borrowed(name),
                     outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
                 },
-                self.struct_span.clone(),
+                self.struct_span,
             )),
         }
     }
