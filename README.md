@@ -1,6 +1,6 @@
 ## ron-extras
 
-Extensions for RON (Rusty Object Notation):
+Alternative, AST-powered implementation of the Rusty Object Notation (RON).
 
 - **ron2**: Standalone RON parser with full AST access, perfect round-trip fidelity, and zero-copy parsing (replaces the `ron` crate)
 - **ron-derive**: Proc macro that generates schemas at compile time

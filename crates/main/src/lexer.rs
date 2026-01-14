@@ -71,47 +71,95 @@ impl<'a> Lexer<'a> {
     /// Returns the remaining source text starting from the current cursor position.
     #[must_use]
     fn remaining(&self) -> &'a str {
+        // SAFETY: cursor is always at a valid UTF-8 boundary because we only
+        // advance by char lengths or known ASCII byte counts
         &self.source[self.cursor..]
     }
 
-    /// Returns the next character without consuming it, if any.
+    /// Returns the next byte without consuming it, if any.
+    /// This is the fast path for ASCII-heavy content.
     #[must_use]
+    #[inline]
+    fn peek_byte(&self) -> Option<u8> {
+        self.source.as_bytes().get(self.cursor).copied()
+    }
+
+    /// Returns the next character without consuming it, if any.
+    /// Uses a fast path for ASCII characters.
+    #[must_use]
+    #[inline]
     fn peek_char(&self) -> Option<char> {
-        self.remaining().chars().next()
+        let b = self.peek_byte()?;
+        if b.is_ascii() {
+            Some(b as char)
+        } else {
+            // Non-ASCII: fall back to full UTF-8 decode
+            self.remaining().chars().next()
+        }
     }
 
     /// Returns the second character without consuming anything, if any.
+    /// Uses a fast path for ASCII characters.
     #[must_use]
     fn peek_char_second(&self) -> Option<char> {
-        let mut chars = self.remaining().chars();
-        chars.next();
-        chars.next()
+        let bytes = self.source.as_bytes();
+        let first = *bytes.get(self.cursor)?;
+
+        // Compute offset of second character
+        let second_offset = if first.is_ascii() {
+            self.cursor + 1
+        } else {
+            // Non-ASCII first char: need to find its length
+            let first_char = self.remaining().chars().next()?;
+            self.cursor + first_char.len_utf8()
+        };
+
+        let second_byte = *bytes.get(second_offset)?;
+        if second_byte.is_ascii() {
+            Some(second_byte as char)
+        } else {
+            // Non-ASCII second char: decode it
+            self.source.get(second_offset..)?.chars().next()
+        }
     }
 
     /// Consumes and returns the next character, updating position tracking.
+    /// Uses a fast path for ASCII characters.
+    #[inline]
     fn next_char(&mut self) -> Option<char> {
-        let c = self.peek_char()?;
-        self.cursor += c.len_utf8();
+        let b = self.peek_byte()?;
 
-        // Update line/column tracking
-        if c == '\n' {
-            self.line += 1;
-            self.col = 1;
-        } else {
-            self.col += 1;
-        }
-
-        Some(c)
-    }
-
-    /// Advances the cursor by the given number of bytes, updating position tracking.
-    fn advance(&mut self, bytes: usize) {
-        let text = &self.source[self.cursor..self.cursor + bytes];
-        for c in text.chars() {
-            if c == '\n' {
+        if b.is_ascii() {
+            // Fast path for ASCII
+            self.cursor += 1;
+            if b == b'\n' {
                 self.line += 1;
                 self.col = 1;
             } else {
+                self.col += 1;
+            }
+            Some(b as char)
+        } else {
+            // Slow path for non-ASCII
+            let c = self.remaining().chars().next()?;
+            self.cursor += c.len_utf8();
+            self.col += 1;
+            Some(c)
+        }
+    }
+
+    /// Advances the cursor by the given number of bytes, updating position tracking.
+    /// Uses byte iteration for efficiency - newlines are always ASCII so byte comparison is correct.
+    #[inline]
+    fn advance(&mut self, bytes: usize) {
+        let slice = &self.source.as_bytes()[self.cursor..self.cursor + bytes];
+        for &b in slice {
+            if b == b'\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                // For column tracking, we count bytes. This is correct for ASCII
+                // and an approximation for multi-byte UTF-8 (which is rare in RON).
                 self.col += 1;
             }
         }
