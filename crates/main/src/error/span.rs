@@ -19,10 +19,20 @@ impl Position {
     }
 
     /// Compute the position at the end of the given source text.
+    /// Uses single-pass byte iteration for efficiency.
     #[must_use]
     pub fn from_src_end(src: &str) -> Self {
-        let line = 1 + src.chars().filter(|&c| c == '\n').count();
-        let col = 1 + src.chars().rev().take_while(|&c| c != '\n').count();
+        let mut line = 1;
+        let mut col = 1;
+
+        for &b in src.as_bytes() {
+            if b == b'\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+        }
 
         Self { line, col }
     }
@@ -56,7 +66,7 @@ impl fmt::Display for Position {
 ///
 /// Spans created by [`Span::synthetic()`] have `line: 0` to distinguish them
 /// from real source positions. Use [`is_synthetic()`](Self::is_synthetic) to check.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Span {
     /// The start position (line and column, 1-indexed).
     pub start: Position,
