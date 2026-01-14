@@ -843,6 +843,7 @@ impl PartialEq for Error {
 impl Eq for Error {}
 
 impl PartialEq for ErrorKind {
+    #[allow(clippy::too_many_lines)]
     fn eq(&self, other: &Self) -> bool {
         // Compare variants, skipping source fields (not meaningful for equality)
         match (self, other) {

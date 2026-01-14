@@ -13,6 +13,7 @@ use ron2_derive::FromRon;
 // Simple config struct with validation requirements
 #[derive(Debug, FromRon)]
 struct ServerConfig {
+    #[allow(dead_code)]
     host: Spanned<String>,
     port: Spanned<u16>,
     max_connections: Spanned<u32>,

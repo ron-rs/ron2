@@ -237,7 +237,7 @@ pub trait RonOptional: RonSchemaType {
 // Macro Definitions for Repetitive Implementations
 // =============================================================================
 
-/// Implements `RonSchemaType` for primitive types with a direct TypeKind mapping.
+/// Implements `RonSchemaType` for primitive types with a direct `TypeKind` mapping.
 macro_rules! impl_primitive_schema {
     ($($ty:ty => $variant:ident),* $(,)?) => {
         $(

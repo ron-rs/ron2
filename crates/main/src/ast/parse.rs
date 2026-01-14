@@ -53,6 +53,7 @@ struct AstParser<'a> {
     lookahead: Vec<Token<'a>>,
 }
 
+#[allow(dead_code)]
 impl<'a> AstParser<'a> {
     fn new(source: &'a str, lexer: Lexer<'a>) -> Self {
         Self {

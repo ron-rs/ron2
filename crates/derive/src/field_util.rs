@@ -58,10 +58,12 @@ impl FieldSkipMode {
 pub enum TransparentField<'a> {
     /// Named struct with a single active field
     Named {
+        #[allow(dead_code)]
         field: &'a syn::Field,
         ident: &'a syn::Ident,
         ty: &'a syn::Type,
-        attrs: FieldAttrs,
+        #[allow(dead_code)]
+        attrs: Box<FieldAttrs>,
         skipped_fields: Vec<(&'a syn::Ident, &'a syn::Type)>,
     },
     /// Tuple struct with a single field
@@ -132,7 +134,7 @@ pub fn validate_transparent_struct<'a>(
                 field,
                 ident: field.ident.as_ref().unwrap(),
                 ty: &field.ty,
-                attrs: attrs.clone(),
+                attrs: Box::new(attrs.clone()),
                 skipped_fields: skipped,
             })
         }

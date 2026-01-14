@@ -166,7 +166,7 @@
 use crate::ast::Expr;
 use crate::convert::{FromRon, ToRon};
 use crate::error::{Result, Span};
-use std::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut};
 
 /// A value paired with its source location span.
 ///
@@ -433,7 +433,7 @@ mod tests {
     fn test_try_map_success() {
         let span = make_span(1, 1);
         let spanned = Spanned::new("42", span.clone());
-        let parsed: std::result::Result<Spanned<i32>, _> = spanned.try_map(|s| s.parse());
+        let parsed: core::result::Result<Spanned<i32>, _> = spanned.try_map(str::parse);
 
         let parsed = parsed.unwrap();
         assert_eq!(parsed.value, 42);
@@ -444,7 +444,7 @@ mod tests {
     fn test_try_map_failure() {
         let span = make_span(1, 1);
         let spanned = Spanned::new("not a number", span);
-        let parsed: std::result::Result<Spanned<i32>, _> = spanned.try_map(|s| s.parse());
+        let parsed: core::result::Result<Spanned<i32>, _> = spanned.try_map(str::parse);
 
         assert!(parsed.is_err());
     }
@@ -473,7 +473,7 @@ mod tests {
         let ron = "true";
         let spanned: Spanned<bool> = Spanned::from_ron(ron).unwrap();
 
-        assert_eq!(spanned.value, true);
+        assert!(spanned.value);
         assert_eq!(spanned.span.start.line, 1);
     }
 
