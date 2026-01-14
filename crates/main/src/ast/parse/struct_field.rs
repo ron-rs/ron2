@@ -46,6 +46,12 @@ pub(super) trait StructFieldParser<'a>: ParserCore<'a> {
         pre_colon: Trivia<'a>,
         errors: &mut Vec<Error>,
     ) -> (Vec<StructField<'a>>, Trivia<'a>);
+    fn make_error_field(
+        &mut self,
+        error_span: Span,
+        leading: Trivia<'a>,
+        errors: &mut Vec<Error>,
+    ) -> (StructField<'a>, Trivia<'a>, bool);
 }
 
 impl<'a> StructFieldParser<'a> for AstParser<'a> {
@@ -65,31 +71,10 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                 TokenKind::Ident => {}
                 _ => {
                     let error_span = self.peek_span();
-                    errors.push(Self::error(
-                        error_span,
-                        Self::expected("identifier", None),
-                    ));
-                    self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
-                    let trailing = self.collect_leading_trivia();
-                    let (comma, has_comma) = self.consume_comma();
-                    // Create a placeholder field to preserve structure
-                    fields.push(StructField {
-                        leading,
-                        name: Ident {
-                            span: error_span,
-                            name: Cow::Borrowed(""),
-                        },
-                        pre_colon: Trivia::empty(),
-                        colon: Self::span_at_end(&error_span),
-                        post_colon: Trivia::empty(),
-                        value: Expr::Error(ErrorExpr {
-                            span: error_span,
-                            error: Error::with_span(Self::expected("identifier", None), error_span),
-                        }),
-                        trailing,
-                        comma,
-                    });
-                    leading = self.collect_leading_trivia();
+                    let (field, new_leading, has_comma) =
+                        self.make_error_field(error_span, leading, errors);
+                    fields.push(field);
+                    leading = new_leading;
                     if !has_comma {
                         break;
                     }
@@ -471,31 +456,10 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                 TokenKind::Ident => {}
                 _ => {
                     let error_span = self.peek_span();
-                    errors.push(Self::error(
-                        error_span,
-                        Self::expected("identifier", None),
-                    ));
-                    self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
-                    let trailing = self.collect_leading_trivia();
-                    let (comma, has_comma) = self.consume_comma();
-                    // Create a placeholder field to preserve structure
-                    fields.push(StructField {
-                        leading,
-                        name: Ident {
-                            span: error_span,
-                            name: Cow::Borrowed(""),
-                        },
-                        pre_colon: Trivia::empty(),
-                        colon: Self::span_at_end(&error_span),
-                        post_colon: Trivia::empty(),
-                        value: Expr::Error(ErrorExpr {
-                            span: error_span,
-                            error: Error::with_span(Self::expected("identifier", None), error_span),
-                        }),
-                        trailing,
-                        comma,
-                    });
-                    leading = self.collect_leading_trivia();
+                    let (field, new_leading, has_comma) =
+                        self.make_error_field(error_span, leading, errors);
+                    fields.push(field);
+                    leading = new_leading;
                     if !has_comma {
                         break;
                     }
@@ -562,5 +526,40 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
         }
 
         (fields, leading)
+    }
+
+    /// Create a placeholder error field for recovery.
+    ///
+    /// Returns `(field, new_leading, has_comma)` for the calling loop to use.
+    fn make_error_field(
+        &mut self,
+        error_span: Span,
+        leading: Trivia<'a>,
+        errors: &mut Vec<Error>,
+    ) -> (StructField<'a>, Trivia<'a>, bool) {
+        errors.push(Self::error(error_span, Self::expected("identifier", None)));
+        self.recover_until(&[TokenKind::Comma, TokenKind::RParen]);
+        let trailing = self.collect_leading_trivia();
+        let (comma, has_comma) = self.consume_comma();
+
+        let field = StructField {
+            leading,
+            name: Ident {
+                span: error_span,
+                name: Cow::Borrowed(""),
+            },
+            pre_colon: Trivia::empty(),
+            colon: Self::span_at_end(&error_span),
+            post_colon: Trivia::empty(),
+            value: Expr::Error(ErrorExpr {
+                span: error_span,
+                error: Error::with_span(Self::expected("identifier", None), error_span),
+            }),
+            trailing,
+            comma,
+        };
+
+        let new_leading = self.collect_leading_trivia();
+        (field, new_leading, has_comma)
     }
 }

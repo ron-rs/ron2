@@ -101,7 +101,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     /// Peek at the next two non-trivia token kinds without consuming.
     /// Returns (`first_kind`, `second_kind`).
     fn peek_two_kinds(&mut self) -> (TokenKind, TokenKind) {
-        // First, ensure we have at least one token in lookahead
+        // Ensure we have at least one token in lookahead
         if self.lookahead.is_empty() {
             // Collect trivia and find the first non-trivia token
             while let Some(tok) = self.tokens.peek() {
@@ -120,8 +120,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
 
         let first_kind = self.lookahead.last().map_or(TokenKind::Eof, |t| t.kind);
 
-        // Now find the second non-trivia token
-        // Skip trivia to find second token
+        // Skip trivia between first and second token to find the second non-trivia token
         while let Some(tok) = self.tokens.peek() {
             if tok.kind.is_trivia() {
                 if let Some(tok) = self.tokens.next() {
@@ -193,14 +192,17 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
             _ => None,
         };
 
-        // Build whitespace string from all whitespace tokens
-        let mut whitespace_ranges: Vec<(usize, usize)> = Vec::new();
+        // Build whitespace string from first whitespace token and collect comments
+        let mut first_whitespace_range: Option<(usize, usize)> = None;
         let mut comments = Vec::new();
 
         for tok in tokens {
             match tok.kind {
                 TokenKind::Whitespace => {
-                    whitespace_ranges.push((tok.span.start_offset, tok.span.end_offset));
+                    if first_whitespace_range.is_none() {
+                        first_whitespace_range =
+                            Some((tok.span.start_offset, tok.span.end_offset));
+                    }
                 }
                 TokenKind::LineComment => {
                     comments.push(Comment {
@@ -220,10 +222,8 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
             }
         }
 
-        // For whitespace, we concatenate the ranges into a single slice if contiguous
-        // For simplicity, just use the first whitespace token's text or empty
-        let whitespace = if let Some((start, end)) = whitespace_ranges.first() {
-            Cow::Borrowed(&self.source[*start..*end])
+        let whitespace = if let Some((start, end)) = first_whitespace_range {
+            Cow::Borrowed(&self.source[start..end])
         } else {
             Cow::Borrowed("")
         };
@@ -386,6 +386,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     }
 
     /// Create a zero-width span at the end of the given span.
+    #[inline]
     fn span_at_end(span: &Span) -> Span {
         Span {
             start: span.end,

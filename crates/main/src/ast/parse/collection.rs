@@ -25,8 +25,10 @@ impl<'a> CollectionParser<'a> for AstParser<'a> {
         let mut items = Vec::new();
 
         loop {
+            let kind = self.peek_kind();
+
             // Always check for closing bracket (handles trailing commas)
-            if self.peek_kind() == TokenKind::RBracket {
+            if kind == TokenKind::RBracket {
                 break;
             }
             // Only check for EOF if we're not after a comma (allow error in strict mode)
@@ -34,7 +36,7 @@ impl<'a> CollectionParser<'a> for AstParser<'a> {
                 || items
                     .last()
                     .is_some_and(|item: &SeqItem| item.comma.is_none()))
-                && self.peek_kind() == TokenKind::Eof
+                && kind == TokenKind::Eof
             {
                 break;
             }
@@ -89,13 +91,15 @@ impl<'a> CollectionParser<'a> for AstParser<'a> {
         let mut entries = Vec::new();
 
         loop {
+            let kind = self.peek_kind();
+
             // Always check for closing brace (handles trailing commas)
-            if self.peek_kind() == TokenKind::RBrace {
+            if kind == TokenKind::RBrace {
                 break;
             }
             // Only check for EOF if not after a comma
             if (entries.is_empty() || entries.last().is_some_and(|e: &MapEntry| e.comma.is_none()))
-                && self.peek_kind() == TokenKind::Eof
+                && kind == TokenKind::Eof
             {
                 break;
             }

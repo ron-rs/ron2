@@ -116,8 +116,10 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
         let mut elements = Vec::new();
 
         loop {
+            let kind = self.peek_kind();
+
             // Always check for closing paren (handles trailing commas)
-            if self.peek_kind() == TokenKind::RParen {
+            if kind == TokenKind::RParen {
                 break;
             }
             // Only check for EOF if not after a comma
@@ -125,7 +127,7 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
                 || elements
                     .last()
                     .is_some_and(|e: &TupleElement| e.comma.is_none()))
-                && self.peek_kind() == TokenKind::Eof
+                && kind == TokenKind::Eof
             {
                 break;
             }

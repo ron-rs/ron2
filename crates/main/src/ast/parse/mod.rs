@@ -72,7 +72,7 @@ impl<'a> AstParser<'a> {
             source,
             tokens: lexer.peekable(),
             trivia_buffer: Vec::new(),
-            lookahead: Vec::new(),
+            lookahead: Vec::with_capacity(1),
             depth: 0,
         }
     }
