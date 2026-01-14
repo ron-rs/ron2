@@ -163,10 +163,13 @@
 //! so cloning during deserialization is very cheap. The overhead of capturing spans
 //! is minimal compared to the parsing cost itself.
 
-use crate::ast::Expr;
-use crate::convert::{FromRon, ToRon};
-use crate::error::{Result, Span};
 use core::ops::{Deref, DerefMut};
+
+use crate::{
+    ast::Expr,
+    convert::{FromRon, ToRon},
+    error::{Result, Span},
+};
 
 /// A value paired with its source location span.
 ///

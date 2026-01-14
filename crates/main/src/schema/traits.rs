@@ -594,10 +594,7 @@ mod tests {
             Spanned::<Option<bool>>::type_kind(),
             Option::<bool>::type_kind()
         );
-        assert_eq!(
-            Spanned::<Vec<i32>>::type_kind(),
-            Vec::<i32>::type_kind()
-        );
+        assert_eq!(Spanned::<Vec<i32>>::type_kind(), Vec::<i32>::type_kind());
     }
 
     #[test]
@@ -605,10 +602,7 @@ mod tests {
         use crate::convert::Spanned;
 
         // Nested Spanned<T> still has the same schema as T
-        assert_eq!(
-            Spanned::<Spanned<i32>>::type_kind(),
-            i32::type_kind()
-        );
+        assert_eq!(Spanned::<Spanned<i32>>::type_kind(), i32::type_kind());
     }
 
     #[test]
