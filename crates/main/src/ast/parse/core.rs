@@ -9,7 +9,7 @@ use alloc::{borrow::Cow, vec::Vec};
 use super::AstParser;
 use crate::{
     ast::{Comment, CommentKind, ErrorExpr, Expr, Trivia},
-    error::{Error, ErrorKind, Position, Result, Span},
+    error::{Error, ErrorKind, Position, Span},
     token::{Token, TokenKind},
 };
 
@@ -43,11 +43,6 @@ pub(super) trait ParserCore<'a> {
         error_kind: ErrorKind,
         errors: &mut Vec<Error>,
     ) -> Span;
-    fn consume_closing_strict(
-        &mut self,
-        expected: TokenKind,
-        error_kind: ErrorKind,
-    ) -> Result<Span>;
     fn at_closing_or_eof(&mut self, closing: TokenKind) -> bool;
     fn report_missing_comma(&mut self, context: &'static str, errors: &mut Vec<Error>);
     fn handle_missing_comma(
@@ -348,29 +343,13 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
         self.eof_span()
     }
 
-    /// Consume a closing delimiter in strict mode, returning an error if missing.
-    fn consume_closing_strict(
-        &mut self,
-        expected: TokenKind,
-        error_kind: ErrorKind,
-    ) -> Result<Span> {
-        if self.peek_kind() == expected {
-            Ok(self.next_token().span)
-        } else {
-            Err(Self::error(self.eof_span(), error_kind))
-        }
-    }
-
     /// Check if we're at a closing delimiter or EOF.
-    ///
-    /// This is used by lossy parsing loops to determine when to stop.
-    /// Strict loops should just check for the specific closing delimiter.
     fn at_closing_or_eof(&mut self, closing: TokenKind) -> bool {
         let kind = self.peek_kind();
         kind == closing || kind == TokenKind::Eof
     }
 
-    /// Report a missing comma error in lossy mode.
+    /// Report a missing comma error.
     fn report_missing_comma(&mut self, context: &'static str, errors: &mut Vec<Error>) {
         errors.push(Self::error(
             self.peek_span(),

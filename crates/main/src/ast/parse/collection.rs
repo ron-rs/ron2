@@ -5,22 +5,19 @@ use alloc::vec::Vec;
 use super::{AstParser, core::ParserCore};
 use crate::{
     ast::{ErrorExpr, Expr, MapEntry, MapExpr, SeqExpr, SeqItem, Trivia},
-    error::{Error, Result, Span},
+    error::{Error, Span},
     token::TokenKind,
 };
 
 /// Internal trait for parsing collection types.
 pub(super) trait CollectionParser<'a>: ParserCore<'a> {
-    fn parse_seq_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
-    fn parse_seq(&mut self) -> Result<Expr<'a>>;
-    fn parse_seq_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
-    fn parse_map_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
-    fn parse_map(&mut self) -> Result<Expr<'a>>;
-    fn parse_map_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
+    fn parse_seq(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
+    fn parse_map(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
 }
 
 impl<'a> CollectionParser<'a> for AstParser<'a> {
-    fn parse_seq_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+    /// Parse a sequence `[a, b, c]` with error recovery.
+    fn parse_seq(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open_bracket = self.next_token();
         debug_assert_eq!(open_bracket.kind, TokenKind::LBracket);
 
@@ -83,23 +80,8 @@ impl<'a> CollectionParser<'a> for AstParser<'a> {
         })
     }
 
-    fn parse_seq(&mut self) -> Result<Expr<'a>> {
-        let mut errors = Vec::new();
-        let expr = self.parse_seq_inner(&mut errors);
-        if errors.is_empty() {
-            Ok(expr)
-        } else {
-            Err(errors.remove(0))
-        }
-    }
-
-    /// Parse a sequence `[a, b, c]` with error recovery.
-    fn parse_seq_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        self.parse_seq_inner(errors)
-    }
-
-    /// Parse a map `{key: value, ...}` (internal unified implementation).
-    fn parse_map_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+    /// Parse a map `{key: value, ...}` with error recovery.
+    fn parse_map(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open_brace = self.next_token();
         debug_assert_eq!(open_brace.kind, TokenKind::LBrace);
 
@@ -198,21 +180,6 @@ impl<'a> CollectionParser<'a> for AstParser<'a> {
             trailing,
             close_brace,
         })
-    }
-
-    fn parse_map(&mut self) -> Result<Expr<'a>> {
-        let mut errors = Vec::new();
-        let expr = self.parse_map_inner(&mut errors);
-        if errors.is_empty() {
-            Ok(expr)
-        } else {
-            Err(errors.remove(0))
-        }
-    }
-
-    /// Parse a map `{key: value, ...}` with error recovery.
-    fn parse_map_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        self.parse_map_inner(errors)
     }
 }
 

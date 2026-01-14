@@ -76,7 +76,7 @@ impl<'a> AstParser<'a> {
     /// Parse a complete document (internal unified implementation).
     fn parse_document_inner(&mut self, errors: &mut Vec<Error>) -> Document<'a> {
         let leading = self.collect_leading_trivia();
-        let attributes = self.parse_attributes_inner(errors);
+        let attributes = self.parse_attributes(errors);
         let pre_value = self.collect_leading_trivia();
 
         let value = match self.peek_kind() {
@@ -123,10 +123,10 @@ impl<'a> AstParser<'a> {
     /// Parse an expression (internal unified implementation).
     fn parse_expr_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         match self.peek_kind() {
-            TokenKind::LParen => self.parse_tuple_or_unit_lossy(errors),
-            TokenKind::LBracket => self.parse_seq_lossy(errors),
-            TokenKind::LBrace => self.parse_map_lossy(errors),
-            TokenKind::Ident => self.parse_ident_expr_lossy(errors),
+            TokenKind::LParen => self.parse_tuple_or_unit(errors),
+            TokenKind::LBracket => self.parse_seq(errors),
+            TokenKind::LBrace => self.parse_map(errors),
+            TokenKind::Ident => self.parse_ident_expr(errors),
             TokenKind::Integer => self.parse_integer(),
             TokenKind::Float => self.parse_float(),
             TokenKind::String => match self.parse_string() {
@@ -158,16 +158,6 @@ impl<'a> AstParser<'a> {
                 );
                 self.error_expr_from(err, errors)
             }
-        }
-    }
-
-    fn parse_expr(&mut self) -> Result<Expr<'a>> {
-        let mut errors = Vec::new();
-        let expr = self.parse_expr_inner(&mut errors);
-        if errors.is_empty() {
-            Ok(expr)
-        } else {
-            Err(errors.remove(0))
         }
     }
 

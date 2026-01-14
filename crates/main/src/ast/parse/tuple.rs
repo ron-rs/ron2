@@ -12,52 +12,25 @@ use crate::{
 /// Internal trait for parsing tuple types.
 pub(super) trait TupleParser<'a>: ParserCore<'a> {
     fn parse_tuple_or_unit_prefix(&mut self) -> (Token<'a>, Trivia<'a>, Option<Span>, bool);
-    fn parse_tuple_or_unit(&mut self) -> Result<Expr<'a>>;
-    fn parse_tuple_or_unit_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
-    fn parse_tuple_or_unit_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
+    fn parse_tuple_or_unit(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
     fn peek_is_named_field(&mut self) -> bool;
     fn try_parse_empty_tuple_body(
         &mut self,
         open_paren: &Span,
         leading: Trivia<'a>,
     ) -> Result<TupleBody<'a>, Trivia<'a>>;
-    fn parse_tuple_inner_impl(
+    fn parse_tuple_inner(
         &mut self,
         open_paren: Token<'a>,
         leading: Trivia<'a>,
         errors: &mut Vec<Error>,
     ) -> Expr<'a>;
-    fn parse_tuple_inner(&mut self, open_paren: Token<'a>, leading: Trivia<'a>)
-    -> Result<Expr<'a>>;
-    fn parse_tuple_inner_lossy(
-        &mut self,
-        open_paren: Token<'a>,
-        leading: Trivia<'a>,
-        errors: &mut Vec<Error>,
-    ) -> Expr<'a>;
-    fn parse_tuple_elements_inner(
+    fn parse_tuple_elements(
         &mut self,
         leading: Trivia<'a>,
         errors: &mut Vec<Error>,
     ) -> Vec<TupleElement<'a>>;
-    fn parse_tuple_elements(&mut self, leading: Trivia<'a>) -> Result<Vec<TupleElement<'a>>>;
-    fn parse_tuple_elements_lossy(
-        &mut self,
-        leading: Trivia<'a>,
-        errors: &mut Vec<Error>,
-    ) -> Vec<TupleElement<'a>>;
-    fn parse_tuple_elements_from_first_inner(
-        &mut self,
-        leading: Trivia<'a>,
-        first_expr: Expr<'a>,
-        errors: &mut Vec<Error>,
-    ) -> (Vec<TupleElement<'a>>, Trivia<'a>);
     fn parse_tuple_elements_from_first(
-        &mut self,
-        leading: Trivia<'a>,
-        first_expr: Expr<'a>,
-    ) -> Result<(Vec<TupleElement<'a>>, Trivia<'a>)>;
-    fn parse_tuple_elements_from_first_lossy(
         &mut self,
         leading: Trivia<'a>,
         first_expr: Expr<'a>,
@@ -85,19 +58,8 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
         (open_paren, leading, close_if_unit, is_named_fields)
     }
 
-    /// Parse a tuple `(a, b, c)` or unit `()`.
-    fn parse_tuple_or_unit(&mut self) -> Result<Expr<'a>> {
-        let mut errors = Vec::new();
-        let expr = self.parse_tuple_or_unit_inner(&mut errors);
-        if errors.is_empty() {
-            Ok(expr)
-        } else {
-            Err(errors.remove(0))
-        }
-    }
-
-    /// Parse a tuple `(a, b, c)` or unit `()` (internal unified implementation).
-    fn parse_tuple_or_unit_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+    /// Parse a tuple `(a, b, c)` or unit `()` with error recovery.
+    fn parse_tuple_or_unit(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let (open_paren, leading, close_if_unit, is_named_fields) =
             self.parse_tuple_or_unit_prefix();
 
@@ -108,15 +70,10 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
         }
 
         if is_named_fields {
-            self.parse_fields_body_inner_impl(open_paren, leading, errors)
+            self.parse_fields_body(open_paren, leading, errors)
         } else {
-            self.parse_tuple_inner_impl(open_paren, leading, errors)
+            self.parse_tuple_inner(open_paren, leading, errors)
         }
-    }
-
-    /// Parse a tuple `(a, b, c)` or unit `()` with error recovery.
-    fn parse_tuple_or_unit_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        self.parse_tuple_or_unit_inner(errors)
     }
 
     /// Check if the next tokens look like `ident:` (a named field).
@@ -149,9 +106,8 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
         }
     }
 
-    /// Parse a tuple expression starting after the opening paren.
-    /// Parse a tuple expression (internal unified implementation).
-    fn parse_tuple_inner_impl(
+    /// Parse a tuple expression with error recovery.
+    fn parse_tuple_inner(
         &mut self,
         open_paren: Token<'a>,
         mut leading: Trivia<'a>,
@@ -215,31 +171,8 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
         })
     }
 
-    fn parse_tuple_inner(
-        &mut self,
-        open_paren: Token<'a>,
-        leading: Trivia<'a>,
-    ) -> Result<Expr<'a>> {
-        let mut errors = Vec::new();
-        let expr = self.parse_tuple_inner_impl(open_paren, leading, &mut errors);
-        if errors.is_empty() {
-            Ok(expr)
-        } else {
-            Err(errors.remove(0))
-        }
-    }
-
-    /// Parse a tuple expression with error recovery.
-    fn parse_tuple_inner_lossy(
-        &mut self,
-        open_paren: Token<'a>,
-        leading: Trivia<'a>,
-        errors: &mut Vec<Error>,
-    ) -> Expr<'a> {
-        self.parse_tuple_inner_impl(open_paren, leading, errors)
-    }
-
-    fn parse_tuple_elements_inner(
+    /// Parse tuple elements with error recovery.
+    fn parse_tuple_elements(
         &mut self,
         mut leading: Trivia<'a>,
         errors: &mut Vec<Error>,
@@ -280,26 +213,8 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
         elements
     }
 
-    fn parse_tuple_elements(&mut self, leading: Trivia<'a>) -> Result<Vec<TupleElement<'a>>> {
-        let mut errors = Vec::new();
-        let elements = self.parse_tuple_elements_inner(leading, &mut errors);
-        if errors.is_empty() {
-            Ok(elements)
-        } else {
-            Err(errors.remove(0))
-        }
-    }
-
-    /// Parse tuple elements until closing paren with error recovery.
-    fn parse_tuple_elements_lossy(
-        &mut self,
-        leading: Trivia<'a>,
-        errors: &mut Vec<Error>,
-    ) -> Vec<TupleElement<'a>> {
-        self.parse_tuple_elements_inner(leading, errors)
-    }
-
-    fn parse_tuple_elements_from_first_inner(
+    /// Parse tuple elements starting with the first expression, with error recovery.
+    fn parse_tuple_elements_from_first(
         &mut self,
         leading: Trivia<'a>,
         first_expr: Expr<'a>,
@@ -355,31 +270,6 @@ impl<'a> TupleParser<'a> for AstParser<'a> {
         }
 
         (elements, leading)
-    }
-
-    /// Parse tuple elements starting with the first expression already parsed.
-    fn parse_tuple_elements_from_first(
-        &mut self,
-        leading: Trivia<'a>,
-        first_expr: Expr<'a>,
-    ) -> Result<(Vec<TupleElement<'a>>, Trivia<'a>)> {
-        let mut errors = Vec::new();
-        let result = self.parse_tuple_elements_from_first_inner(leading, first_expr, &mut errors);
-        if errors.is_empty() {
-            Ok(result)
-        } else {
-            Err(errors.remove(0))
-        }
-    }
-
-    /// Parse tuple elements starting with the first expression, with recovery.
-    fn parse_tuple_elements_from_first_lossy(
-        &mut self,
-        leading: Trivia<'a>,
-        first_expr: Expr<'a>,
-        errors: &mut Vec<Error>,
-    ) -> (Vec<TupleElement<'a>>, Trivia<'a>) {
-        self.parse_tuple_elements_from_first_inner(leading, first_expr, errors)
     }
 }
 

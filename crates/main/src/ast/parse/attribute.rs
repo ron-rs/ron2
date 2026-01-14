@@ -11,15 +11,13 @@ use crate::{
 
 /// Internal trait for parsing attributes.
 pub(super) trait AttributeParser<'a>: ParserCore<'a> {
-    fn parse_attributes_inner(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>>;
-    fn parse_attributes(&mut self) -> Result<Vec<Attribute<'a>>>;
-    fn parse_attributes_lossy(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>>;
+    fn parse_attributes(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>>;
     fn parse_attribute(&mut self, leading: Trivia<'a>) -> Result<Attribute<'a>>;
 }
 
 impl<'a> AttributeParser<'a> for AstParser<'a> {
-    /// Parse inner attributes (`#![...]`) (internal unified implementation).
-    fn parse_attributes_inner(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>> {
+    /// Parse inner attributes (`#![...]`) with error recovery.
+    fn parse_attributes(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>> {
         let mut attributes = Vec::new();
 
         while self.peek_kind() == TokenKind::Hash {
@@ -37,21 +35,6 @@ impl<'a> AttributeParser<'a> for AstParser<'a> {
         }
 
         attributes
-    }
-
-    fn parse_attributes(&mut self) -> Result<Vec<Attribute<'a>>> {
-        let mut errors = Vec::new();
-        let attrs = self.parse_attributes_inner(&mut errors);
-        if errors.is_empty() {
-            Ok(attrs)
-        } else {
-            Err(errors.remove(0))
-        }
-    }
-
-    /// Parse inner attributes (`#![...]`) with error recovery.
-    fn parse_attributes_lossy(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>> {
-        self.parse_attributes_inner(errors)
     }
 
     /// Parse a single attribute.
