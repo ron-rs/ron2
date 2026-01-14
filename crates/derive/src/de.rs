@@ -158,12 +158,8 @@ fn derive_named_struct_de(
             known_fields.push(ron_name.clone());
         }
 
-        // Check if field has a default
-        if !matches!(
-            field_attrs.default,
-            FieldDefault::Default | FieldDefault::Path(_)
-        ) && !field_attrs.flatten
-        {
+        // Check if field has a default (includes opt which implies default)
+        if !field_attrs.has_default() && !field_attrs.flatten {
             all_fields_have_defaults = false;
         }
 
@@ -189,6 +185,7 @@ fn derive_named_struct_de(
                 continue;
             }
 
+            // Note: opt implies default (uses Default::default())
             let unit_extraction = match &field_attrs.default {
                 FieldDefault::Default => {
                     quote! {
@@ -200,7 +197,7 @@ fn derive_named_struct_de(
                         let #field_ident: #field_ty = #path();
                     }
                 }
-                FieldDefault::None if field_attrs.flatten => {
+                FieldDefault::None if field_attrs.flatten || field_attrs.opt => {
                     quote! {
                         let #field_ident: #field_ty = ::std::default::Default::default();
                     }
@@ -762,7 +759,13 @@ fn generate_field_extraction(
         })
     } else {
         // Standard mode: uses implicit Some via Option<T>::from_ast
+        // Note: opt implies default (uses Default::default() when missing)
         Ok(match &field_attrs.default {
+            FieldDefault::None if field_attrs.opt => {
+                quote! {
+                    let #field_ident: #field_ty = access.with_default(#ron_name)?;
+                }
+            }
             FieldDefault::None => {
                 quote! {
                     let #field_ident: #field_ty = access.required(#ron_name)?;

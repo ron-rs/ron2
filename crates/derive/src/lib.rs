@@ -43,6 +43,7 @@
 //! - `#[ron(flatten)]` - Flatten nested struct fields into parent
 //! - `#[ron(skip_serializing_if = "path::to::fn")]` - Skip if predicate returns true
 //! - `#[ron(explicit)]` - Require explicit `Some(...)` or `None` for Option fields
+//! - `#[ron(opt)]` - Use default if missing, skip serialization if equals default
 //!
 //! # Variant Attributes
 //!

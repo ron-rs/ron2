@@ -318,8 +318,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                     close_brace: close_paren,
                 })
             } else {
-                let first_expr =
-                    self.ident_token_to_expr(first_tok, post_ident_trivia, errors);
+                let first_expr = self.ident_token_to_expr(first_tok, post_ident_trivia, errors);
                 let (elements, trailing) =
                     self.parse_tuple_elements_from_first(leading, first_expr, errors);
 
@@ -356,7 +355,6 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
             })
         }
     }
-
 
     /// Parse the body contents of a named struct with error recovery.
     /// Convert an identifier token to an expression (internal unified implementation).
@@ -398,9 +396,9 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
 
                         match self.try_parse_empty_tuple_body(&open_paren.span, leading) {
                             Ok(tuple_body) => Some(StructBody::Tuple(tuple_body)),
-                            Err(leading) => Some(
-                                self.parse_struct_body_contents(open_paren, leading, errors),
-                            ),
+                            Err(leading) => {
+                                Some(self.parse_struct_body_contents(open_paren, leading, errors))
+                            }
                         }
                     }
                     _ => None,
@@ -565,6 +563,4 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
 
         (fields, leading)
     }
-
-
 }

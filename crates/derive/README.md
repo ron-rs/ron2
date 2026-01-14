@@ -64,6 +64,7 @@ Rename rules: `camelCase`, `snake_case`, `PascalCase`, `SCREAMING_SNAKE_CASE`, `
 | `flatten` | Flatten nested struct into parent |
 | `skip_serializing_if = "fn"` | Skip if predicate returns true |
 | `explicit` | Require explicit `Some(...)` or `None` |
+| `opt` | Default if missing, skip if equals default |
 
 ## Variant Attributes
 
@@ -160,6 +161,34 @@ struct User {
 ```ron
 (id: 42, name: "Alice")  // UserId is just a number
 ```
+
+### Optional Fields (`#[ron(opt)]`)
+
+Use `#[ron(opt)]` for fields that have sensible defaults and should be omitted from output when equal to that default. This combines `default` with skip-if-default serialization:
+
+```rust
+#[derive(Ron, Default, PartialEq)]
+struct Config {
+    name: String,
+    #[ron(opt)]
+    count: i32,      // Omitted when 0
+    #[ron(opt)]
+    enabled: bool,   // Omitted when false
+}
+```
+
+```ron
+// Input with defaults omitted:
+(name: "app")
+
+// Output when count=0, enabled=false:
+Config(name: "app")
+
+// Output when count=5, enabled=true:
+Config(name: "app", count: 5, enabled: true)
+```
+
+Requires the field type to implement `Default + PartialEq`.
 
 ## License
 

@@ -89,9 +89,19 @@ fn derive_struct_ser(
                     ::ron2::ToRon::to_ron_value(&self.#field_ident)?
                 };
 
-                if let Some(ref predicate) = field_attrs.skip_serializing_if {
+                // Determine skip condition: opt takes precedence over skip_serializing_if
+                let skip_condition = if field_attrs.opt {
+                    Some(quote! { self.#field_ident == ::std::default::Default::default() })
+                } else {
+                    field_attrs
+                        .skip_serializing_if
+                        .as_ref()
+                        .map(|predicate| quote! { #predicate(&self.#field_ident) })
+                };
+
+                if let Some(condition) = skip_condition {
                     field_serializations.push(quote! {
-                        if !#predicate(&self.#field_ident) {
+                        if !(#condition) {
                             fields.push((#field_name.to_string(), #serialize_expr));
                         }
                     });
@@ -223,17 +233,41 @@ fn derive_enum_ser(
                     let ron_name =
                         field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
-                    field_serializations.push(quote! {
-                        (#ron_name.to_string(), ::ron2::ToRon::to_ron_value(#field_ident)?)
-                    });
+                    let serialize_expr = quote! {
+                        ::ron2::ToRon::to_ron_value(#field_ident)?
+                    };
+
+                    // Determine skip condition: opt takes precedence over skip_serializing_if
+                    // Note: field_ident is bound by reference in pattern, so we dereference for comparison
+                    let skip_condition = if field_attrs.opt {
+                        Some(quote! { #field_ident == &::std::default::Default::default() })
+                    } else {
+                        field_attrs
+                            .skip_serializing_if
+                            .as_ref()
+                            .map(|predicate| quote! { #predicate(#field_ident) })
+                    };
+
+                    if let Some(condition) = skip_condition {
+                        field_serializations.push(quote! {
+                            if !(#condition) {
+                                __fields.push((#ron_name.to_string(), #serialize_expr));
+                            }
+                        });
+                    } else {
+                        field_serializations.push(quote! {
+                            __fields.push((#ron_name.to_string(), #serialize_expr));
+                        });
+                    }
                 }
 
                 quote! {
                     #name::#variant_ident { #(#field_names),* } => {
-                        let fields: ::ron2::StructFields = vec![#(#field_serializations),*];
+                        let mut __fields: ::ron2::StructFields = ::std::vec::Vec::new();
+                        #(#field_serializations)*
                         Ok(::ron2::Value::Named {
                             name: #variant_name.to_string(),
-                            content: ::ron2::NamedContent::Struct(fields),
+                            content: ::ron2::NamedContent::Struct(__fields),
                         })
                     }
                 }

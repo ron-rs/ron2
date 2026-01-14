@@ -18,15 +18,14 @@ use self::{
     attribute::AttributeParser, collection::CollectionParser, core::ParserCore,
     literal::LiteralParser, struct_field::StructFieldParser, tuple::TupleParser,
 };
+#[cfg(test)]
+use crate::ast::StructBody;
 use crate::{
     ast::{Document, Expr},
     error::{Error, ErrorKind, Result},
     lexer::Lexer,
     token::{Token, TokenKind},
 };
-
-#[cfg(test)]
-use crate::ast::StructBody;
 
 /// Maximum recursion depth for parsing nested structures.
 const MAX_RECURSION_DEPTH: usize = 128;

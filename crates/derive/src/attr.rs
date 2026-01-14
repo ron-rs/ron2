@@ -146,6 +146,7 @@ pub enum FieldDefault {
 /// - `default = "path"` - Use custom function if missing
 /// - `flatten` - Flatten nested struct fields into parent
 /// - `explicit` - Require explicit `Some(...)` or `None` for Option fields
+/// - `opt` - Shorthand for `default` + skip when value equals default
 ///
 /// # Implicit Some (Default Behavior)
 ///
@@ -177,6 +178,8 @@ pub struct FieldAttrs {
     pub flatten: bool,
     /// Require explicit `Some(...)` or `None` syntax for Option fields.
     pub explicit: bool,
+    /// Shorthand for `default` + skip when value equals default (requires Default + PartialEq).
+    pub opt: bool,
 }
 
 impl FieldAttrs {
@@ -197,6 +200,8 @@ impl FieldAttrs {
                         result.flatten = true;
                     } else if path.is_ident("explicit") {
                         result.explicit = true;
+                    } else if path.is_ident("opt") {
+                        result.opt = true;
                     }
                 }
                 Meta::NameValue(nv) => {
@@ -233,7 +238,7 @@ impl FieldAttrs {
 
     /// Check if this field has any form of default.
     pub fn has_default(&self) -> bool {
-        !matches!(self.default, FieldDefault::None)
+        self.opt || !matches!(self.default, FieldDefault::None)
     }
 }
 
