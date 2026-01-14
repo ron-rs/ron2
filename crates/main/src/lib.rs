@@ -20,9 +20,9 @@
 //! # Value Example (semantic only)
 //!
 //! ```
-//! use ron2::{Options, Value, ToRon, FormatConfig};
+//! use ron2::{Value, ToRon, FormatConfig};
 //!
-//! let value: Value = Options::default().from_str("Point(x: 1, y: 2)").unwrap();
+//! let value: Value = "Point(x: 1, y: 2)".parse().unwrap();
 //! // Pretty output (default)
 //! let pretty = value.to_ron().unwrap();
 //! // Compact output (no whitespace)
@@ -56,9 +56,7 @@ pub mod ast;
 pub mod chars;
 pub mod convert;
 pub mod error;
-pub mod extensions;
 pub mod lexer;
-pub mod options;
 pub mod schema;
 pub mod token;
 mod util;
@@ -69,7 +67,5 @@ pub use crate::{
     ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing},
     convert::{AstMapAccess, FromRon, FromRonFields, ParsedInt, Spanned, ToRon, parse_int_raw},
     error::{Error, ErrorKind, PathSegment, Position, Result, Span},
-    extensions::Extensions,
-    options::Options,
     value::{Map, NamedContent, Number, StructFields, Value},
 };

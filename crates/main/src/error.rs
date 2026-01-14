@@ -820,9 +820,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::NoSuchExtension(name) => {
                 write!(f, "No RON extension named {}", Identifier(name))
             }
-            ErrorKind::ExceededRecursionLimit => f.write_str(
-                "Exceeded recursion limit, try increasing `ron::Options::recursion_limit`",
-            ),
+            ErrorKind::ExceededRecursionLimit => f.write_str("Exceeded recursion limit"),
             ErrorKind::TooManyFields { count, limit } => {
                 write!(f, "Struct has {count} fields but maximum is {limit}")
             }

@@ -28,6 +28,9 @@ use crate::{
 #[cfg(test)]
 use crate::ast::StructBody;
 
+/// Maximum recursion depth for parsing nested structures.
+const MAX_RECURSION_DEPTH: usize = 128;
+
 /// Parse RON source into an AST document.
 ///
 /// This is the main entry point for AST parsing. It returns a fully-formed
@@ -60,6 +63,8 @@ struct AstParser<'a> {
     pub(super) trivia_buffer: Vec<Token<'a>>,
     /// Lookahead buffer for tokens that were peeked but need to be returned.
     pub(super) lookahead: Vec<Token<'a>>,
+    /// Current recursion depth for nested structures.
+    depth: usize,
 }
 
 impl<'a> AstParser<'a> {
@@ -69,6 +74,7 @@ impl<'a> AstParser<'a> {
             tokens: lexer.peekable(),
             trivia_buffer: Vec::new(),
             lookahead: Vec::new(),
+            depth: 0,
         }
     }
 
@@ -122,7 +128,17 @@ impl<'a> AstParser<'a> {
     /// Parse an expression.
     /// Parse an expression (internal unified implementation).
     fn parse_expr_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        match self.peek_kind() {
+        self.depth += 1;
+
+        // Check recursion limit
+        if self.depth > MAX_RECURSION_DEPTH {
+            let span = self.peek_span();
+            let err = Self::error(span, ErrorKind::ExceededRecursionLimit);
+            self.depth -= 1;
+            return self.error_expr_from(err, errors);
+        }
+
+        let result = match self.peek_kind() {
             TokenKind::LParen => self.parse_tuple_or_unit(errors),
             TokenKind::LBracket => self.parse_seq(errors),
             TokenKind::LBrace => self.parse_map(errors),
@@ -158,7 +174,10 @@ impl<'a> AstParser<'a> {
                 );
                 self.error_expr_from(err, errors)
             }
-        }
+        };
+
+        self.depth -= 1;
+        result
     }
 
     /// Parse an expression with error recovery.
@@ -601,5 +620,34 @@ mod tests {
         assert_eq!(errors.len(), 1); // missing closing paren
         assert_eq!(doc.attributes.len(), 1);
         assert_eq!(doc.attributes[0].name, "type");
+    }
+
+    #[test]
+    fn test_recursion_limit() {
+        // Create deeply nested structure that exceeds the recursion limit
+        let deep = "[".repeat(200) + &"]".repeat(200);
+        let result = parse_document(&deep);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            ErrorKind::ExceededRecursionLimit
+        ));
+    }
+
+    #[test]
+    fn test_recursion_limit_exact() {
+        // 128 levels should work (at the limit)
+        let at_limit = "[".repeat(128) + &"]".repeat(128);
+        let result = parse_document(&at_limit);
+        assert!(result.is_ok());
+
+        // 129 levels should fail (exceeds limit)
+        let over_limit = "[".repeat(129) + &"]".repeat(129);
+        let result = parse_document(&over_limit);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            ErrorKind::ExceededRecursionLimit
+        ));
     }
 }
