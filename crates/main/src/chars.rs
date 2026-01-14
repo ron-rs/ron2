@@ -61,25 +61,3 @@ pub const fn is_whitespace_char(c: char) -> bool {
             | '\u{2029}'
     )
 }
-
-/// Returns `true` if the character is valid in an integer literal.
-///
-/// Valid characters are hexadecimal digits (0-9, a-f, A-F) and underscores
-/// (used as visual separators).
-#[must_use]
-pub const fn is_int_char(c: char) -> bool {
-    c.is_ascii_hexdigit() || c == '_'
-}
-
-/// Returns `true` if the character is valid in a floating-point literal.
-///
-/// Valid characters are:
-/// - Decimal digits (0-9)
-/// - Exponent markers (`e`, `E`)
-/// - Decimal point (`.`)
-/// - Sign characters (`+`, `-`)
-/// - Underscore (`_`, used as visual separator)
-#[must_use]
-pub const fn is_float_char(c: char) -> bool {
-    c.is_ascii_digit() || matches!(c, 'e' | 'E' | '.' | '+' | '-' | '_')
-}

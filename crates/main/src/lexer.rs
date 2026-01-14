@@ -59,12 +59,6 @@ impl<'a> Lexer<'a> {
         self
     }
 
-    /// Returns whether trivia emission is enabled.
-    #[must_use]
-    pub fn emits_trivia(&self) -> bool {
-        self.emit_trivia
-    }
-
     /// Returns the current position in the source.
     #[must_use]
     pub fn current_position(&self) -> Position {
@@ -72,12 +66,6 @@ impl<'a> Lexer<'a> {
             line: self.line,
             col: self.col,
         }
-    }
-
-    /// Returns the current byte offset in the source.
-    #[must_use]
-    pub fn offset(&self) -> usize {
-        self.cursor
     }
 
     /// Returns the remaining source text starting from the current cursor position.
