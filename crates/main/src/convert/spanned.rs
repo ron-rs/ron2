@@ -362,7 +362,7 @@ impl<T: FromRon> FromRon for Spanned<T> {
     fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         Ok(Spanned {
             value: T::from_ast(expr)?,
-            span: expr.span().clone(),
+            span: *expr.span(),
         })
     }
 }

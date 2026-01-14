@@ -95,7 +95,7 @@ impl<'a> LiteralParser<'a> for AstParser<'a> {
         debug_assert_eq!(tok.kind, TokenKind::ByteString);
 
         let (value, kind) = unescape::decode_byte_string(tok.text)
-            .map_err(|e| Self::error(tok.span.clone(), e.kind().clone()))?;
+            .map_err(|e| Self::error(tok.span, e.kind().clone()))?;
 
         Ok(Expr::Bytes(BytesExpr {
             span: tok.span,
@@ -114,7 +114,7 @@ impl<'a> LiteralParser<'a> for AstParser<'a> {
         if tok.text.starts_with("b'") {
             let content = &tok.text[2..tok.text.len() - 1];
             let value = unescape::unescape_byte_char(content)
-                .map_err(|e| Self::error(tok.span.clone(), e.kind().clone()))?;
+                .map_err(|e| Self::error(tok.span, e.kind().clone()))?;
             return Ok(Expr::Byte(ByteExpr {
                 span: tok.span,
                 raw: Cow::Borrowed(tok.text),
@@ -125,7 +125,7 @@ impl<'a> LiteralParser<'a> for AstParser<'a> {
         // Regular char literal 'x'
         let content = &tok.text[1..tok.text.len() - 1];
         let value = unescape::unescape_char(content)
-            .map_err(|e| Self::error(tok.span.clone(), e.kind().clone()))?;
+            .map_err(|e| Self::error(tok.span, e.kind().clone()))?;
 
         Ok(Expr::Char(CharExpr {
             span: tok.span,

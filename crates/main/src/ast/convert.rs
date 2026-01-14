@@ -81,7 +81,7 @@ pub fn expr_to_value(expr: &Expr<'_>) -> Result<Value> {
         Expr::Tuple(tuple) => tuple_to_value(tuple),
         Expr::AnonStruct(s) => anon_struct_to_value(s),
         Expr::Struct(s) => struct_to_value(s),
-        Expr::Error(err) => Err(Error::with_span(err.error.kind().clone(), err.span.clone())),
+        Expr::Error(err) => Err(Error::with_span(err.error.kind().clone(), err.span)),
     }
 }
 

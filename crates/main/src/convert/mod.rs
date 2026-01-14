@@ -225,14 +225,14 @@ pub(crate) fn spanned_type_mismatch(expected: &str, expr: &Expr<'_>) -> Error {
             expected: expected.into(),
             found: expr_type_name(expr).into(),
         },
-        expr.span().clone(),
+        *expr.span(),
     )
 }
 
 /// Create a spanned error with the given code and expression's span.
 pub(crate) fn spanned_err(err: Error, expr: &Expr<'_>) -> Error {
     if err.span().is_synthetic() {
-        Error::with_span(err.kind().clone(), expr.span().clone())
+        Error::with_span(err.kind().clone(), *expr.span())
     } else {
         err
     }

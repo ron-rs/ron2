@@ -82,7 +82,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     /// Peek at the span of the next non-trivia token without consuming.
     fn peek_span(&mut self) -> Span {
         if let Some(tok) = self.lookahead.last() {
-            return tok.span.clone();
+            return tok.span;
         }
 
         while let Some(tok) = self.tokens.peek() {
@@ -91,7 +91,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
                     self.trivia_buffer.push(tok);
                 }
             } else {
-                return tok.span.clone();
+                return tok.span;
             }
         }
 
@@ -180,8 +180,8 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
         }
 
         let tokens = ::core::mem::take(&mut self.trivia_buffer);
-        let start = tokens.first().map(|t| t.span.clone());
-        let end = tokens.last().map(|t| t.span.clone());
+        let start = tokens.first().map(|t| t.span);
+        let end = tokens.last().map(|t| t.span);
 
         let span = match (start, end) {
             (Some(s), Some(e)) => Some(Span {
@@ -249,7 +249,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
 
     /// Create an error expression and recover.
     fn error_expr_from(&mut self, err: Error, errors: &mut Vec<Error>) -> Expr<'a> {
-        let span = err.span().clone();
+        let span = *err.span();
         let error = err.clone();
         errors.push(err);
         self.recover_until(&[
@@ -280,9 +280,9 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
         debug_assert_eq!(tok.kind, TokenKind::Error);
 
         if tok.text.starts_with("/*") {
-            Self::error(tok.span.clone(), ErrorKind::UnclosedBlockComment)
+            Self::error(tok.span, ErrorKind::UnclosedBlockComment)
         } else if tok.text.starts_with('"') || tok.text.starts_with("r#") {
-            Self::error(tok.span.clone(), ErrorKind::ExpectedStringEnd)
+            Self::error(tok.span, ErrorKind::ExpectedStringEnd)
         } else if tok.text.starts_with("0x")
             || tok.text.starts_with("0X")
             || tok.text.starts_with("0b")
@@ -305,7 +305,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
             Self::error(error_span, ErrorKind::UnexpectedChar(invalid_char))
         } else {
             Self::error(
-                tok.span.clone(),
+                tok.span,
                 ErrorKind::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
             )
         }

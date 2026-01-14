@@ -112,8 +112,8 @@ impl<'a> CollectionParser<'a> for AstParser<'a> {
                 self.recover_until(&[TokenKind::Comma, TokenKind::RBrace]);
                 let trailing = self.collect_leading_trivia();
                 let (comma, _) = self.consume_comma();
-                let colon_span = pre_colon.span.clone().unwrap_or_else(|| self.eof_span());
-                let key_span = key.span().clone();
+                let colon_span = pre_colon.span.unwrap_or_else(|| self.eof_span());
+                let key_span = key.span();
                 let error_span = Self::span_at_end(&key_span);
                 entries.push(MapEntry {
                     leading,

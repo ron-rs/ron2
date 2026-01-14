@@ -40,7 +40,7 @@ pub const MAX_FIELDS: usize = 64;
 ///                 access.deny_unknown_fields(&["x", "y"])?;
 ///                 Ok(Point { x, y })
 ///             }
-///             _ => Err(ron2::Error::expected("struct", expr.span().clone()))
+///             _ => Err(ron2::Error::expected("struct", expr.span()))
 ///         }
 ///     }
 /// }
@@ -72,7 +72,7 @@ impl<'a> AstMapAccess<'a> {
                     count: s.fields.len(),
                     limit: MAX_FIELDS,
                 },
-                s.span.clone(),
+                s.span,
             ));
         }
 
@@ -86,7 +86,7 @@ impl<'a> AstMapAccess<'a> {
                             field: Cow::Owned(name.to_string()),
                             outer: struct_name.map(|s| Cow::Owned(s.to_string())),
                         },
-                        field.name.span.clone(),
+                        field.name.span,
                     ));
                 }
             }
@@ -95,7 +95,7 @@ impl<'a> AstMapAccess<'a> {
         Ok(Self {
             fields: &s.fields,
             consumed: 0,
-            struct_span: s.span.clone(),
+            struct_span: s.span,
             struct_name,
         })
     }
@@ -132,7 +132,7 @@ impl<'a> AstMapAccess<'a> {
                             field: Cow::Owned(name.to_string()),
                             outer: struct_name.map(|s| Cow::Owned(s.to_string())),
                         },
-                        field.name.span.clone(),
+                        field.name.span,
                     ));
                 }
             }
@@ -227,7 +227,7 @@ impl<'a> AstMapAccess<'a> {
                         expected,
                         outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
                     },
-                    field.name.span.clone(),
+                    field.name.span,
                 ));
             }
         }
@@ -263,7 +263,7 @@ impl<'a> AstMapAccess<'a> {
                             expected: "Some(...) or None".to_string(),
                             found: expr_type_name(other).to_string(),
                         },
-                        other.span().clone(),
+                        *other.span(),
                     )),
                 }
             }
@@ -297,7 +297,7 @@ impl<'a> AstMapAccess<'a> {
                             expected: "Some(...) or None".to_string(),
                             found: expr_type_name(other).to_string(),
                         },
-                        other.span().clone(),
+                        *other.span(),
                     )),
                 }
             }
@@ -362,7 +362,7 @@ impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRonFields
             access.consumed |= 1 << i;
 
             let key_expr = Expr::String(StringExpr {
-                span: field.name.span.clone(),
+                span: field.name.span,
                 raw: Cow::Owned(format!("\"{}\"", field.name.name)),
                 value: field.name.name.to_string(),
                 kind: StringKind::Regular,

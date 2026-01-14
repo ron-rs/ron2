@@ -104,7 +104,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                 self.next_token().span
             } else {
                 errors.push(Self::error(
-                    name_tok.span.clone(),
+                    name_tok.span,
                     Self::expected("`:` after map key", Some("struct field")),
                 ));
                 Self::span_at_end(&name_tok.span)
@@ -130,7 +130,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
             fields.push(StructField {
                 leading,
                 name: Ident {
-                    span: name_tok.span.clone(),
+                    span: name_tok.span,
                     name: Cow::Borrowed(name_tok.text),
                 },
                 pre_colon,
@@ -245,7 +245,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
         errors: &mut Vec<Error>,
     ) -> Expr<'a> {
         let name = Ident {
-            span: name_tok.span.clone(),
+            span: name_tok.span,
             name: Cow::Borrowed(name_tok.text),
         };
 
@@ -273,7 +273,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
             };
             Span::between(&name_tok.span, end_span)
         } else {
-            name_tok.span.clone()
+            name_tok.span
         };
 
         Expr::Struct(StructExpr {
@@ -385,7 +385,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
             }),
             _ => {
                 let name = Ident {
-                    span: tok.span.clone(),
+                    span: tok.span,
                     name: Cow::Borrowed(tok.text),
                 };
 
@@ -411,7 +411,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                     };
                     Span::between(&tok.span, end_span)
                 } else {
-                    tok.span.clone()
+                    tok.span
                 };
 
                 Expr::Struct(StructExpr {
@@ -448,7 +448,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
         fields.push(StructField {
             leading,
             name: Ident {
-                span: first_name.span.clone(),
+                span: first_name.span,
                 name: Cow::Borrowed(first_name.text),
             },
             pre_colon,
@@ -510,7 +510,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
                 self.next_token().span
             } else {
                 errors.push(Self::error(
-                    name_tok.span.clone(),
+                    name_tok.span,
                     Self::expected("`:` after map key", Some("struct field")),
                 ));
                 Self::span_at_end(&name_tok.span)
@@ -536,7 +536,7 @@ impl<'a> StructFieldParser<'a> for AstParser<'a> {
             fields.push(StructField {
                 leading,
                 name: Ident {
-                    span: name_tok.span.clone(),
+                    span: name_tok.span,
                     name: Cow::Borrowed(name_tok.text),
                 },
                 pre_colon,
