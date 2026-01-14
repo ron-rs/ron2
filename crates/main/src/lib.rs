@@ -53,12 +53,12 @@ extern crate alloc;
 extern crate self as ron2;
 
 pub mod ast;
-pub mod chars;
+pub(crate) mod chars;
 pub mod convert;
 pub mod error;
-pub mod lexer;
+pub(crate) mod lexer;
 pub mod schema;
-pub mod token;
+pub(crate) mod token;
 mod util;
 pub mod value;
 

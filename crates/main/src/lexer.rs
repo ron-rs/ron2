@@ -6,7 +6,7 @@
 //! - **Emit trivia mode**: All tokens including whitespace are emitted, suitable for AST parsing
 
 use crate::{
-    chars::{is_ident_first_char, is_ident_raw_char, is_whitespace_char},
+    chars::{is_ident_continue_char, is_ident_first_char, is_ident_raw_char, is_whitespace_char},
     error::{Position, Span},
     token::{Token, TokenKind},
 };
@@ -17,17 +17,6 @@ extern crate alloc;
 ///
 /// The lexer implements `Iterator` and produces `Token` items for each
 /// recognized construct in the source.
-///
-/// # Example
-///
-/// ```
-/// use ron2::lexer::Lexer;
-/// use ron2::token::TokenKind;
-///
-/// let mut lexer = Lexer::new("42");
-/// let token = lexer.next().unwrap();
-/// assert_eq!(token.kind, TokenKind::Integer);
-/// ```
 pub struct Lexer<'a> {
     /// The source text being tokenized
     source: &'a str,
@@ -855,14 +844,6 @@ impl<'a> Iterator for Lexer<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         self.next_token()
     }
-}
-
-// Character classification functions using unicode_ident
-
-/// Check if a character can continue an identifier.
-#[must_use]
-pub fn is_ident_continue_char(c: char) -> bool {
-    unicode_ident::is_xid_continue(c)
 }
 
 /// Check if a character is a valid digit for the given base.
