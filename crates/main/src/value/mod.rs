@@ -16,7 +16,7 @@ pub use number::{F32, F64, Number};
 
 use crate::{
     Error, ErrorKind,
-    ast::{into_value, parse_document},
+    ast::{ItemTrivia, RonFormatter, SerializeRon, into_value, parse_document},
 };
 
 /// Ordered list of struct fields (name-value pairs).
@@ -91,13 +91,10 @@ impl FromStr for Value {
 
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use crate::ast::{FormatConfig, format_expr, value_to_expr};
+        use crate::ast::to_ron_string;
 
-        // Convert Value to AST expression (with synthetic spans)
-        let expr = value_to_expr(self.clone());
-
-        // Format using default config
-        let formatted = format_expr(&expr, &FormatConfig::default());
+        // Serialize directly using SerializeRon
+        let formatted = to_ron_string(self);
 
         f.write_str(&formatted)
     }
@@ -197,6 +194,137 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
 impl From<()> for Value {
     fn from(_value: ()) -> Self {
         Value::Unit
+    }
+}
+
+// ============================================================================
+// SerializeRon implementation for Value
+// ============================================================================
+
+impl SerializeRon for Value {
+    fn serialize(&self, fmt: &mut RonFormatter<'_>) {
+        match self {
+            // Primitives
+            Value::Unit => fmt.write_str("()"),
+            Value::Bool(b) => fmt.write_str(if *b { "true" } else { "false" }),
+            Value::Char(c) => fmt.format_char_value(*c),
+            Value::String(s) => fmt.format_string_value(s),
+            Value::Bytes(b) => fmt.format_bytes_value(b),
+            Value::Number(n) => format_number_to(n, fmt),
+
+            // Option
+            Value::Option(opt) => {
+                let value = opt
+                    .as_ref()
+                    .map(|inner| (inner.as_ref(), ItemTrivia::empty()));
+                fmt.format_option_with(value);
+            }
+
+            // Seq
+            Value::Seq(items) => {
+                let items = items.iter().map(|v| (ItemTrivia::empty(), v));
+                fmt.format_seq_with(None, None, items);
+            }
+
+            // Tuple
+            Value::Tuple(elements) => {
+                let items = elements.iter().map(|v| (ItemTrivia::empty(), v));
+                fmt.format_tuple_with(None, None, items);
+            }
+
+            // Map
+            Value::Map(map) => {
+                // Collect to Vec for Clone requirement
+                let entries: Vec<_> = map
+                    .iter()
+                    .map(|(k, v)| (ItemTrivia::empty(), k, v))
+                    .collect();
+                fmt.format_map_with(None, None, entries);
+            }
+
+            // Anonymous struct
+            Value::Struct(fields) => {
+                let field_items = fields
+                    .iter()
+                    .map(|(name, value)| (ItemTrivia::empty(), name.as_str(), value));
+                fmt.format_anon_struct_with(None, None, field_items);
+            }
+
+            // Named type
+            Value::Named { name, content } => {
+                fmt.write_str(name);
+                match content {
+                    NamedContent::Unit => {
+                        // Just the name, no body
+                    }
+                    NamedContent::Tuple(elements) => {
+                        let items = elements.iter().map(|v| (ItemTrivia::empty(), v));
+                        fmt.format_tuple_with(None, None, items);
+                    }
+                    NamedContent::Struct(fields) => {
+                        let field_items = fields
+                            .iter()
+                            .map(|(n, v)| (ItemTrivia::empty(), n.as_str(), v));
+                        fmt.format_struct_fields_with(None, None, field_items);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Format a number directly to the formatter.
+fn format_number_to(n: &Number, fmt: &mut RonFormatter<'_>) {
+    use alloc::string::ToString;
+
+    match n {
+        Number::I8(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::I16(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::I32(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::I64(v) => fmt.write_fmt(format_args!("{v}")),
+        #[cfg(feature = "integer128")]
+        Number::I128(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::U8(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::U16(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::U32(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::U64(v) => fmt.write_fmt(format_args!("{v}")),
+        #[cfg(feature = "integer128")]
+        Number::U128(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::F32(f) => {
+            let v = f.get();
+            if v.is_nan() {
+                fmt.write_str("NaN");
+            } else if v.is_infinite() {
+                fmt.write_str(if v.is_sign_positive() { "inf" } else { "-inf" });
+            } else {
+                // Format to string first to check for decimal point
+                let s = v.to_string();
+                if s.contains('.') || s.contains('e') || s.contains('E') {
+                    fmt.write_str(&s);
+                } else {
+                    fmt.write_str(&s);
+                    fmt.write_str(".0");
+                }
+            }
+        }
+        Number::F64(f) => {
+            let v = f.get();
+            if v.is_nan() {
+                fmt.write_str("NaN");
+            } else if v.is_infinite() {
+                fmt.write_str(if v.is_sign_positive() { "inf" } else { "-inf" });
+            } else {
+                let s = v.to_string();
+                if s.contains('.') || s.contains('e') || s.contains('E') {
+                    fmt.write_str(&s);
+                } else {
+                    fmt.write_str(&s);
+                    fmt.write_str(".0");
+                }
+            }
+        }
+        // Handle non-exhaustive variant (future-proofing)
+        _ => fmt.write_str("0"),
     }
 }
 

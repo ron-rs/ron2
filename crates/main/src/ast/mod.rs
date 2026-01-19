@@ -49,7 +49,8 @@ pub use convert::{
     synthetic_unit, to_value, value_to_expr,
 };
 pub use fmt::{
-    CommentMode, CompactTypes, Compaction, FormatConfig, Spacing, format_document, format_expr,
+    CommentMode, CompactTypes, Compaction, FormatConfig, ItemTrivia, RonFormatter, SerializeRon,
+    Spacing, format_document, format_expr, to_ron_string, to_ron_string_with,
 };
 pub use parse::{parse_document, parse_document_lossy};
 pub use ser::{serialize_document, serialize_document_to};

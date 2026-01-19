@@ -11,9 +11,7 @@
 use alloc::string::String;
 
 use crate::ast::{
-    AnonStructExpr, Attribute, AttributeContent, Comment, CommentKind, Document, Expr, FieldsBody,
-    MapEntry, MapExpr, OptionExpr, SeqExpr, StructBody, StructExpr, StructField, Trivia, TupleBody,
-    TupleElement, TupleExpr,
+    Attribute, AttributeContent, Comment, CommentKind, Document, Expr, StructBody, Trivia,
 };
 
 /// Controls how RON output is formatted.
@@ -210,6 +208,212 @@ impl FormatConfig {
     }
 }
 
+// ============================================================================
+// ItemTrivia - Unified trivia abstraction for collection items
+// ============================================================================
+
+/// Unified trivia abstraction for collection items.
+///
+/// Different collection types have trivia in different positions:
+/// - `SeqItem`: `leading`, `trailing`
+/// - `MapEntry`: `leading`, `pre_colon`, `post_colon`, `trailing`
+/// - `StructField`: `leading`, `pre_colon`, `post_colon`, `trailing`
+///
+/// `ItemTrivia` captures all possible positions with `Option` for each.
+#[derive(Default, Clone, Copy)]
+pub struct ItemTrivia<'a> {
+    /// Trivia before the item (e.g., leading comments).
+    pub leading: Option<&'a Trivia<'a>>,
+    /// Trivia between key and colon (for key-value items).
+    pub pre_colon: Option<&'a Trivia<'a>>,
+    /// Trivia between colon and value (for key-value items).
+    pub post_colon: Option<&'a Trivia<'a>>,
+    /// Trivia after the item (e.g., trailing comments).
+    pub trailing: Option<&'a Trivia<'a>>,
+}
+
+impl<'a> ItemTrivia<'a> {
+    /// Create empty trivia (for Value serialization where there is no trivia).
+    #[inline]
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            leading: None,
+            pre_colon: None,
+            post_colon: None,
+            trailing: None,
+        }
+    }
+
+    /// Create trivia for sequence-like items (leading and trailing only).
+    #[inline]
+    #[must_use]
+    pub const fn seq(leading: &'a Trivia<'a>, trailing: &'a Trivia<'a>) -> Self {
+        Self {
+            leading: Some(leading),
+            pre_colon: None,
+            post_colon: None,
+            trailing: Some(trailing),
+        }
+    }
+
+    /// Create trivia for key-value items (all positions).
+    #[inline]
+    #[must_use]
+    pub const fn kv(
+        leading: &'a Trivia<'a>,
+        pre_colon: &'a Trivia<'a>,
+        post_colon: &'a Trivia<'a>,
+        trailing: &'a Trivia<'a>,
+    ) -> Self {
+        Self {
+            leading: Some(leading),
+            pre_colon: Some(pre_colon),
+            post_colon: Some(post_colon),
+            trailing: Some(trailing),
+        }
+    }
+
+    /// Check if any trivia position contains a line comment.
+    #[inline]
+    #[must_use]
+    pub fn has_line_comment(&self) -> bool {
+        [self.leading, self.pre_colon, self.post_colon, self.trailing]
+            .into_iter()
+            .flatten()
+            .any(has_line_comment)
+    }
+}
+
+// ============================================================================
+// SerializeRon trait
+// ============================================================================
+
+/// Trait for types that can be serialized to RON format.
+///
+/// This trait provides a unified interface for serializing both:
+/// - `Expr<'a>` (AST with trivia/comments preserved)
+/// - `Value` (semantic values without trivia)
+pub trait SerializeRon {
+    /// Serialize this value to the formatter.
+    fn serialize(&self, fmt: &mut RonFormatter<'_>);
+}
+
+impl SerializeRon for Expr<'_> {
+    fn serialize(&self, fmt: &mut RonFormatter<'_>) {
+        match self {
+            // Primitives - use raw representation to preserve formatting
+            Expr::Unit(_) => fmt.write_str("()"),
+            Expr::Bool(b) => fmt.write_str(if b.value { "true" } else { "false" }),
+            Expr::Char(c) => fmt.write_str(&c.raw),
+            Expr::Byte(b) => fmt.write_str(&b.raw),
+            Expr::Number(n) => fmt.write_str(&n.raw),
+            Expr::String(s) => fmt.write_str(&s.raw),
+            Expr::Bytes(b) => fmt.write_str(&b.raw),
+
+            // Option
+            Expr::Option(opt) => {
+                let value = opt
+                    .value
+                    .as_ref()
+                    .map(|v| (&v.expr, ItemTrivia::seq(&v.leading, &v.trailing)));
+                fmt.format_option_with(value);
+            }
+
+            // Sequence
+            Expr::Seq(seq) => {
+                let items = seq
+                    .items
+                    .iter()
+                    .map(|item| (ItemTrivia::seq(&item.leading, &item.trailing), &item.expr));
+                fmt.format_seq_with(Some(&seq.leading), Some(&seq.trailing), items);
+            }
+
+            // Map
+            Expr::Map(map) => {
+                let entries = map.entries.iter().map(|e| {
+                    (
+                        ItemTrivia::kv(&e.leading, &e.pre_colon, &e.post_colon, &e.trailing),
+                        &e.key,
+                        &e.value,
+                    )
+                });
+                fmt.format_map_with(Some(&map.leading), Some(&map.trailing), entries);
+            }
+
+            // Tuple
+            Expr::Tuple(tuple) => {
+                let elems = tuple
+                    .elements
+                    .iter()
+                    .map(|e| (ItemTrivia::seq(&e.leading, &e.trailing), &e.expr));
+                fmt.format_tuple_with(Some(&tuple.leading), Some(&tuple.trailing), elems);
+            }
+
+            // Anonymous struct
+            Expr::AnonStruct(s) => {
+                let fields = s.fields.iter().map(|f| {
+                    (
+                        ItemTrivia::kv(&f.leading, &f.pre_colon, &f.post_colon, &f.trailing),
+                        f.name.name.as_ref(),
+                        &f.value,
+                    )
+                });
+                fmt.format_anon_struct_with(Some(&s.leading), Some(&s.trailing), fields);
+            }
+
+            // Named struct
+            Expr::Struct(s) => {
+                fmt.write_str(&s.name.name);
+                // Handle pre_body trivia (between name and body)
+                // In the existing code, pre_body is currently not formatted in format_struct
+                // Let's add it for consistency
+                if let Some(ref body) = s.body {
+                    match body {
+                        StructBody::Tuple(tuple) => {
+                            let elems = tuple
+                                .elements
+                                .iter()
+                                .map(|e| (ItemTrivia::seq(&e.leading, &e.trailing), &e.expr));
+                            fmt.format_tuple_with(
+                                Some(&tuple.leading),
+                                Some(&tuple.trailing),
+                                elems,
+                            );
+                        }
+                        StructBody::Fields(fields) => {
+                            let field_items = fields.fields.iter().map(|f| {
+                                (
+                                    ItemTrivia::kv(
+                                        &f.leading,
+                                        &f.pre_colon,
+                                        &f.post_colon,
+                                        &f.trailing,
+                                    ),
+                                    f.name.name.as_ref(),
+                                    &f.value,
+                                )
+                            });
+                            fmt.format_struct_fields_with(
+                                Some(&fields.leading),
+                                Some(&fields.trailing),
+                                field_items,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Error placeholder
+            Expr::Error(_) => fmt.write_str("/* parse error */"),
+        }
+    }
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
 /// Format a RON document with the given configuration.
 ///
 /// This preserves comments while applying consistent formatting.
@@ -231,7 +435,7 @@ impl FormatConfig {
 /// ```
 #[must_use]
 pub fn format_document(doc: &Document<'_>, config: &FormatConfig) -> String {
-    let mut formatter = Formatter::new(config);
+    let mut formatter = RonFormatter::new(config);
     formatter.format_document(doc);
     formatter.output
 }
@@ -255,11 +459,52 @@ pub fn format_document(doc: &Document<'_>, config: &FormatConfig) -> String {
 /// ```
 #[must_use]
 pub fn format_expr(expr: &Expr<'_>, config: &FormatConfig) -> String {
-    let mut formatter = Formatter::new(config);
+    let mut formatter = RonFormatter::new(config);
     // For standalone expression formatting, don't force root to be multiline
     // Set is_root based on whether we have a non-empty indent (pretty mode behavior)
     formatter.is_root = !config.indent.is_empty();
-    formatter.format_expr(expr);
+    expr.serialize(&mut formatter);
+    formatter.output
+}
+
+/// Serialize any `SerializeRon` type to a RON string with default configuration.
+///
+/// This is a convenience function for quick serialization. For custom formatting
+/// options, use [`to_ron_string_with`].
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::to_ron_string;
+/// use ron2::Value;
+///
+/// let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
+/// let ron = to_ron_string(&value);
+/// // Output will be formatted with default settings
+/// ```
+#[must_use]
+pub fn to_ron_string<T: SerializeRon>(value: &T) -> String {
+    to_ron_string_with(value, &FormatConfig::default())
+}
+
+/// Serialize any `SerializeRon` type to a RON string with custom configuration.
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::{to_ron_string_with, FormatConfig};
+/// use ron2::Value;
+///
+/// let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
+/// let ron = to_ron_string_with(&value, &FormatConfig::minimal());
+/// assert_eq!(ron, "[1,2]");
+/// ```
+#[must_use]
+pub fn to_ron_string_with<T: SerializeRon>(value: &T, config: &FormatConfig) -> String {
+    let mut formatter = RonFormatter::new(config);
+    // For value serialization, set is_root based on pretty mode
+    formatter.is_root = !config.indent.is_empty();
+    value.serialize(&mut formatter);
     formatter.output
 }
 
@@ -273,7 +518,7 @@ enum CollectionType {
 }
 
 /// Internal formatter state.
-struct Formatter<'a> {
+pub struct RonFormatter<'a> {
     config: &'a FormatConfig,
     output: String,
     indent_level: usize,
@@ -285,7 +530,7 @@ struct Formatter<'a> {
     is_compact: bool,
 }
 
-impl<'a> Formatter<'a> {
+impl<'a> RonFormatter<'a> {
     fn new(config: &'a FormatConfig) -> Self {
         Self {
             config,
@@ -351,7 +596,7 @@ impl<'a> Formatter<'a> {
 
         // Format the main value
         if let Some(ref value) = doc.value {
-            self.format_expr(value);
+            value.serialize(self);
         }
 
         // Format trailing comments (at end of document) - Pretty mode only
@@ -391,222 +636,211 @@ impl<'a> Formatter<'a> {
         self.output.push_str("]\n");
     }
 
-    fn format_expr(&mut self, expr: &Expr<'_>) {
-        match expr {
-            Expr::Unit(_) => self.output.push_str("()"),
-            Expr::Bool(b) => {
-                if b.value {
-                    self.output.push_str("true");
-                } else {
-                    self.output.push_str("false");
-                }
-            }
-            Expr::Char(c) => {
-                // Use the raw representation to preserve escaping
-                self.output.push_str(&c.raw);
-            }
-            Expr::Byte(b) => {
-                self.output.push_str(&b.raw);
-            }
-            Expr::Number(n) => {
-                // Use raw to preserve hex, binary, underscores
-                self.output.push_str(&n.raw);
-            }
-            Expr::String(s) => {
-                // Use raw to preserve raw strings, escapes
-                self.output.push_str(&s.raw);
-            }
-            Expr::Bytes(b) => {
-                self.output.push_str(&b.raw);
-            }
-            Expr::Option(opt) => self.format_option(opt),
-            Expr::Seq(seq) => self.format_seq(seq),
-            Expr::Map(map) => self.format_map(map),
-            Expr::Tuple(tuple) => self.format_tuple(tuple),
-            Expr::AnonStruct(s) => self.format_anon_struct(s),
-            Expr::Struct(s) => self.format_struct(s),
-            Expr::Error(_) => {
-                self.output.push_str("/* parse error */");
-            }
-        }
-    }
+    // =========================================================================
+    // Generic collection methods for SerializeRon
+    // =========================================================================
 
-    fn format_option(&mut self, opt: &OptionExpr<'_>) {
-        if let Some(inner) = &opt.value {
-            self.output.push_str("Some(");
-            self.format_leading_comments(&inner.leading);
-            self.format_expr(&inner.expr);
-            self.format_trailing_inline_comment(&inner.trailing);
-            self.output.push(')');
-        } else {
-            self.output.push_str("None");
-        }
-    }
+    /// Format a sequence `[a, b, c]` using `SerializeRon` and `ItemTrivia`.
+    pub fn format_seq_with<'t, T, I>(
+        &mut self,
+        leading: Option<&Trivia<'_>>,
+        trailing: Option<&Trivia<'_>>,
+        items: I,
+    ) where
+        T: SerializeRon + 't,
+        I: IntoIterator<Item = (ItemTrivia<'t>, &'t T)>,
+        I::IntoIter: Clone,
+    {
+        let empty_trivia = Trivia::empty();
+        let leading_ref = leading.unwrap_or(&empty_trivia);
+        let trailing_ref = trailing.unwrap_or(&empty_trivia);
+        let items_iter = items.into_iter();
 
-    fn format_seq(&mut self, seq: &SeqExpr<'_>) {
-        self.format_collection(
+        // Collect to vec for iteration
+        let items_vec: Vec<_> = items_iter.collect();
+
+        // Check for line comments
+        let has_line_comments = items_vec
+            .iter()
+            .any(|(trivia, _)| trivia.has_line_comment())
+            || has_line_comment(leading_ref)
+            || has_line_comment(trailing_ref);
+
+        self.format_collection_generic(
             CollectionType::Array,
             '[',
             ']',
-            &seq.leading,
-            &seq.trailing,
-            &seq.items,
-            |f, item| {
-                // Leading comments go on their own lines
-                f.format_leading_comments(&item.leading);
-                // Indent for the item itself
-                f.write_indent();
-                f.format_expr(&item.expr);
-                f.format_trailing_inline_comment(&item.trailing);
+            leading_ref,
+            trailing_ref,
+            &items_vec,
+            has_line_comments,
+            |fmt, (trivia, item)| {
+                fmt.format_leading_comments_opt(trivia.leading);
+                fmt.write_indent();
+                item.serialize(fmt);
+                fmt.format_trailing_inline_comment_opt(trivia.trailing);
             },
-            |item| has_line_comment(&item.leading) || has_line_comment(&item.trailing),
         );
     }
 
-    fn format_map(&mut self, map: &MapExpr<'_>) {
-        self.format_collection(
+    /// Format a tuple `(a, b, c)` using `SerializeRon` and `ItemTrivia`.
+    pub fn format_tuple_with<'t, T, I>(
+        &mut self,
+        leading: Option<&Trivia<'_>>,
+        trailing: Option<&Trivia<'_>>,
+        items: I,
+    ) where
+        T: SerializeRon + 't,
+        I: IntoIterator<Item = (ItemTrivia<'t>, &'t T)>,
+        I::IntoIter: Clone,
+    {
+        let empty_trivia = Trivia::empty();
+        let leading_ref = leading.unwrap_or(&empty_trivia);
+        let trailing_ref = trailing.unwrap_or(&empty_trivia);
+        let items_vec: Vec<_> = items.into_iter().collect();
+
+        let has_line_comments = items_vec
+            .iter()
+            .any(|(trivia, _)| trivia.has_line_comment())
+            || has_line_comment(leading_ref)
+            || has_line_comment(trailing_ref);
+
+        self.format_collection_generic(
+            CollectionType::Tuple,
+            '(',
+            ')',
+            leading_ref,
+            trailing_ref,
+            &items_vec,
+            has_line_comments,
+            |fmt, (trivia, item)| {
+                fmt.format_leading_comments_opt(trivia.leading);
+                fmt.write_indent();
+                item.serialize(fmt);
+                fmt.format_trailing_inline_comment_opt(trivia.trailing);
+            },
+        );
+    }
+
+    /// Format a map `{k: v, ...}` using `SerializeRon` and `ItemTrivia`.
+    pub fn format_map_with<'t, K, V, I>(
+        &mut self,
+        leading: Option<&Trivia<'_>>,
+        trailing: Option<&Trivia<'_>>,
+        entries: I,
+    ) where
+        K: SerializeRon + 't,
+        V: SerializeRon + 't,
+        I: IntoIterator<Item = (ItemTrivia<'t>, &'t K, &'t V)>,
+        I::IntoIter: Clone,
+    {
+        let empty_trivia = Trivia::empty();
+        let leading_ref = leading.unwrap_or(&empty_trivia);
+        let trailing_ref = trailing.unwrap_or(&empty_trivia);
+        let entries_vec: Vec<_> = entries.into_iter().collect();
+
+        let has_line_comments = entries_vec
+            .iter()
+            .any(|(trivia, _, _)| trivia.has_line_comment())
+            || has_line_comment(leading_ref)
+            || has_line_comment(trailing_ref);
+
+        self.format_collection_generic(
             CollectionType::Map,
             '{',
             '}',
-            &map.leading,
-            &map.trailing,
-            &map.entries,
-            |f, entry| {
-                f.format_map_entry(entry);
-            },
-            |entry| {
-                has_line_comment(&entry.leading)
-                    || has_line_comment(&entry.pre_colon)
-                    || has_line_comment(&entry.post_colon)
-                    || has_line_comment(&entry.trailing)
+            leading_ref,
+            trailing_ref,
+            &entries_vec,
+            has_line_comments,
+            |fmt, (trivia, key, value)| {
+                fmt.format_leading_comments_opt(trivia.leading);
+                fmt.write_indent();
+                key.serialize(fmt);
+                fmt.format_trailing_inline_comment_opt(trivia.pre_colon);
+                fmt.write_colon();
+                fmt.format_leading_comments_inline_opt(trivia.post_colon);
+                value.serialize(fmt);
+                fmt.format_trailing_inline_comment_opt(trivia.trailing);
             },
         );
     }
 
-    fn format_map_entry(&mut self, entry: &MapEntry<'_>) {
-        // Leading comments go on their own lines
-        self.format_leading_comments(&entry.leading);
-        // Indent for the entry itself
-        self.write_indent();
-        self.format_expr(&entry.key);
-        self.format_trailing_inline_comment(&entry.pre_colon);
-        self.write_colon();
-        self.format_leading_comments_inline(&entry.post_colon);
-        self.format_expr(&entry.value);
-        self.format_trailing_inline_comment(&entry.trailing);
-    }
+    /// Format an anonymous struct `(x: 1, y: 2)` using field name as `&str`.
+    pub fn format_anon_struct_with<'t, V, I>(
+        &mut self,
+        leading: Option<&Trivia<'_>>,
+        trailing: Option<&Trivia<'_>>,
+        fields: I,
+    ) where
+        V: SerializeRon + 't,
+        I: IntoIterator<Item = (ItemTrivia<'t>, &'t str, &'t V)>,
+        I::IntoIter: Clone,
+    {
+        let empty_trivia = Trivia::empty();
+        let leading_ref = leading.unwrap_or(&empty_trivia);
+        let trailing_ref = trailing.unwrap_or(&empty_trivia);
+        let fields_vec: Vec<_> = fields.into_iter().collect();
 
-    fn format_tuple(&mut self, tuple: &TupleExpr<'_>) {
-        self.format_collection(
-            CollectionType::Tuple,
-            '(',
-            ')',
-            &tuple.leading,
-            &tuple.trailing,
-            &tuple.elements,
-            |f, elem| {
-                f.format_tuple_element(elem);
-            },
-            |elem| has_line_comment(&elem.leading) || has_line_comment(&elem.trailing),
-        );
-    }
+        let has_line_comments = fields_vec
+            .iter()
+            .any(|(trivia, _, _)| trivia.has_line_comment())
+            || has_line_comment(leading_ref)
+            || has_line_comment(trailing_ref);
 
-    fn format_tuple_element(&mut self, elem: &TupleElement<'_>) {
-        // Leading comments go on their own lines
-        self.format_leading_comments(&elem.leading);
-        // Indent for the element itself
-        self.write_indent();
-        self.format_expr(&elem.expr);
-        self.format_trailing_inline_comment(&elem.trailing);
-    }
-
-    fn format_anon_struct(&mut self, s: &AnonStructExpr<'_>) {
-        self.format_collection(
+        self.format_collection_generic(
             CollectionType::Struct,
             '(',
             ')',
-            &s.leading,
-            &s.trailing,
-            &s.fields,
-            |f, field| {
-                f.format_struct_field(field);
-            },
-            |field| {
-                has_line_comment(&field.leading)
-                    || has_line_comment(&field.pre_colon)
-                    || has_line_comment(&field.post_colon)
-                    || has_line_comment(&field.trailing)
+            leading_ref,
+            trailing_ref,
+            &fields_vec,
+            has_line_comments,
+            |fmt, (trivia, name, value)| {
+                fmt.format_leading_comments_opt(trivia.leading);
+                fmt.write_indent();
+                fmt.write_str(name);
+                fmt.format_trailing_inline_comment_opt(trivia.pre_colon);
+                fmt.write_colon();
+                fmt.format_leading_comments_inline_opt(trivia.post_colon);
+                value.serialize(fmt);
+                fmt.format_trailing_inline_comment_opt(trivia.trailing);
             },
         );
     }
 
-    fn format_struct(&mut self, s: &StructExpr<'_>) {
-        self.output.push_str(&s.name.name);
+    /// Format struct fields body `(x: 1, y: 2)` for named structs.
+    pub fn format_struct_fields_with<'t, V, I>(
+        &mut self,
+        leading: Option<&Trivia<'_>>,
+        trailing: Option<&Trivia<'_>>,
+        fields: I,
+    ) where
+        V: SerializeRon + 't,
+        I: IntoIterator<Item = (ItemTrivia<'t>, &'t str, &'t V)>,
+        I::IntoIter: Clone,
+    {
+        // Same as anon_struct but for named structs
+        self.format_anon_struct_with(leading, trailing, fields);
+    }
 
-        if let Some(ref body) = s.body {
-            match body {
-                StructBody::Tuple(tuple) => self.format_tuple_body(tuple),
-                StructBody::Fields(fields) => self.format_fields_body(fields),
+    /// Format Option: `Some(value)` or `None`.
+    pub fn format_option_with<T: SerializeRon>(&mut self, value: Option<(&T, ItemTrivia<'_>)>) {
+        match value {
+            Some((inner, trivia)) => {
+                self.write_str("Some(");
+                self.format_leading_comments_opt(trivia.leading);
+                inner.serialize(self);
+                self.format_trailing_inline_comment_opt(trivia.trailing);
+                self.write_char(')');
             }
+            None => self.write_str("None"),
         }
     }
 
-    fn format_tuple_body(&mut self, tuple: &TupleBody<'_>) {
-        self.format_collection(
-            CollectionType::Tuple,
-            '(',
-            ')',
-            &tuple.leading,
-            &tuple.trailing,
-            &tuple.elements,
-            |f, elem| {
-                f.format_tuple_element(elem);
-            },
-            |elem| has_line_comment(&elem.leading) || has_line_comment(&elem.trailing),
-        );
-    }
-
-    fn format_fields_body(&mut self, fields: &FieldsBody<'_>) {
-        self.format_collection(
-            CollectionType::Struct,
-            '(',
-            ')',
-            &fields.leading,
-            &fields.trailing,
-            &fields.fields,
-            |f, field| {
-                f.format_struct_field(field);
-            },
-            |field| {
-                has_line_comment(&field.leading)
-                    || has_line_comment(&field.pre_colon)
-                    || has_line_comment(&field.post_colon)
-                    || has_line_comment(&field.trailing)
-            },
-        );
-    }
-
-    fn format_struct_field(&mut self, field: &StructField<'_>) {
-        // Leading comments go on their own lines
-        self.format_leading_comments(&field.leading);
-        // Indent for the field itself
-        self.write_indent();
-        self.output.push_str(&field.name.name);
-        self.format_trailing_inline_comment(&field.pre_colon);
-        self.write_colon();
-        self.format_leading_comments_inline(&field.post_colon);
-        self.format_expr(&field.value);
-        self.format_trailing_inline_comment(&field.trailing);
-    }
-
-    /// Generic collection formatter that handles compact vs multiline.
-    ///
-    /// Compaction behavior depends on `CommentMode`:
-    /// - `Delete`: comments stripped, all compaction proceeds freely
-    /// - `Preserve`: line comments prevent ANY compaction
-    /// - `Auto`: line comments prevent length-based, but depth/type rules convert and compact
+    /// Generic collection formatting with pre-computed line comment info.
     #[allow(clippy::too_many_arguments)]
-    fn format_collection<T, F, C>(
+    fn format_collection_generic<T: Clone, F>(
         &mut self,
         collection_type: CollectionType,
         open: char,
@@ -614,11 +848,10 @@ impl<'a> Formatter<'a> {
         leading: &Trivia<'_>,
         trailing: &Trivia<'_>,
         items: &[T],
+        has_line_comments: bool,
         format_item: F,
-        has_line_comment_fn: C,
     ) where
-        F: Fn(&mut Self, &T),
-        C: Fn(&T) -> bool,
+        F: Fn(&mut Self, T),
     {
         // Track depth for nested collections
         let current_depth = self.depth;
@@ -632,27 +865,22 @@ impl<'a> Formatter<'a> {
         // Check if depth/type rules want compaction
         let wants_compact = self.wants_compact(collection_type, current_depth);
 
-        // Check for line comments
-        let has_line_comments = items.iter().any(&has_line_comment_fn)
-            || has_line_comment(leading)
-            || has_line_comment(trailing);
-
         // Determine if we can actually compact based on comment mode
         let can_compact = match self.config.comments {
-            CommentMode::Delete => true,                 // No comment constraints
-            CommentMode::Preserve => !has_line_comments, // Line comments prevent all compaction
+            CommentMode::Delete => true,
+            CommentMode::Preserve => !has_line_comments,
             CommentMode::Auto => {
                 if wants_compact {
-                    true // Depth/type rules: can compact (will convert comments)
+                    true
                 } else {
-                    !has_line_comments // Length-based: line comments prevent
+                    !has_line_comments
                 }
             }
         };
 
         // 1. If depth/type rules want compaction AND we can compact
         if wants_compact && can_compact {
-            let compact = self.try_format_compact_with_trivia(
+            let compact = self.try_format_compact_generic(
                 open,
                 close,
                 leading,
@@ -665,39 +893,32 @@ impl<'a> Formatter<'a> {
             return;
         }
 
-        // 2. Root collections default to multiline (unless compaction rule was triggered above)
+        // 2. Root collections default to multiline
         if is_root && !items.is_empty() {
-            self.format_collection_multiline(open, close, leading, trailing, items, format_item);
+            self.format_multiline_generic(open, close, leading, trailing, items, format_item);
             self.depth = current_depth;
             return;
         }
 
         // 3. Can't compact due to comments - use multiline
         if !can_compact {
-            self.format_collection_multiline(open, close, leading, trailing, items, format_item);
+            self.format_multiline_generic(open, close, leading, trailing, items, format_item);
             self.depth = current_depth;
             return;
         }
 
         // 4. Try length-based compaction
-        let compact = self.try_format_compact_with_trivia(
-            open,
-            close,
-            leading,
-            trailing,
-            items,
-            &format_item,
-        );
+        let compact =
+            self.try_format_compact_generic(open, close, leading, trailing, items, &format_item);
         if compact.len() <= self.char_limit() {
             self.output.push_str(&compact);
         } else {
-            self.format_collection_multiline(open, close, leading, trailing, items, format_item);
+            self.format_multiline_generic(open, close, leading, trailing, items, format_item);
         }
         self.depth = current_depth;
     }
 
-    /// Format a collection in compact mode, including trivia with comment conversion.
-    fn try_format_compact_with_trivia<T, F>(
+    fn try_format_compact_generic<T: Clone, F>(
         &self,
         open: char,
         close: char,
@@ -707,9 +928,9 @@ impl<'a> Formatter<'a> {
         format_item: F,
     ) -> String
     where
-        F: Fn(&mut Self, &T),
+        F: Fn(&mut Self, T),
     {
-        let mut compact_formatter = Formatter::new(self.config);
+        let mut compact_formatter = RonFormatter::new(self.config);
         compact_formatter.is_root = false;
         compact_formatter.is_compact = true;
         compact_formatter.depth = self.depth;
@@ -722,7 +943,7 @@ impl<'a> Formatter<'a> {
             if i > 0 {
                 compact_formatter.write_separator();
             }
-            format_item(&mut compact_formatter, item);
+            format_item(&mut compact_formatter, item.clone());
         }
 
         // Trailing trivia (converted to compact format)
@@ -732,7 +953,7 @@ impl<'a> Formatter<'a> {
         compact_formatter.output
     }
 
-    fn format_collection_multiline<T, F>(
+    fn format_multiline_generic<T: Clone, F>(
         &mut self,
         open: char,
         close: char,
@@ -741,7 +962,7 @@ impl<'a> Formatter<'a> {
         items: &[T],
         format_item: F,
     ) where
-        F: Fn(&mut Self, &T),
+        F: Fn(&mut Self, T),
     {
         self.output.push(open);
 
@@ -760,8 +981,7 @@ impl<'a> Formatter<'a> {
         self.format_leading_comments(leading);
 
         for (i, item) in items.iter().enumerate() {
-            // format_item handles its own indentation (including for leading comments)
-            format_item(self, item);
+            format_item(self, item.clone());
             self.output.push(',');
             if i < items.len() - 1 {
                 self.output.push('\n');
@@ -778,6 +998,118 @@ impl<'a> Formatter<'a> {
         self.indent_level -= 1;
         self.write_indent();
         self.output.push(close);
+    }
+
+    // =========================================================================
+    // Optional trivia helpers
+    // =========================================================================
+
+    fn format_leading_comments_opt(&mut self, trivia: Option<&Trivia<'_>>) {
+        if let Some(t) = trivia {
+            self.format_leading_comments(t);
+        }
+    }
+
+    fn format_trailing_inline_comment_opt(&mut self, trivia: Option<&Trivia<'_>>) {
+        if let Some(t) = trivia {
+            self.format_trailing_inline_comment(t);
+        }
+    }
+
+    fn format_leading_comments_inline_opt(&mut self, trivia: Option<&Trivia<'_>>) {
+        if let Some(t) = trivia {
+            self.format_leading_comments_inline(t);
+        }
+    }
+
+    // =========================================================================
+    // Low-level output helpers
+    // =========================================================================
+
+    /// Write a string to the output.
+    #[inline]
+    pub fn write_str(&mut self, s: &str) {
+        self.output.push_str(s);
+    }
+
+    /// Write a character to the output.
+    #[inline]
+    pub fn write_char(&mut self, c: char) {
+        self.output.push(c);
+    }
+
+    /// Write formatted data to the output (implements `core::fmt::Write`).
+    #[inline]
+    pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+        use core::fmt::Write;
+        let _ = self.output.write_fmt(args);
+    }
+
+    // =========================================================================
+    // Primitive value formatting (for Value serialization)
+    // =========================================================================
+
+    /// Format a char value with proper escaping.
+    pub fn format_char_value(&mut self, c: char) {
+        match c {
+            '\'' => self.output.push_str("'\\''"),
+            '\\' => self.output.push_str("'\\\\'"),
+            '\n' => self.output.push_str("'\\n'"),
+            '\r' => self.output.push_str("'\\r'"),
+            '\t' => self.output.push_str("'\\t'"),
+            '\0' => self.output.push_str("'\\0'"),
+            c if c.is_ascii_control() => {
+                use core::fmt::Write;
+                let _ = write!(self.output, "'\\x{:02x}'", c as u8);
+            }
+            c => {
+                self.output.push('\'');
+                self.output.push(c);
+                self.output.push('\'');
+            }
+        }
+    }
+
+    /// Format a string value with proper escaping.
+    pub fn format_string_value(&mut self, s: &str) {
+        self.output.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => self.output.push_str("\\\""),
+                '\\' => self.output.push_str("\\\\"),
+                '\n' => self.output.push_str("\\n"),
+                '\r' => self.output.push_str("\\r"),
+                '\t' => self.output.push_str("\\t"),
+                '\0' => self.output.push_str("\\0"),
+                c if c.is_ascii_control() => {
+                    use core::fmt::Write;
+                    let _ = write!(self.output, "\\x{:02x}", c as u8);
+                }
+                c => self.output.push(c),
+            }
+        }
+        self.output.push('"');
+    }
+
+    /// Format a byte string value with proper escaping.
+    pub fn format_bytes_value(&mut self, bytes: &[u8]) {
+        self.output.push_str("b\"");
+        for &b in bytes {
+            match b {
+                b'"' => self.output.push_str("\\\""),
+                b'\\' => self.output.push_str("\\\\"),
+                b'\n' => self.output.push_str("\\n"),
+                b'\r' => self.output.push_str("\\r"),
+                b'\t' => self.output.push_str("\\t"),
+                0 => self.output.push_str("\\0"),
+                b if b.is_ascii_graphic() || b == b' ' => self.output.push(b as char),
+                b => {
+                    use core::fmt::Write;
+                    let _ = write!(self.output, "\\x{b:02x}");
+                }
+            }
+        }
+        self.output.push('"');
     }
 
     fn write_indent(&mut self) {
