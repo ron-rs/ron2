@@ -15,6 +15,7 @@ use crate::{
 pub const SCHEMA_DIR_ENV: &str = "RON_SCHEMA_DIR";
 
 /// Default schema directory name under XDG data dir.
+#[cfg(feature = "xdg")]
 const DEFAULT_SCHEMA_DIR: &str = "ron-schemas";
 
 /// Schema file extension.
@@ -22,17 +23,25 @@ const SCHEMA_EXTENSION: &str = "schema.ron";
 
 /// Resolve the schema directory based on precedence:
 /// 1. Environment variable `RON_SCHEMA_DIR`
-/// 2. XDG data directory (`~/.local/share/ron-schemas/`)
+/// 2. XDG data directory (`~/.local/share/ron-schemas/`) - requires `xdg` feature
 pub fn resolve_schema_dir() -> Result<PathBuf> {
     // Check environment variable first
     if let Ok(dir) = env::var(SCHEMA_DIR_ENV) {
         return Ok(PathBuf::from(dir));
     }
 
-    // Fall back to XDG data directory
-    dirs::data_dir()
-        .map(|d| d.join(DEFAULT_SCHEMA_DIR))
-        .ok_or_else(SchemaError::no_schema_dir)
+    // Fall back to XDG data directory (requires "xdg" feature)
+    #[cfg(feature = "xdg")]
+    {
+        dirs::data_dir()
+            .map(|d| d.join(DEFAULT_SCHEMA_DIR))
+            .ok_or_else(SchemaError::no_schema_dir)
+    }
+
+    #[cfg(not(feature = "xdg"))]
+    {
+        Err(SchemaError::no_schema_dir())
+    }
 }
 
 /// Convert a Rust type path to a schema file path.

@@ -59,7 +59,7 @@ See [EDITOR_SETUP.md](EDITOR_SETUP.md) for instructions on integrating with Heli
 
 ## Acknowledgments
 
-The `ron2` crate is derived from [ron](https://github.com/ron-rs/ron) by the RON developers. We thank them for their work on the original RON format and implementation.
+The `ron2` crate is derived from [ron](https://github.com/ron-rs/ron). 
 
 ## License
 

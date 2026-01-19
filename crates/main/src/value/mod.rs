@@ -34,7 +34,6 @@ pub type StructFields = Vec<(String, Value)>;
 /// - `Struct`: anonymous structs with named fields `(x: 1, y: 2)`
 /// - `Named`: named types (structs/enums) like `Point(x: 1)` or `Option::Some(1)`
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Value {
     // Primitives
     Bool(bool),
@@ -102,7 +101,6 @@ impl Display for Value {
 
 /// Content of a named type (struct or enum variant).
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum NamedContent {
     /// Unit: `Point` or `MyEnum::Variant`
     Unit,

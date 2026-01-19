@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/main",
     "crates/derive",
@@ -23,8 +23,8 @@ itoa = "1.0"
 ahash = "0.8"
 
 [profile.release]
-debug = true  # Enable debug symbols for profiling
+debug = true # Enable debug symbols for profiling
 # split-debuginfo = "unpacked"  # Required for Instruments on macOS
 
 [profile.bench]
-debug = true  # Enable debug symbols for profiling benchmarks
+debug = true # Enable debug symbols for profiling benchmarks

@@ -8,7 +8,7 @@ description = "Generate Markdown documentation from RON schema files"
 
 [dependencies]
 ahash.workspace = true
-ron2.workspace = true
+ron2 = { workspace = true, features = ["xdg"] }
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 walkdir = "2.5"

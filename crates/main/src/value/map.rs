@@ -178,30 +178,6 @@ impl Hash for Map {
     }
 }
 
-#[cfg(feature = "serde")]
-mod serde_impl {
-    use alloc::vec::Vec;
-
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    use super::{Map, Value};
-
-    impl Serialize for Map {
-        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            // Serialize as a sequence of (key, value) pairs to preserve order
-            let pairs: Vec<(&Value, &Value)> = self.iter().collect();
-            pairs.serialize(serializer)
-        }
-    }
-
-    impl<'de> Deserialize<'de> for Map {
-        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            let pairs: Vec<(Value, Value)> = Vec::deserialize(deserializer)?;
-            Ok(pairs.into_iter().collect())
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::{vec, vec::Vec};
