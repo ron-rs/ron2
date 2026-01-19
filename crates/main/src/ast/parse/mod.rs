@@ -60,8 +60,8 @@ struct AstParser<'a> {
     pub(super) tokens: Peekable<Lexer<'a>>,
     /// Buffer for collecting trivia before a token.
     pub(super) trivia_buffer: Vec<Token<'a>>,
-    /// Lookahead buffer for tokens that were peeked but need to be returned.
-    pub(super) lookahead: Vec<Token<'a>>,
+    /// Lookahead token that was peeked but needs to be returned.
+    pub(super) lookahead: Option<Token<'a>>,
     /// Current recursion depth for nested structures.
     depth: usize,
 }
@@ -72,7 +72,7 @@ impl<'a> AstParser<'a> {
             source,
             tokens: lexer.peekable(),
             trivia_buffer: Vec::new(),
-            lookahead: Vec::with_capacity(1),
+            lookahead: None,
             depth: 0,
         }
     }

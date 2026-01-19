@@ -59,9 +59,10 @@ pub(super) trait ParserCore<'a> {
 
 impl<'a> ParserCore<'a> for AstParser<'a> {
     /// Peek at the next non-trivia token kind without consuming.
+    #[inline]
     fn peek_kind(&mut self) -> TokenKind {
-        // Check lookahead buffer first
-        if let Some(tok) = self.lookahead.last() {
+        // Check lookahead first
+        if let Some(tok) = self.lookahead.as_ref() {
             return tok.kind;
         }
 
@@ -81,7 +82,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
 
     /// Peek at the span of the next non-trivia token without consuming.
     fn peek_span(&mut self) -> Span {
-        if let Some(tok) = self.lookahead.last() {
+        if let Some(tok) = self.lookahead.as_ref() {
             return tok.span;
         }
 
@@ -101,8 +102,8 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     /// Peek at the next two non-trivia token kinds without consuming.
     /// Returns (`first_kind`, `second_kind`).
     fn peek_two_kinds(&mut self) -> (TokenKind, TokenKind) {
-        // Ensure we have at least one token in lookahead
-        if self.lookahead.is_empty() {
+        // Ensure we have a token in lookahead
+        if self.lookahead.is_none() {
             // Collect trivia and find the first non-trivia token
             while let Some(tok) = self.tokens.peek() {
                 if tok.kind.is_trivia() {
@@ -114,11 +115,11 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
                 }
             }
             if let Some(tok) = self.tokens.next() {
-                self.lookahead.push(tok);
+                self.lookahead = Some(tok);
             }
         }
 
-        let first_kind = self.lookahead.last().map_or(TokenKind::Eof, |t| t.kind);
+        let first_kind = self.lookahead.as_ref().map_or(TokenKind::Eof, |t| t.kind);
 
         // Skip trivia between first and second token to find the second non-trivia token
         while let Some(tok) = self.tokens.peek() {
@@ -137,9 +138,10 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     }
 
     /// Consume and return the next non-trivia token, collecting trivia into buffer.
+    #[inline]
     fn next_token(&mut self) -> Token<'a> {
-        // Check lookahead buffer first
-        if let Some(tok) = self.lookahead.pop() {
+        // Check lookahead first
+        if let Some(tok) = self.lookahead.take() {
             return tok;
         }
 
@@ -163,6 +165,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     }
 
     /// Consume a comma if present. Returns `(span, has_comma)`.
+    #[inline]
     fn consume_comma(&mut self) -> (Option<Span>, bool) {
         if self.peek_kind() == TokenKind::Comma {
             let comma_tok = self.next_token();
@@ -173,6 +176,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     }
 
     /// Drain the trivia buffer into a Trivia struct.
+    #[inline]
     fn drain_trivia(&mut self) -> Trivia<'a> {
         if self.trivia_buffer.is_empty() {
             return Trivia::empty();
@@ -194,7 +198,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
         // Build whitespace string from first whitespace token and collect comments
         // Use drain(..) to avoid intermediate Vec allocation from mem::take
         let mut first_whitespace_range: Option<(usize, usize)> = None;
-        let mut comments = Vec::new();
+        let mut comments = Vec::with_capacity(self.trivia_buffer.len().min(4));
 
         for tok in self.trivia_buffer.drain(..) {
             match tok.kind {
@@ -235,6 +239,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     }
 
     /// Collect leading trivia without consuming a non-trivia token.
+    #[inline]
     fn collect_leading_trivia(&mut self) -> Trivia<'a> {
         // Peek to force trivia collection
         let _ = self.peek_kind();
@@ -247,6 +252,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     }
 
     /// Create an error expression and recover.
+    #[inline(never)]
     fn error_expr_from(&mut self, err: Error, errors: &mut Vec<Error>) -> Expr<'a> {
         let span = *err.span();
         let error = err.clone();
@@ -275,6 +281,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     /// - Unclosed strings
     /// - Invalid numbers with base prefixes
     /// - Other unexpected characters
+    #[inline(never)]
     fn error_for_error_token(tok: &Token<'_>) -> Error {
         debug_assert_eq!(tok.kind, TokenKind::Error);
 
@@ -311,6 +318,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     }
 
     /// Advance the parser until a synchronization token or EOF is found.
+    #[inline(never)]
     fn recover_until(&mut self, sync: &[TokenKind]) {
         self.trivia_buffer.clear();
         loop {
@@ -343,6 +351,7 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
     }
 
     /// Check if we're at a closing delimiter or EOF.
+    #[inline]
     fn at_closing_or_eof(&mut self, closing: TokenKind) -> bool {
         let kind = self.peek_kind();
         kind == closing || kind == TokenKind::Eof
