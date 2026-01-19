@@ -234,9 +234,7 @@ impl SerializeRon for Value {
 
             // Map
             Value::Map(map) => {
-                let entries = map
-                    .iter()
-                    .map(|(k, v)| (ItemTrivia::empty(), k, v));
+                let entries = map.iter().map(|(k, v)| (ItemTrivia::empty(), k, v));
                 fmt.format_map_with(None, None, entries);
             }
 
@@ -276,18 +274,18 @@ fn format_number_to(n: &Number, fmt: &mut RonFormatter<'_>) {
     use alloc::string::ToString;
 
     match n {
-        Number::I8(v) => fmt.write_fmt(format_args!("{v}")),
-        Number::I16(v) => fmt.write_fmt(format_args!("{v}")),
-        Number::I32(v) => fmt.write_fmt(format_args!("{v}")),
-        Number::I64(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::I8(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
+        Number::I16(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
+        Number::I32(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
+        Number::I64(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
         #[cfg(feature = "integer128")]
-        Number::I128(v) => fmt.write_fmt(format_args!("{v}")),
-        Number::U8(v) => fmt.write_fmt(format_args!("{v}")),
-        Number::U16(v) => fmt.write_fmt(format_args!("{v}")),
-        Number::U32(v) => fmt.write_fmt(format_args!("{v}")),
-        Number::U64(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::I128(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
+        Number::U8(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
+        Number::U16(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
+        Number::U32(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
+        Number::U64(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
         #[cfg(feature = "integer128")]
-        Number::U128(v) => fmt.write_fmt(format_args!("{v}")),
+        Number::U128(v) => fmt.write_str(itoa::Buffer::new().format(*v)),
         Number::F32(f) => {
             let v = f.get();
             if v.is_nan() {

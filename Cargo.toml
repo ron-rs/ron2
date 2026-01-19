@@ -19,6 +19,8 @@ repository = "https://github.com/torkleyy/ron-extras"
 ron2 = { path = "crates/main" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2"
+itoa = "1.0"
+ahash = "0.8"
 
 [profile.release]
 debug = true  # Enable debug symbols for profiling

@@ -4,6 +4,8 @@ use alloc::borrow::Cow;
 use core::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
 
+use ahash::HashMapExt;
+
 use super::{FromRon, FromRonFields, expr_type_name};
 use crate::{
     ast::{AnonStructExpr, Expr, FieldsBody, StringExpr, StringKind, StructField},
@@ -50,7 +52,7 @@ pub struct AstMapAccess<'a> {
     /// Slice of struct fields from the AST
     fields: &'a [StructField<'a>],
     /// O(1) field name to index lookup
-    field_indices: HashMap<&'a str, usize>,
+    field_indices: ahash::HashMap<&'a str, usize>,
     /// Bitmask tracking which fields have been consumed (bit i = field i)
     consumed: u64,
     /// The span of the entire struct (for missing field errors)
@@ -80,7 +82,7 @@ impl<'a> AstMapAccess<'a> {
         }
 
         // Build field index HashMap while detecting duplicates in one pass
-        let mut field_indices = HashMap::with_capacity(s.fields.len());
+        let mut field_indices = ahash::HashMap::with_capacity(s.fields.len());
         for (i, field) in s.fields.iter().enumerate() {
             let name = field.name.name.as_ref();
             if field_indices.insert(name, i).is_some() {
@@ -127,7 +129,7 @@ impl<'a> AstMapAccess<'a> {
         }
 
         // Build field index HashMap while detecting duplicates in one pass
-        let mut field_indices = HashMap::with_capacity(fields_body.fields.len());
+        let mut field_indices = ahash::HashMap::with_capacity(fields_body.fields.len());
         for (i, field) in fields_body.fields.iter().enumerate() {
             let name = field.name.name.as_ref();
             if field_indices.insert(name, i).is_some() {

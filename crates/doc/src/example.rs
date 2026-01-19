@@ -1,7 +1,6 @@
 //! RON example generation from schemas.
 
-use std::collections::HashMap;
-
+use ahash::HashMap;
 use ron2::schema::{Schema, TypeKind, Variant, VariantKind};
 
 use crate::discovery::DiscoveredSchema;
@@ -177,6 +176,7 @@ pub fn build_schema_map(schemas: &[DiscoveredSchema]) -> HashMap<&str, &Schema> 
 
 #[cfg(test)]
 mod tests {
+    use ahash::HashMapExt;
     use ron2::schema::Field;
 
     use super::*;

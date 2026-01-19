@@ -13,7 +13,7 @@ use super::Value;
 #[derive(Clone, Debug, Default)]
 pub struct Map(pub(crate) MapInner);
 
-type MapInner = indexmap::IndexMap<Value, Value, std::collections::hash_map::RandomState>;
+type MapInner = indexmap::IndexMap<Value, Value, ahash::RandomState>;
 
 impl Map {
     /// Creates a new, empty [`Map`].
@@ -25,7 +25,10 @@ impl Map {
     /// Creates a new, empty [`Map`] with the specified capacity.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
-        Self(indexmap::IndexMap::with_capacity(capacity))
+        Self(indexmap::IndexMap::with_capacity_and_hasher(
+            capacity,
+            ahash::RandomState::default(),
+        ))
     }
 
     /// Returns the number of elements in the map.

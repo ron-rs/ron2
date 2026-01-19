@@ -1,7 +1,6 @@
 //! Core markdown documentation generation.
 
-use std::collections::HashMap;
-
+use ahash::HashMap;
 use ron2::schema::{Field, Schema, TypeKind, Variant, VariantKind};
 
 use crate::{

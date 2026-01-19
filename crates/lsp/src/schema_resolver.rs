@@ -4,11 +4,11 @@
 //! document attributes.
 
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     sync::RwLock,
 };
 
+use ahash::{HashMap, HashMapExt};
 use ron2::schema::{
     find_schema, find_schema_in, read_schema, Schema, SchemaResolver as SchemaResolverTrait,
 };

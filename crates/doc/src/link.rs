@@ -1,7 +1,6 @@
 //! Cross-reference link resolution for TypeRef.
 
-use std::collections::HashMap;
-
+use ahash::{HashMap, HashMapExt};
 use ron2::schema::TypeKind;
 
 use crate::discovery::DiscoveredSchema;

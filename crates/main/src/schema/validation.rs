@@ -1,7 +1,6 @@
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+
+use ahash::{HashSet, HashSetExt};
 
 use super::{
     Field, Schema, TypeKind, Variant, VariantKind,

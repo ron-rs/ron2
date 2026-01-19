@@ -3,8 +3,9 @@
 //! A Language Server Protocol implementation for RON (Rusty Object Notation) files.
 //! Provides auto-completion, diagnostics, and hover documentation based on schemas.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
+use ahash::{HashMap, HashMapExt};
 use ron2_lsp::{diagnostics, hover, provide_completions, Document, SchemaResolver};
 use serde::Deserialize;
 use tokio::sync::RwLock;

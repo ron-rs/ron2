@@ -17,9 +17,11 @@ integer128 = []
 internal-span-substring-test = ["dep:unicode-segmentation"]
 
 [dependencies]
+ahash.workspace = true
 bitflags = { version = "2.1", default-features = false }
 dirs = "6.0.0"
 indexmap = { version = "2.0", default-features = false, features = ["std"] }
+itoa.workspace = true
 ron2-derive = { path = "../derive" }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 unicode-ident = { version = "1.0", default-features = false }

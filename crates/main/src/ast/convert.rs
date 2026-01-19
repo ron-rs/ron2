@@ -1004,47 +1004,67 @@ pub fn synthetic_named_unit(name: impl Into<Cow<'static, str>>) -> Expr<'static>
 fn format_number(n: &Number) -> (String, NumberKind) {
     match n {
         Number::I8(v) => {
+            let s = itoa::Buffer::new().format(*v).to_owned();
             if *v < 0 {
-                (format!("{v}"), NumberKind::NegativeInteger)
+                (s, NumberKind::NegativeInteger)
             } else {
-                (format!("{v}"), NumberKind::Integer)
+                (s, NumberKind::Integer)
             }
         }
         Number::I16(v) => {
+            let s = itoa::Buffer::new().format(*v).to_owned();
             if *v < 0 {
-                (format!("{v}"), NumberKind::NegativeInteger)
+                (s, NumberKind::NegativeInteger)
             } else {
-                (format!("{v}"), NumberKind::Integer)
+                (s, NumberKind::Integer)
             }
         }
         Number::I32(v) => {
+            let s = itoa::Buffer::new().format(*v).to_owned();
             if *v < 0 {
-                (format!("{v}"), NumberKind::NegativeInteger)
+                (s, NumberKind::NegativeInteger)
             } else {
-                (format!("{v}"), NumberKind::Integer)
+                (s, NumberKind::Integer)
             }
         }
         Number::I64(v) => {
+            let s = itoa::Buffer::new().format(*v).to_owned();
             if *v < 0 {
-                (format!("{v}"), NumberKind::NegativeInteger)
+                (s, NumberKind::NegativeInteger)
             } else {
-                (format!("{v}"), NumberKind::Integer)
+                (s, NumberKind::Integer)
             }
         }
         #[cfg(feature = "integer128")]
         Number::I128(v) => {
+            let s = itoa::Buffer::new().format(*v).to_owned();
             if *v < 0 {
-                (format!("{v}"), NumberKind::NegativeInteger)
+                (s, NumberKind::NegativeInteger)
             } else {
-                (format!("{v}"), NumberKind::Integer)
+                (s, NumberKind::Integer)
             }
         }
-        Number::U8(v) => (format!("{v}"), NumberKind::Integer),
-        Number::U16(v) => (format!("{v}"), NumberKind::Integer),
-        Number::U32(v) => (format!("{v}"), NumberKind::Integer),
-        Number::U64(v) => (format!("{v}"), NumberKind::Integer),
+        Number::U8(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
+        Number::U16(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
+        Number::U32(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
+        Number::U64(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
         #[cfg(feature = "integer128")]
-        Number::U128(v) => (format!("{v}"), NumberKind::Integer),
+        Number::U128(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
         Number::F32(f) => {
             let v = f.get();
             if v.is_nan() {
