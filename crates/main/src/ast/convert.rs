@@ -1000,110 +1000,51 @@ pub fn synthetic_named_unit(name: impl Into<Cow<'static, str>>) -> Expr<'static>
 // Internal helpers
 // ============================================================================
 
+/// Format a signed integer, returning the appropriate kind based on sign.
+fn format_signed<T: itoa::Integer + Ord + Default>(v: T) -> (String, NumberKind) {
+    let s = itoa::Buffer::new().format(v).to_owned();
+    let kind = if v < T::default() {
+        NumberKind::NegativeInteger
+    } else {
+        NumberKind::Integer
+    };
+    (s, kind)
+}
+
+/// Format a float value to its string representation.
+fn format_float(v: f64) -> (String, NumberKind) {
+    if v.is_nan() {
+        ("NaN".into(), NumberKind::SpecialFloat)
+    } else if v.is_infinite() {
+        let s = if v.is_sign_positive() { "inf" } else { "-inf" };
+        (s.into(), NumberKind::SpecialFloat)
+    } else {
+        let s = format!("{v}");
+        if s.contains('.') || s.contains('e') || s.contains('E') {
+            (s, NumberKind::Float)
+        } else {
+            (format!("{v}.0"), NumberKind::Float)
+        }
+    }
+}
+
 /// Format a number to its raw string representation.
 fn format_number(n: &Number) -> (String, NumberKind) {
     match n {
-        Number::I8(v) => {
-            let s = itoa::Buffer::new().format(*v).to_owned();
-            if *v < 0 {
-                (s, NumberKind::NegativeInteger)
-            } else {
-                (s, NumberKind::Integer)
-            }
-        }
-        Number::I16(v) => {
-            let s = itoa::Buffer::new().format(*v).to_owned();
-            if *v < 0 {
-                (s, NumberKind::NegativeInteger)
-            } else {
-                (s, NumberKind::Integer)
-            }
-        }
-        Number::I32(v) => {
-            let s = itoa::Buffer::new().format(*v).to_owned();
-            if *v < 0 {
-                (s, NumberKind::NegativeInteger)
-            } else {
-                (s, NumberKind::Integer)
-            }
-        }
-        Number::I64(v) => {
-            let s = itoa::Buffer::new().format(*v).to_owned();
-            if *v < 0 {
-                (s, NumberKind::NegativeInteger)
-            } else {
-                (s, NumberKind::Integer)
-            }
-        }
+        Number::I8(v) => format_signed(*v),
+        Number::I16(v) => format_signed(*v),
+        Number::I32(v) => format_signed(*v),
+        Number::I64(v) => format_signed(*v),
         #[cfg(feature = "integer128")]
-        Number::I128(v) => {
-            let s = itoa::Buffer::new().format(*v).to_owned();
-            if *v < 0 {
-                (s, NumberKind::NegativeInteger)
-            } else {
-                (s, NumberKind::Integer)
-            }
-        }
-        Number::U8(v) => (
-            itoa::Buffer::new().format(*v).to_owned(),
-            NumberKind::Integer,
-        ),
-        Number::U16(v) => (
-            itoa::Buffer::new().format(*v).to_owned(),
-            NumberKind::Integer,
-        ),
-        Number::U32(v) => (
-            itoa::Buffer::new().format(*v).to_owned(),
-            NumberKind::Integer,
-        ),
-        Number::U64(v) => (
-            itoa::Buffer::new().format(*v).to_owned(),
-            NumberKind::Integer,
-        ),
+        Number::I128(v) => format_signed(*v),
+        Number::U8(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
+        Number::U16(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
+        Number::U32(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
+        Number::U64(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
         #[cfg(feature = "integer128")]
-        Number::U128(v) => (
-            itoa::Buffer::new().format(*v).to_owned(),
-            NumberKind::Integer,
-        ),
-        Number::F32(f) => {
-            let v = f.get();
-            if v.is_nan() {
-                ("NaN".into(), NumberKind::SpecialFloat)
-            } else if v.is_infinite() {
-                if v.is_sign_positive() {
-                    ("inf".into(), NumberKind::SpecialFloat)
-                } else {
-                    ("-inf".into(), NumberKind::SpecialFloat)
-                }
-            } else {
-                // Ensure we always have a decimal point for floats
-                let s = format!("{v}");
-                if s.contains('.') || s.contains('e') || s.contains('E') {
-                    (s, NumberKind::Float)
-                } else {
-                    (format!("{v}.0"), NumberKind::Float)
-                }
-            }
-        }
-        Number::F64(f) => {
-            let v = f.get();
-            if v.is_nan() {
-                ("NaN".into(), NumberKind::SpecialFloat)
-            } else if v.is_infinite() {
-                if v.is_sign_positive() {
-                    ("inf".into(), NumberKind::SpecialFloat)
-                } else {
-                    ("-inf".into(), NumberKind::SpecialFloat)
-                }
-            } else {
-                let s = format!("{v}");
-                if s.contains('.') || s.contains('e') || s.contains('E') {
-                    (s, NumberKind::Float)
-                } else {
-                    (format!("{v}.0"), NumberKind::Float)
-                }
-            }
-        }
+        Number::U128(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
+        Number::F32(f) => format_float(f64::from(f.get())),
+        Number::F64(f) => format_float(f.get()),
         // Handle non-exhaustive variant
         _ => ("0".into(), NumberKind::Integer),
     }

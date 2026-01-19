@@ -5,7 +5,9 @@
 
 mod common;
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use ron2::{ToRon, ast::FormatConfig, lexer::Lexer};
 
 /// Benchmark AST parsing using `parse_document()`.
