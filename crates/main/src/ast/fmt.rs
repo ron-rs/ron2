@@ -278,10 +278,11 @@ impl<'a> ItemTrivia<'a> {
     #[inline]
     #[must_use]
     pub fn has_line_comment(&self) -> bool {
-        [self.leading, self.pre_colon, self.post_colon, self.trailing]
-            .into_iter()
-            .flatten()
-            .any(has_line_comment)
+        // Short-circuit: avoid array allocation and full iteration
+        self.leading.is_some_and(has_line_comment)
+            || self.pre_colon.is_some_and(has_line_comment)
+            || self.post_colon.is_some_and(has_line_comment)
+            || self.trailing.is_some_and(has_line_comment)
     }
 }
 
@@ -320,86 +321,25 @@ impl SerializeRon for Expr<'_> {
                 fmt.format_option_with(value);
             }
 
-            // Sequence
-            Expr::Seq(seq) => {
-                let items = seq
-                    .items
-                    .iter()
-                    .map(|item| (ItemTrivia::seq(&item.leading, &item.trailing), &item.expr));
-                fmt.format_seq_with(Some(&seq.leading), Some(&seq.trailing), items);
-            }
+            // Sequence - use AST-specific method (no allocation)
+            Expr::Seq(seq) => fmt.format_seq_items(seq),
 
-            // Map
-            Expr::Map(map) => {
-                let entries = map.entries.iter().map(|e| {
-                    (
-                        ItemTrivia::kv(&e.leading, &e.pre_colon, &e.post_colon, &e.trailing),
-                        &e.key,
-                        &e.value,
-                    )
-                });
-                fmt.format_map_with(Some(&map.leading), Some(&map.trailing), entries);
-            }
+            // Map - use AST-specific method (no allocation)
+            Expr::Map(map) => fmt.format_map_items(map),
 
-            // Tuple
-            Expr::Tuple(tuple) => {
-                let elems = tuple
-                    .elements
-                    .iter()
-                    .map(|e| (ItemTrivia::seq(&e.leading, &e.trailing), &e.expr));
-                fmt.format_tuple_with(Some(&tuple.leading), Some(&tuple.trailing), elems);
-            }
+            // Tuple - use AST-specific method (no allocation)
+            Expr::Tuple(tuple) => fmt.format_tuple_items(tuple),
 
-            // Anonymous struct
-            Expr::AnonStruct(s) => {
-                let fields = s.fields.iter().map(|f| {
-                    (
-                        ItemTrivia::kv(&f.leading, &f.pre_colon, &f.post_colon, &f.trailing),
-                        f.name.name.as_ref(),
-                        &f.value,
-                    )
-                });
-                fmt.format_anon_struct_with(Some(&s.leading), Some(&s.trailing), fields);
-            }
+            // Anonymous struct - use AST-specific method (no allocation)
+            Expr::AnonStruct(s) => fmt.format_anon_struct_items(s),
 
             // Named struct
             Expr::Struct(s) => {
                 fmt.write_str(&s.name.name);
-                // Handle pre_body trivia (between name and body)
-                // In the existing code, pre_body is currently not formatted in format_struct
-                // Let's add it for consistency
                 if let Some(ref body) = s.body {
                     match body {
-                        StructBody::Tuple(tuple) => {
-                            let elems = tuple
-                                .elements
-                                .iter()
-                                .map(|e| (ItemTrivia::seq(&e.leading, &e.trailing), &e.expr));
-                            fmt.format_tuple_with(
-                                Some(&tuple.leading),
-                                Some(&tuple.trailing),
-                                elems,
-                            );
-                        }
-                        StructBody::Fields(fields) => {
-                            let field_items = fields.fields.iter().map(|f| {
-                                (
-                                    ItemTrivia::kv(
-                                        &f.leading,
-                                        &f.pre_colon,
-                                        &f.post_colon,
-                                        &f.trailing,
-                                    ),
-                                    f.name.name.as_ref(),
-                                    &f.value,
-                                )
-                            });
-                            fmt.format_struct_fields_with(
-                                Some(&fields.leading),
-                                Some(&fields.trailing),
-                                field_items,
-                            );
-                        }
+                        StructBody::Tuple(tuple) => fmt.format_tuple_body(tuple),
+                        StructBody::Fields(fields) => fmt.format_fields_body(fields),
                     }
                 }
             }
@@ -637,8 +577,213 @@ impl<'a> RonFormatter<'a> {
     }
 
     // =========================================================================
+    // AST-specific format methods (zero allocation)
+    // =========================================================================
+
+    /// Format sequence items directly from AST (no allocation).
+    pub fn format_seq_items(&mut self, seq: &crate::ast::SeqExpr<'_>) {
+        let has_line_comments = seq
+            .items
+            .iter()
+            .any(|item| has_line_comment(&item.leading) || has_line_comment(&item.trailing))
+            || has_line_comment(&seq.leading)
+            || has_line_comment(&seq.trailing);
+
+        self.format_collection_generic(
+            CollectionType::Array,
+            '[',
+            ']',
+            &seq.leading,
+            &seq.trailing,
+            &seq.items,
+            has_line_comments,
+            |fmt, item| {
+                fmt.format_leading_comments(&item.leading);
+                fmt.write_indent();
+                item.expr.serialize(fmt);
+                fmt.format_trailing_inline_comment(&item.trailing);
+            },
+        );
+    }
+
+    /// Format tuple elements directly from AST - `TupleExpr` variant (no allocation).
+    pub fn format_tuple_items(&mut self, tuple: &crate::ast::TupleExpr<'_>) {
+        let has_line_comments = tuple
+            .elements
+            .iter()
+            .any(|e| has_line_comment(&e.leading) || has_line_comment(&e.trailing))
+            || has_line_comment(&tuple.leading)
+            || has_line_comment(&tuple.trailing);
+
+        self.format_collection_generic(
+            CollectionType::Tuple,
+            '(',
+            ')',
+            &tuple.leading,
+            &tuple.trailing,
+            &tuple.elements,
+            has_line_comments,
+            |fmt, elem| {
+                fmt.format_leading_comments(&elem.leading);
+                fmt.write_indent();
+                elem.expr.serialize(fmt);
+                fmt.format_trailing_inline_comment(&elem.trailing);
+            },
+        );
+    }
+
+    /// Format tuple elements directly from AST - `TupleBody` variant (no allocation).
+    pub fn format_tuple_body(&mut self, tuple: &crate::ast::TupleBody<'_>) {
+        let has_line_comments = tuple
+            .elements
+            .iter()
+            .any(|e| has_line_comment(&e.leading) || has_line_comment(&e.trailing))
+            || has_line_comment(&tuple.leading)
+            || has_line_comment(&tuple.trailing);
+
+        self.format_collection_generic(
+            CollectionType::Tuple,
+            '(',
+            ')',
+            &tuple.leading,
+            &tuple.trailing,
+            &tuple.elements,
+            has_line_comments,
+            |fmt, elem| {
+                fmt.format_leading_comments(&elem.leading);
+                fmt.write_indent();
+                elem.expr.serialize(fmt);
+                fmt.format_trailing_inline_comment(&elem.trailing);
+            },
+        );
+    }
+
+    /// Format map entries directly from AST (no allocation).
+    pub fn format_map_items(&mut self, map: &crate::ast::MapExpr<'_>) {
+        let has_line_comments = map.entries.iter().any(|e| {
+            has_line_comment(&e.leading)
+                || has_line_comment(&e.pre_colon)
+                || has_line_comment(&e.post_colon)
+                || has_line_comment(&e.trailing)
+        }) || has_line_comment(&map.leading)
+            || has_line_comment(&map.trailing);
+
+        self.format_collection_generic(
+            CollectionType::Map,
+            '{',
+            '}',
+            &map.leading,
+            &map.trailing,
+            &map.entries,
+            has_line_comments,
+            |fmt, entry| {
+                fmt.format_leading_comments(&entry.leading);
+                fmt.write_indent();
+                entry.key.serialize(fmt);
+                fmt.format_trailing_inline_comment(&entry.pre_colon);
+                fmt.write_colon();
+                fmt.format_leading_comments_inline(&entry.post_colon);
+                entry.value.serialize(fmt);
+                fmt.format_trailing_inline_comment(&entry.trailing);
+            },
+        );
+    }
+
+    /// Format anonymous struct fields directly from AST (no allocation).
+    pub fn format_anon_struct_items(&mut self, s: &crate::ast::AnonStructExpr<'_>) {
+        let has_line_comments = s.fields.iter().any(|f| {
+            has_line_comment(&f.leading)
+                || has_line_comment(&f.pre_colon)
+                || has_line_comment(&f.post_colon)
+                || has_line_comment(&f.trailing)
+        }) || has_line_comment(&s.leading)
+            || has_line_comment(&s.trailing);
+
+        self.format_collection_generic(
+            CollectionType::Struct,
+            '(',
+            ')',
+            &s.leading,
+            &s.trailing,
+            &s.fields,
+            has_line_comments,
+            |fmt, field| {
+                fmt.format_leading_comments(&field.leading);
+                fmt.write_indent();
+                fmt.write_str(&field.name.name);
+                fmt.format_trailing_inline_comment(&field.pre_colon);
+                fmt.write_colon();
+                fmt.format_leading_comments_inline(&field.post_colon);
+                field.value.serialize(fmt);
+                fmt.format_trailing_inline_comment(&field.trailing);
+            },
+        );
+    }
+
+    /// Format struct fields directly from AST - `FieldsBody` variant (no allocation).
+    pub fn format_fields_body(&mut self, fields: &crate::ast::FieldsBody<'_>) {
+        let has_line_comments = fields.fields.iter().any(|f| {
+            has_line_comment(&f.leading)
+                || has_line_comment(&f.pre_colon)
+                || has_line_comment(&f.post_colon)
+                || has_line_comment(&f.trailing)
+        }) || has_line_comment(&fields.leading)
+            || has_line_comment(&fields.trailing);
+
+        self.format_collection_generic(
+            CollectionType::Struct,
+            '(',
+            ')',
+            &fields.leading,
+            &fields.trailing,
+            &fields.fields,
+            has_line_comments,
+            |fmt, field| {
+                fmt.format_leading_comments(&field.leading);
+                fmt.write_indent();
+                fmt.write_str(&field.name.name);
+                fmt.format_trailing_inline_comment(&field.pre_colon);
+                fmt.write_colon();
+                fmt.format_leading_comments_inline(&field.post_colon);
+                field.value.serialize(fmt);
+                fmt.format_trailing_inline_comment(&field.trailing);
+            },
+        );
+    }
+
+    // =========================================================================
     // Generic collection methods for SerializeRon
     // =========================================================================
+
+    /// Format a sequence `[a, b, c]` from a pre-collected slice.
+    pub fn format_seq_slice<'t, T>(
+        &mut self,
+        leading: &Trivia<'_>,
+        trailing: &Trivia<'_>,
+        items: &[(ItemTrivia<'t>, &'t T)],
+    ) where
+        T: SerializeRon + 't,
+    {
+        let has_line_comments = items.iter().any(|(trivia, _)| trivia.has_line_comment())
+            || has_line_comment(leading)
+            || has_line_comment(trailing);
+
+        self.format_collection_generic(
+            CollectionType::Array,
+            '[',
+            ']',
+            leading,
+            trailing,
+            items,
+            has_line_comments,
+            |fmt, &(trivia, item)| {
+                fmt.format_leading_comments_opt(trivia.leading);
+                fmt.write_indent();
+                item.serialize(fmt);
+                fmt.format_trailing_inline_comment_opt(trivia.trailing);
+            },
+        );
+    }
 
     /// Format a sequence `[a, b, c]` using `SerializeRon` and `ItemTrivia`.
     pub fn format_seq_with<'t, T, I>(
@@ -649,32 +794,36 @@ impl<'a> RonFormatter<'a> {
     ) where
         T: SerializeRon + 't,
         I: IntoIterator<Item = (ItemTrivia<'t>, &'t T)>,
-        I::IntoIter: Clone,
     {
         let empty_trivia = Trivia::empty();
         let leading_ref = leading.unwrap_or(&empty_trivia);
         let trailing_ref = trailing.unwrap_or(&empty_trivia);
-        let items_iter = items.into_iter();
+        let items_vec: Vec<_> = items.into_iter().collect();
+        self.format_seq_slice(leading_ref, trailing_ref, &items_vec);
+    }
 
-        // Collect to vec for iteration
-        let items_vec: Vec<_> = items_iter.collect();
-
-        // Check for line comments
-        let has_line_comments = items_vec
-            .iter()
-            .any(|(trivia, _)| trivia.has_line_comment())
-            || has_line_comment(leading_ref)
-            || has_line_comment(trailing_ref);
+    /// Format a tuple `(a, b, c)` from a pre-collected slice.
+    pub fn format_tuple_slice<'t, T>(
+        &mut self,
+        leading: &Trivia<'_>,
+        trailing: &Trivia<'_>,
+        items: &[(ItemTrivia<'t>, &'t T)],
+    ) where
+        T: SerializeRon + 't,
+    {
+        let has_line_comments = items.iter().any(|(trivia, _)| trivia.has_line_comment())
+            || has_line_comment(leading)
+            || has_line_comment(trailing);
 
         self.format_collection_generic(
-            CollectionType::Array,
-            '[',
-            ']',
-            leading_ref,
-            trailing_ref,
-            &items_vec,
+            CollectionType::Tuple,
+            '(',
+            ')',
+            leading,
+            trailing,
+            items,
             has_line_comments,
-            |fmt, (trivia, item)| {
+            |fmt, &(trivia, item)| {
                 fmt.format_leading_comments_opt(trivia.leading);
                 fmt.write_indent();
                 item.serialize(fmt);
@@ -692,31 +841,46 @@ impl<'a> RonFormatter<'a> {
     ) where
         T: SerializeRon + 't,
         I: IntoIterator<Item = (ItemTrivia<'t>, &'t T)>,
-        I::IntoIter: Clone,
     {
         let empty_trivia = Trivia::empty();
         let leading_ref = leading.unwrap_or(&empty_trivia);
         let trailing_ref = trailing.unwrap_or(&empty_trivia);
         let items_vec: Vec<_> = items.into_iter().collect();
+        self.format_tuple_slice(leading_ref, trailing_ref, &items_vec);
+    }
 
-        let has_line_comments = items_vec
+    /// Format a map `{k: v, ...}` from a pre-collected slice.
+    pub fn format_map_slice<'t, K, V>(
+        &mut self,
+        leading: &Trivia<'_>,
+        trailing: &Trivia<'_>,
+        entries: &[(ItemTrivia<'t>, &'t K, &'t V)],
+    ) where
+        K: SerializeRon + 't,
+        V: SerializeRon + 't,
+    {
+        let has_line_comments = entries
             .iter()
-            .any(|(trivia, _)| trivia.has_line_comment())
-            || has_line_comment(leading_ref)
-            || has_line_comment(trailing_ref);
+            .any(|(trivia, _, _)| trivia.has_line_comment())
+            || has_line_comment(leading)
+            || has_line_comment(trailing);
 
         self.format_collection_generic(
-            CollectionType::Tuple,
-            '(',
-            ')',
-            leading_ref,
-            trailing_ref,
-            &items_vec,
+            CollectionType::Map,
+            '{',
+            '}',
+            leading,
+            trailing,
+            entries,
             has_line_comments,
-            |fmt, (trivia, item)| {
+            |fmt, &(trivia, key, value)| {
                 fmt.format_leading_comments_opt(trivia.leading);
                 fmt.write_indent();
-                item.serialize(fmt);
+                key.serialize(fmt);
+                fmt.format_trailing_inline_comment_opt(trivia.pre_colon);
+                fmt.write_colon();
+                fmt.format_leading_comments_inline_opt(trivia.post_colon);
+                value.serialize(fmt);
                 fmt.format_trailing_inline_comment_opt(trivia.trailing);
             },
         );
@@ -732,31 +896,41 @@ impl<'a> RonFormatter<'a> {
         K: SerializeRon + 't,
         V: SerializeRon + 't,
         I: IntoIterator<Item = (ItemTrivia<'t>, &'t K, &'t V)>,
-        I::IntoIter: Clone,
     {
         let empty_trivia = Trivia::empty();
         let leading_ref = leading.unwrap_or(&empty_trivia);
         let trailing_ref = trailing.unwrap_or(&empty_trivia);
         let entries_vec: Vec<_> = entries.into_iter().collect();
+        self.format_map_slice(leading_ref, trailing_ref, &entries_vec);
+    }
 
-        let has_line_comments = entries_vec
+    /// Format an anonymous struct `(x: 1, y: 2)` from a pre-collected slice.
+    pub fn format_anon_struct_slice<'t, V>(
+        &mut self,
+        leading: &Trivia<'_>,
+        trailing: &Trivia<'_>,
+        fields: &[(ItemTrivia<'t>, &'t str, &'t V)],
+    ) where
+        V: SerializeRon + 't,
+    {
+        let has_line_comments = fields
             .iter()
             .any(|(trivia, _, _)| trivia.has_line_comment())
-            || has_line_comment(leading_ref)
-            || has_line_comment(trailing_ref);
+            || has_line_comment(leading)
+            || has_line_comment(trailing);
 
         self.format_collection_generic(
-            CollectionType::Map,
-            '{',
-            '}',
-            leading_ref,
-            trailing_ref,
-            &entries_vec,
+            CollectionType::Struct,
+            '(',
+            ')',
+            leading,
+            trailing,
+            fields,
             has_line_comments,
-            |fmt, (trivia, key, value)| {
+            |fmt, &(trivia, name, value)| {
                 fmt.format_leading_comments_opt(trivia.leading);
                 fmt.write_indent();
-                key.serialize(fmt);
+                fmt.write_str(name);
                 fmt.format_trailing_inline_comment_opt(trivia.pre_colon);
                 fmt.write_colon();
                 fmt.format_leading_comments_inline_opt(trivia.post_colon);
@@ -775,38 +949,12 @@ impl<'a> RonFormatter<'a> {
     ) where
         V: SerializeRon + 't,
         I: IntoIterator<Item = (ItemTrivia<'t>, &'t str, &'t V)>,
-        I::IntoIter: Clone,
     {
         let empty_trivia = Trivia::empty();
         let leading_ref = leading.unwrap_or(&empty_trivia);
         let trailing_ref = trailing.unwrap_or(&empty_trivia);
         let fields_vec: Vec<_> = fields.into_iter().collect();
-
-        let has_line_comments = fields_vec
-            .iter()
-            .any(|(trivia, _, _)| trivia.has_line_comment())
-            || has_line_comment(leading_ref)
-            || has_line_comment(trailing_ref);
-
-        self.format_collection_generic(
-            CollectionType::Struct,
-            '(',
-            ')',
-            leading_ref,
-            trailing_ref,
-            &fields_vec,
-            has_line_comments,
-            |fmt, (trivia, name, value)| {
-                fmt.format_leading_comments_opt(trivia.leading);
-                fmt.write_indent();
-                fmt.write_str(name);
-                fmt.format_trailing_inline_comment_opt(trivia.pre_colon);
-                fmt.write_colon();
-                fmt.format_leading_comments_inline_opt(trivia.post_colon);
-                value.serialize(fmt);
-                fmt.format_trailing_inline_comment_opt(trivia.trailing);
-            },
-        );
+        self.format_anon_struct_slice(leading_ref, trailing_ref, &fields_vec);
     }
 
     /// Format struct fields body `(x: 1, y: 2)` for named structs.
@@ -840,7 +988,7 @@ impl<'a> RonFormatter<'a> {
 
     /// Generic collection formatting with pre-computed line comment info.
     #[allow(clippy::too_many_arguments)]
-    fn format_collection_generic<T: Clone, F>(
+    fn format_collection_generic<T, F>(
         &mut self,
         collection_type: CollectionType,
         open: char,
@@ -851,7 +999,7 @@ impl<'a> RonFormatter<'a> {
         has_line_comments: bool,
         format_item: F,
     ) where
-        F: Fn(&mut Self, T),
+        F: Fn(&mut Self, &T),
     {
         // Track depth for nested collections
         let current_depth = self.depth;
@@ -918,7 +1066,7 @@ impl<'a> RonFormatter<'a> {
         self.depth = current_depth;
     }
 
-    fn try_format_compact_generic<T: Clone, F>(
+    fn try_format_compact_generic<T, F>(
         &self,
         open: char,
         close: char,
@@ -928,7 +1076,7 @@ impl<'a> RonFormatter<'a> {
         format_item: F,
     ) -> String
     where
-        F: Fn(&mut Self, T),
+        F: Fn(&mut Self, &T),
     {
         let mut compact_formatter = RonFormatter::new(self.config);
         compact_formatter.is_root = false;
@@ -943,7 +1091,7 @@ impl<'a> RonFormatter<'a> {
             if i > 0 {
                 compact_formatter.write_separator();
             }
-            format_item(&mut compact_formatter, item.clone());
+            format_item(&mut compact_formatter, item);
         }
 
         // Trailing trivia (converted to compact format)
@@ -953,7 +1101,7 @@ impl<'a> RonFormatter<'a> {
         compact_formatter.output
     }
 
-    fn format_multiline_generic<T: Clone, F>(
+    fn format_multiline_generic<T, F>(
         &mut self,
         open: char,
         close: char,
@@ -962,7 +1110,7 @@ impl<'a> RonFormatter<'a> {
         items: &[T],
         format_item: F,
     ) where
-        F: Fn(&mut Self, T),
+        F: Fn(&mut Self, &T),
     {
         self.output.push(open);
 
@@ -981,7 +1129,7 @@ impl<'a> RonFormatter<'a> {
         self.format_leading_comments(leading);
 
         for (i, item) in items.iter().enumerate() {
-            format_item(self, item.clone());
+            format_item(self, item);
             self.output.push(',');
             if i < items.len() - 1 {
                 self.output.push('\n');

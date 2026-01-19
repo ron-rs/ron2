@@ -234,11 +234,9 @@ impl SerializeRon for Value {
 
             // Map
             Value::Map(map) => {
-                // Collect to Vec for Clone requirement
-                let entries: Vec<_> = map
+                let entries = map
                     .iter()
-                    .map(|(k, v)| (ItemTrivia::empty(), k, v))
-                    .collect();
+                    .map(|(k, v)| (ItemTrivia::empty(), k, v));
                 fmt.format_map_with(None, None, entries);
             }
 
