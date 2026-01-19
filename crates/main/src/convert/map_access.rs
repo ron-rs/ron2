@@ -49,6 +49,8 @@ pub const MAX_FIELDS: usize = 64;
 pub struct AstMapAccess<'a> {
     /// Slice of struct fields from the AST
     fields: &'a [StructField<'a>],
+    /// O(1) field name to index lookup
+    field_indices: HashMap<&'a str, usize>,
     /// Bitmask tracking which fields have been consumed (bit i = field i)
     consumed: u64,
     /// The span of the entire struct (for missing field errors)
@@ -65,6 +67,7 @@ impl<'a> AstMapAccess<'a> {
     /// Returns an error if:
     /// - The struct has more than 64 fields
     /// - Duplicate field names are found
+    #[inline]
     pub fn from_anon(s: &'a AnonStructExpr<'a>, struct_name: Option<&'a str>) -> Result<Self> {
         if s.fields.len() > MAX_FIELDS {
             return Err(Error::with_span(
@@ -76,24 +79,24 @@ impl<'a> AstMapAccess<'a> {
             ));
         }
 
-        // Check for duplicate field names via linear scan
+        // Build field index HashMap while detecting duplicates in one pass
+        let mut field_indices = HashMap::with_capacity(s.fields.len());
         for (i, field) in s.fields.iter().enumerate() {
             let name = field.name.name.as_ref();
-            for earlier in &s.fields[..i] {
-                if earlier.name.name.as_ref() == name {
-                    return Err(Error::with_span(
-                        ErrorKind::DuplicateField {
-                            field: Cow::Owned(name.to_string()),
-                            outer: struct_name.map(|s| Cow::Owned(s.to_string())),
-                        },
-                        field.name.span,
-                    ));
-                }
+            if field_indices.insert(name, i).is_some() {
+                return Err(Error::with_span(
+                    ErrorKind::DuplicateField {
+                        field: Cow::Owned(name.to_string()),
+                        outer: struct_name.map(|s| Cow::Owned(s.to_string())),
+                    },
+                    field.name.span,
+                ));
             }
         }
 
         Ok(Self {
             fields: &s.fields,
+            field_indices,
             consumed: 0,
             struct_span: s.span,
             struct_name,
@@ -107,6 +110,7 @@ impl<'a> AstMapAccess<'a> {
     /// Returns an error if:
     /// - The struct has more than 64 fields
     /// - Duplicate field names are found
+    #[inline]
     pub fn from_fields(
         fields_body: &'a FieldsBody<'a>,
         struct_name: Option<&'a str>,
@@ -122,24 +126,24 @@ impl<'a> AstMapAccess<'a> {
             ));
         }
 
-        // Check for duplicate field names via linear scan
+        // Build field index HashMap while detecting duplicates in one pass
+        let mut field_indices = HashMap::with_capacity(fields_body.fields.len());
         for (i, field) in fields_body.fields.iter().enumerate() {
             let name = field.name.name.as_ref();
-            for earlier in &fields_body.fields[..i] {
-                if earlier.name.name.as_ref() == name {
-                    return Err(Error::with_span(
-                        ErrorKind::DuplicateField {
-                            field: Cow::Owned(name.to_string()),
-                            outer: struct_name.map(|s| Cow::Owned(s.to_string())),
-                        },
-                        field.name.span,
-                    ));
-                }
+            if field_indices.insert(name, i).is_some() {
+                return Err(Error::with_span(
+                    ErrorKind::DuplicateField {
+                        field: Cow::Owned(name.to_string()),
+                        outer: struct_name.map(|s| Cow::Owned(s.to_string())),
+                    },
+                    field.name.span,
+                ));
             }
         }
 
         Ok(Self {
             fields: &fields_body.fields,
+            field_indices,
             consumed: 0,
             struct_span,
             struct_name,
@@ -147,17 +151,18 @@ impl<'a> AstMapAccess<'a> {
     }
 
     /// Find a field by name, returning its index and reference.
+    #[inline]
     fn find_field(&self, name: &str) -> Option<(usize, &'a StructField<'a>)> {
-        self.fields
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.name.name.as_ref() == name)
+        self.field_indices
+            .get(name)
+            .map(|&idx| (idx, &self.fields[idx]))
     }
 
     /// Get a required field.
     ///
     /// Returns an error with the field's span if deserialization fails,
     /// or the struct's span if the field is missing.
+    #[inline]
     pub fn required<T: FromRon>(&mut self, name: &'static str) -> Result<T> {
         match self.find_field(name) {
             Some((idx, field)) => {
@@ -177,6 +182,7 @@ impl<'a> AstMapAccess<'a> {
     /// Get an optional field.
     ///
     /// Returns `Ok(None)` if the field is missing.
+    #[inline]
     pub fn optional<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
         match self.find_field(name) {
             Some((idx, field)) => {
@@ -188,6 +194,7 @@ impl<'a> AstMapAccess<'a> {
     }
 
     /// Get a field with a default value if missing.
+    #[inline]
     pub fn with_default<T: FromRon + Default>(&mut self, name: &'static str) -> Result<T> {
         match self.find_field(name) {
             Some((idx, field)) => {
@@ -199,6 +206,7 @@ impl<'a> AstMapAccess<'a> {
     }
 
     /// Get a field with a custom default function.
+    #[inline]
     pub fn with_default_fn<T: FromRon, F: FnOnce() -> T>(
         &mut self,
         name: &'static str,
@@ -249,6 +257,7 @@ impl<'a> AstMapAccess<'a> {
     /// this method rejects bare values and requires explicit option syntax.
     ///
     /// Use this for fields marked with `#[ron(explicit)]`.
+    #[inline]
     pub fn required_explicit<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
         match self.find_field(name) {
             Some((idx, field)) => {
@@ -283,6 +292,7 @@ impl<'a> AstMapAccess<'a> {
     /// this method rejects bare values and requires explicit option syntax.
     ///
     /// Use this for fields marked with `#[ron(explicit, default)]`.
+    #[inline]
     pub fn with_default_explicit<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
         match self.find_field(name) {
             Some((idx, field)) => {
@@ -312,6 +322,7 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// The inner type must implement [`FromRonFields`] to consume fields
     /// from this access.
+    #[inline]
     pub fn flatten<T: FromRonFields>(&mut self) -> Result<T> {
         T::from_fields(self)
     }

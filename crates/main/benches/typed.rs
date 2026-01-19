@@ -29,6 +29,82 @@ struct LargeConfig {
 }
 
 // ============================================================================
+// Field Scaling Test Types - measure O(n²) vs O(n) field lookup
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToRon, FromRon)]
+struct Fields10 {
+    f01: i32,
+    f02: i32,
+    f03: i32,
+    f04: i32,
+    f05: i32,
+    f06: i32,
+    f07: i32,
+    f08: i32,
+    f09: i32,
+    f10: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToRon, FromRon)]
+struct Fields20 {
+    f01: i32,
+    f02: i32,
+    f03: i32,
+    f04: i32,
+    f05: i32,
+    f06: i32,
+    f07: i32,
+    f08: i32,
+    f09: i32,
+    f10: i32,
+    f11: i32,
+    f12: i32,
+    f13: i32,
+    f14: i32,
+    f15: i32,
+    f16: i32,
+    f17: i32,
+    f18: i32,
+    f19: i32,
+    f20: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToRon, FromRon)]
+struct Fields30 {
+    f01: i32,
+    f02: i32,
+    f03: i32,
+    f04: i32,
+    f05: i32,
+    f06: i32,
+    f07: i32,
+    f08: i32,
+    f09: i32,
+    f10: i32,
+    f11: i32,
+    f12: i32,
+    f13: i32,
+    f14: i32,
+    f15: i32,
+    f16: i32,
+    f17: i32,
+    f18: i32,
+    f19: i32,
+    f20: i32,
+    f21: i32,
+    f22: i32,
+    f23: i32,
+    f24: i32,
+    f25: i32,
+    f26: i32,
+    f27: i32,
+    f28: i32,
+    f29: i32,
+    f30: i32,
+}
+
+// ============================================================================
 // Test Data
 // ============================================================================
 
@@ -44,6 +120,81 @@ fn large_config() -> LargeConfig {
                 enabled: i % 2 == 0,
             })
             .collect(),
+    }
+}
+
+fn fields10() -> Fields10 {
+    Fields10 {
+        f01: 1,
+        f02: 2,
+        f03: 3,
+        f04: 4,
+        f05: 5,
+        f06: 6,
+        f07: 7,
+        f08: 8,
+        f09: 9,
+        f10: 10,
+    }
+}
+
+fn fields20() -> Fields20 {
+    Fields20 {
+        f01: 1,
+        f02: 2,
+        f03: 3,
+        f04: 4,
+        f05: 5,
+        f06: 6,
+        f07: 7,
+        f08: 8,
+        f09: 9,
+        f10: 10,
+        f11: 11,
+        f12: 12,
+        f13: 13,
+        f14: 14,
+        f15: 15,
+        f16: 16,
+        f17: 17,
+        f18: 18,
+        f19: 19,
+        f20: 20,
+    }
+}
+
+fn fields30() -> Fields30 {
+    Fields30 {
+        f01: 1,
+        f02: 2,
+        f03: 3,
+        f04: 4,
+        f05: 5,
+        f06: 6,
+        f07: 7,
+        f08: 8,
+        f09: 9,
+        f10: 10,
+        f11: 11,
+        f12: 12,
+        f13: 13,
+        f14: 14,
+        f15: 15,
+        f16: 16,
+        f17: 17,
+        f18: 18,
+        f19: 19,
+        f20: 20,
+        f21: 21,
+        f22: 22,
+        f23: 23,
+        f24: 24,
+        f25: 25,
+        f26: 26,
+        f27: 27,
+        f28: 28,
+        f29: 29,
+        f30: 30,
     }
 }
 
@@ -91,6 +242,42 @@ fn bench_deserialize(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_serialize, bench_deserialize);
+// ============================================================================
+// Field Scaling Benchmarks - measure O(n²) vs O(n) lookup performance
+// ============================================================================
+
+fn bench_field_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("typed/field_scaling");
+
+    // 10 fields
+    let data10 = fields10();
+    let input10 = data10.to_ron().unwrap();
+    group.bench_function("10_fields", |b| {
+        b.iter(|| Fields10::from_ron(&input10).unwrap());
+    });
+
+    // 20 fields
+    let data20 = fields20();
+    let input20 = data20.to_ron().unwrap();
+    group.bench_function("20_fields", |b| {
+        b.iter(|| Fields20::from_ron(&input20).unwrap());
+    });
+
+    // 30 fields
+    let data30 = fields30();
+    let input30 = data30.to_ron().unwrap();
+    group.bench_function("30_fields", |b| {
+        b.iter(|| Fields30::from_ron(&input30).unwrap());
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_serialize,
+    bench_deserialize,
+    bench_field_scaling
+);
 
 criterion_main!(benches);

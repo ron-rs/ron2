@@ -396,7 +396,8 @@ fn unicode_positions_are_byte_based() {
     // So "junk" starts at byte offset 12, column 13 (1-indexed)
     assert_eq!(err.span().start.line, 1);
     assert_eq!(
-        err.span().start.col, 13,
+        err.span().start.col,
+        13,
         "Column {} should be byte-based (expected 13)",
         err.span().start.col
     );
