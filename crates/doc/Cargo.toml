@@ -9,10 +9,10 @@ description = "Generate Markdown documentation from RON schema files"
 [dependencies]
 ahash.workspace = true
 ron2.workspace = true
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
-walkdir = "2.4"
+walkdir = "2.5"
 serde_json = "1.0"
 
 [dev-dependencies]
-tempfile = "3.10"
+tempfile = "3.24"
