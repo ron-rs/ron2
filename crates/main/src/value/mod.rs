@@ -16,7 +16,7 @@ pub use number::{F32, F64, Number};
 
 use crate::{
     Error, ErrorKind,
-    ast::{parse_document, to_value},
+    ast::{into_value, parse_document},
 };
 
 /// Ordered list of struct fields (name-value pairs).
@@ -74,7 +74,8 @@ impl FromStr for Value {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let doc = parse_document(s)?;
 
-        match to_value(&doc) {
+        // Use consuming conversion to avoid unnecessary clones
+        match into_value(doc) {
             Some(Ok(value)) => Ok(value),
             Some(Err(e)) => {
                 // Conversion error - e already contains span information

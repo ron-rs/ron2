@@ -178,11 +178,10 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
             return Trivia::empty();
         }
 
-        let tokens = ::core::mem::take(&mut self.trivia_buffer);
-        let start = tokens.first().map(|t| t.span);
-        let end = tokens.last().map(|t| t.span);
+        let start_span = self.trivia_buffer.first().map(|t| t.span);
+        let end_span = self.trivia_buffer.last().map(|t| t.span);
 
-        let span = match (start, end) {
+        let span = match (start_span, end_span) {
             (Some(s), Some(e)) => Some(Span {
                 start: s.start,
                 end: e.end,
@@ -193,15 +192,15 @@ impl<'a> ParserCore<'a> for AstParser<'a> {
         };
 
         // Build whitespace string from first whitespace token and collect comments
+        // Use drain(..) to avoid intermediate Vec allocation from mem::take
         let mut first_whitespace_range: Option<(usize, usize)> = None;
         let mut comments = Vec::new();
 
-        for tok in tokens {
+        for tok in self.trivia_buffer.drain(..) {
             match tok.kind {
                 TokenKind::Whitespace => {
                     if first_whitespace_range.is_none() {
-                        first_whitespace_range =
-                            Some((tok.span.start_offset, tok.span.end_offset));
+                        first_whitespace_range = Some((tok.span.start_offset, tok.span.end_offset));
                     }
                 }
                 TokenKind::LineComment => {

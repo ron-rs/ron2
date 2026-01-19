@@ -22,6 +22,12 @@ impl Map {
         Self::default()
     }
 
+    /// Creates a new, empty [`Map`] with the specified capacity.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(indexmap::IndexMap::with_capacity(capacity))
+    }
+
     /// Returns the number of elements in the map.
     #[must_use]
     pub fn len(&self) -> usize {

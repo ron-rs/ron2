@@ -13,6 +13,20 @@ use crate::{
 
 extern crate alloc;
 
+/// Pre-computed closing delimiters for raw strings with 0-8 hashes.
+/// This avoids heap allocation. More than 8 hashes is treated as an error.
+const RAW_STRING_CLOSING_DELIMITERS: [&str; 9] = [
+    "\"",
+    "\"#",
+    "\"##",
+    "\"###",
+    "\"####",
+    "\"#####",
+    "\"######",
+    "\"#######",
+    "\"########",
+];
+
 /// A lexer that tokenizes RON source text.
 ///
 /// The lexer implements `Iterator` and produces `Token` items for each
@@ -485,24 +499,32 @@ impl<'a> Lexer<'a> {
             return None;
         }
 
+        // Reject more than 8 hashes (extremely rare in practice)
+        if hash_count >= RAW_STRING_CLOSING_DELIMITERS.len() {
+            self.advance(prefix_len + 1);
+            // Consume rest of string-like content for error recovery
+            while !self.remaining().is_empty() {
+                if self.peek_char() == Some('"') {
+                    self.next_char();
+                    break;
+                }
+                self.next_char();
+            }
+            return Some(TokenKind::Error);
+        }
+
         self.advance(prefix_len + 1); // consume r###..."
 
         // Find the closing sequence: " followed by same number of #
-        let closing: alloc::string::String = core::iter::once('"')
-            .chain(core::iter::repeat_n('#', hash_count))
-            .collect();
-
+        let closing = RAW_STRING_CLOSING_DELIMITERS[hash_count];
         loop {
             if self.remaining().is_empty() {
-                // Unterminated raw string
                 return Some(TokenKind::Error);
             }
-
-            if self.check_str(&closing) {
+            if self.check_str(closing) {
                 self.advance(closing.len());
                 return Some(TokenKind::String);
             }
-
             self.next_char();
         }
     }
@@ -538,23 +560,32 @@ impl<'a> Lexer<'a> {
             // Check for opening quote
             let prefix_len = 2 + hash_count; // "br" + hashes
             if remaining.len() > prefix_len && remaining[prefix_len..].starts_with('"') {
+                // Reject more than 8 hashes
+                if hash_count >= RAW_STRING_CLOSING_DELIMITERS.len() {
+                    self.advance(prefix_len + 1);
+                    // Consume rest of string-like content for error recovery
+                    while !self.remaining().is_empty() {
+                        if self.peek_char() == Some('"') {
+                            self.next_char();
+                            break;
+                        }
+                        self.next_char();
+                    }
+                    return Some(TokenKind::Error);
+                }
+
                 self.advance(prefix_len + 1); // consume br###..."
 
                 // Find the closing sequence
-                let closing: alloc::string::String = core::iter::once('"')
-                    .chain(core::iter::repeat_n('#', hash_count))
-                    .collect();
-
+                let closing = RAW_STRING_CLOSING_DELIMITERS[hash_count];
                 loop {
                     if self.remaining().is_empty() {
                         return Some(TokenKind::Error);
                     }
-
-                    if self.check_str(&closing) {
+                    if self.check_str(closing) {
                         self.advance(closing.len());
                         return Some(TokenKind::ByteString);
                     }
-
                     self.next_char();
                 }
             }

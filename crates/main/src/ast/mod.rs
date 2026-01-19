@@ -43,9 +43,9 @@ mod unescape;
 use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
 pub use convert::{
-    expr_to_value, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
-    synthetic_map, synthetic_option, synthetic_seq, synthetic_string, synthetic_tuple,
-    synthetic_unit, to_value, value_to_expr,
+    expr_into_value, expr_to_value, into_value, synthetic_bool, synthetic_char, synthetic_f32,
+    synthetic_f64, synthetic_integer, synthetic_map, synthetic_option, synthetic_seq,
+    synthetic_string, synthetic_tuple, synthetic_unit, to_value, value_to_expr,
 };
 pub use fmt::{
     CommentMode, CompactTypes, Compaction, FormatConfig, Spacing, format_document, format_expr,
@@ -127,6 +127,7 @@ pub struct Trivia<'a> {
 
 impl Trivia<'_> {
     /// Creates empty trivia with no comments or whitespace.
+    #[inline]
     #[must_use]
     pub fn empty() -> Self {
         Self {
@@ -137,6 +138,7 @@ impl Trivia<'_> {
     }
 
     /// Returns true if this trivia contains no content.
+    #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.span.is_none() && self.whitespace.is_empty() && self.comments.is_empty()

@@ -62,6 +62,25 @@ pub fn to_value(doc: &Document<'_>) -> Option<Result<Value>> {
     doc.value.as_ref().map(expr_to_value)
 }
 
+/// Convert an AST document to a Value, consuming the AST.
+///
+/// This is more efficient than `to_value` as it moves strings and bytes
+/// instead of cloning them.
+///
+/// Returns `None` if the document has no value (empty document or comments only).
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::{parse_document, into_value};
+///
+/// let doc = parse_document("\"hello\"").unwrap();
+/// let value = into_value(doc).unwrap();
+/// ```
+pub fn into_value(doc: Document<'_>) -> Option<Result<Value>> {
+    doc.value.map(expr_into_value)
+}
+
 /// Convert an AST expression to a Value.
 ///
 /// Errors include the span of the expression that caused the error,
@@ -81,6 +100,32 @@ pub fn expr_to_value(expr: &Expr<'_>) -> Result<Value> {
         Expr::Tuple(tuple) => tuple_to_value(tuple),
         Expr::AnonStruct(s) => anon_struct_to_value(s),
         Expr::Struct(s) => struct_to_value(s),
+        Expr::Error(err) => Err(Error::with_span(err.error.kind().clone(), err.span)),
+    }
+}
+
+/// Convert an AST expression to a Value, consuming the AST.
+///
+/// This is more efficient than `expr_to_value` as it moves strings and bytes
+/// instead of cloning them.
+pub fn expr_into_value(expr: Expr<'_>) -> Result<Value> {
+    match expr {
+        Expr::Unit(_) => Ok(Value::Unit),
+        Expr::Bool(b) => Ok(Value::Bool(b.value)),
+        Expr::Char(c) => Ok(Value::Char(c.value)),
+        Expr::Byte(b) => Ok(Value::Number(Number::U8(b.value))),
+        Expr::Number(n) => {
+            let span = n.span;
+            number_to_value(&n).with_span(&span)
+        }
+        Expr::String(s) => Ok(Value::String(s.value)),
+        Expr::Bytes(b) => Ok(Value::Bytes(b.value)),
+        Expr::Option(opt) => option_into_value(*opt),
+        Expr::Seq(seq) => seq_into_value(seq),
+        Expr::Map(map) => map_into_value(map),
+        Expr::Tuple(tuple) => tuple_into_value(tuple),
+        Expr::AnonStruct(s) => anon_struct_into_value(s),
+        Expr::Struct(s) => struct_into_value(s),
         Expr::Error(err) => Err(Error::with_span(err.error.kind().clone(), err.span)),
     }
 }
@@ -184,8 +229,12 @@ fn fit_unsigned_64(val: u64) -> Value {
 }
 
 fn parse_float(raw: &str) -> Result<Value> {
-    // Remove underscores (not in exponent position as that would be invalid)
-    let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
+    // Remove underscores only if present (avoid allocation for clean floats)
+    let cleaned: Cow<'_, str> = if raw.contains('_') {
+        Cow::Owned(raw.chars().filter(|&c| c != '_').collect())
+    } else {
+        Cow::Borrowed(raw)
+    };
 
     // Always parse as f64 for consistency
     let val: f64 = cleaned.parse().map_err(|_| {
@@ -237,17 +286,13 @@ fn seq_to_value(seq: &SeqExpr<'_>) -> Result<Value> {
 }
 
 fn map_to_value(map: &MapExpr<'_>) -> Result<Value> {
-    let entries: Result<Vec<(Value, Value)>> = map
-        .entries
-        .iter()
-        .map(|entry| {
-            let key = expr_to_value(&entry.key)?;
-            let value = expr_to_value(&entry.value)?;
-            Ok((key, value))
-        })
-        .collect();
-
-    Ok(Value::Map(entries?.into_iter().collect()))
+    let mut result = crate::value::Map::with_capacity(map.entries.len());
+    for entry in &map.entries {
+        let key = expr_to_value(&entry.key)?;
+        let value = expr_to_value(&entry.value)?;
+        result.insert(key, value);
+    }
+    Ok(Value::Map(result))
 }
 
 /// Convert anonymous tuple `(a, b, c)` to `Value::Tuple`.
@@ -309,6 +354,92 @@ fn fields_body_to_struct_fields(fields: &FieldsBody<'_>) -> Result<StructFields>
     for field in &fields.fields {
         let key = field.name.name.to_string();
         let value = expr_to_value(&field.value)?;
+        result.push((key, value));
+    }
+    Ok(result)
+}
+
+// ============================================================================
+// Consuming AST → Value conversion helpers
+// ============================================================================
+
+fn option_into_value(opt: OptionExpr<'_>) -> Result<Value> {
+    match opt.value {
+        Some(inner) => {
+            let val = expr_into_value(inner.expr)?;
+            Ok(Value::Option(Some(Box::new(val))))
+        }
+        None => Ok(Value::Option(None)),
+    }
+}
+
+fn seq_into_value(seq: SeqExpr<'_>) -> Result<Value> {
+    let mut items = Vec::with_capacity(seq.items.len());
+    for item in seq.items {
+        items.push(expr_into_value(item.expr)?);
+    }
+    Ok(Value::Seq(items))
+}
+
+fn map_into_value(map: MapExpr<'_>) -> Result<Value> {
+    let mut result = crate::value::Map::with_capacity(map.entries.len());
+    for entry in map.entries {
+        let key = expr_into_value(entry.key)?;
+        let value = expr_into_value(entry.value)?;
+        result.insert(key, value);
+    }
+    Ok(Value::Map(result))
+}
+
+fn tuple_into_value(tuple: TupleExpr<'_>) -> Result<Value> {
+    let mut elements = Vec::with_capacity(tuple.elements.len());
+    for elem in tuple.elements {
+        elements.push(expr_into_value(elem.expr)?);
+    }
+    Ok(Value::Tuple(elements))
+}
+
+fn anon_struct_into_value(s: AnonStructExpr<'_>) -> Result<Value> {
+    let mut struct_fields = StructFields::with_capacity(s.fields.len());
+    for f in s.fields {
+        let name = f.name.name.into_owned();
+        let value = expr_into_value(f.value)?;
+        struct_fields.push((name, value));
+    }
+    Ok(Value::Struct(struct_fields))
+}
+
+fn struct_into_value(s: StructExpr<'_>) -> Result<Value> {
+    let name = s.name.name.into_owned();
+
+    let content = match s.body {
+        None => NamedContent::Unit,
+        Some(StructBody::Tuple(tuple)) => {
+            let elements = tuple_body_into_vec(tuple)?;
+            NamedContent::Tuple(elements)
+        }
+        Some(StructBody::Fields(fields)) => {
+            let struct_fields = fields_body_into_struct_fields(fields)?;
+            NamedContent::Struct(struct_fields)
+        }
+    };
+
+    Ok(Value::Named { name, content })
+}
+
+fn tuple_body_into_vec(tuple: TupleBody<'_>) -> Result<Vec<Value>> {
+    let mut result = Vec::with_capacity(tuple.elements.len());
+    for elem in tuple.elements {
+        result.push(expr_into_value(elem.expr)?);
+    }
+    Ok(result)
+}
+
+fn fields_body_into_struct_fields(fields: FieldsBody<'_>) -> Result<StructFields> {
+    let mut result = StructFields::with_capacity(fields.fields.len());
+    for field in fields.fields {
+        let key = field.name.name.into_owned();
+        let value = expr_into_value(field.value)?;
         result.push((key, value));
     }
     Ok(result)
