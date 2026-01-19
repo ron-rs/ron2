@@ -23,3 +23,6 @@ thiserror = "2"
 [profile.release]
 debug = true  # Enable debug symbols for profiling
 # split-debuginfo = "unpacked"  # Required for Instruments on macOS
+
+[profile.bench]
+debug = true  # Enable debug symbols for profiling benchmarks
