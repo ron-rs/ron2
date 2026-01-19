@@ -44,8 +44,9 @@ use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
 pub use convert::{
     expr_into_value, expr_to_value, into_value, synthetic_bool, synthetic_char, synthetic_f32,
-    synthetic_f64, synthetic_integer, synthetic_map, synthetic_option, synthetic_seq,
-    synthetic_string, synthetic_tuple, synthetic_unit, to_value, value_to_expr,
+    synthetic_f64, synthetic_integer, synthetic_map, synthetic_named_tuple, synthetic_named_unit,
+    synthetic_option, synthetic_seq, synthetic_string, synthetic_struct, synthetic_tuple,
+    synthetic_unit, to_value, value_to_expr,
 };
 pub use fmt::{
     CommentMode, CompactTypes, Compaction, FormatConfig, Spacing, format_document, format_expr,

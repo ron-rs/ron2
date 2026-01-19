@@ -56,9 +56,9 @@ pub mod ast;
 pub(crate) mod chars;
 pub mod convert;
 pub mod error;
-pub(crate) mod lexer;
+pub mod lexer;
 pub mod schema;
-pub(crate) mod token;
+pub mod token;
 mod util;
 pub mod value;
 

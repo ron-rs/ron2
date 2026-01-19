@@ -152,54 +152,57 @@ pub fn validate_transparent_struct<'a>(
 }
 
 // =============================================================================
-// Flatten Field Helpers
+// AST-based Flatten Helpers (for direct Expr generation)
 // =============================================================================
 
-/// Generate flatten field merge logic for ToRon serialization
+/// Generate flatten field merge logic for direct AST serialization
 ///
-/// This helper consolidates the duplicated pattern in ser.rs where flatten fields
-/// need to handle both Option::Some(inner) and direct values.
-pub fn generate_flatten_value_merge(field_ident: &syn::Ident) -> TokenStream2 {
+/// This helper works with `Expr<'static>` instead of `Value`, avoiding the
+/// intermediate conversion step for better performance.
+pub fn generate_flatten_ast_merge(field_ident: &syn::Ident) -> TokenStream2 {
     quote! {
-        match ::ron2::ToRon::to_ron_value(&self.#field_ident)? {
-            ::ron2::Value::Option(Some(inner)) => {
-                flatten_value_into_fields(*inner, stringify!(#field_ident), &mut fields)?;
+        match ::ron2::ToRon::to_ast(&self.#field_ident)? {
+            ::ron2::ast::Expr::Option(opt) => {
+                if let Some(inner) = opt.value {
+                    flatten_ast_into_fields(inner.expr, stringify!(#field_ident), &mut __fields)?;
+                }
             }
-            ::ron2::Value::Option(None) => {}
-            value => {
-                flatten_value_into_fields(value, stringify!(#field_ident), &mut fields)?;
+            expr => {
+                flatten_ast_into_fields(expr, stringify!(#field_ident), &mut __fields)?;
             }
         }
     }
 }
 
-/// Generate the runtime helper function for flatten field processing
+/// Generate the runtime helper function for AST-based flatten field processing
 ///
-/// This emits a helper function that will be included in the generated ToRon impl.
-/// It handles all the different value types that can be flattened into a struct.
-pub fn emit_flatten_helper() -> TokenStream2 {
+/// This emits a helper function that extracts fields from `Expr` types (Struct,
+/// AnonStruct, Map) into a `Vec<(Cow<'static, str>, Expr<'static>)>`.
+pub fn emit_flatten_ast_helper() -> TokenStream2 {
     quote! {
-        #[allow(clippy::ptr_arg)]
-        fn flatten_value_into_fields(
-            value: ::ron2::Value,
+        fn flatten_ast_into_fields(
+            expr: ::ron2::ast::Expr<'static>,
             field_name: &str,
-            fields: &mut Vec<(String, ::ron2::Value)>,
+            fields: &mut Vec<(::std::borrow::Cow<'static, str>, ::ron2::ast::Expr<'static>)>,
         ) -> ::ron2::error::Result<()> {
-            match value {
-                ::ron2::Value::Named {
-                    content: ::ron2::NamedContent::Struct(nested_fields),
-                    ..
-                } => {
-                    fields.extend(nested_fields);
+            match expr {
+                ::ron2::ast::Expr::Struct(s) => {
+                    if let Some(::ron2::ast::StructBody::Fields(body)) = s.body {
+                        for field in body.fields {
+                            fields.push((field.name.name, field.value));
+                        }
+                    }
                 }
-                ::ron2::Value::Struct(nested_fields) => {
-                    fields.extend(nested_fields);
+                ::ron2::ast::Expr::AnonStruct(s) => {
+                    for field in s.fields {
+                        fields.push((field.name.name, field.value));
+                    }
                 }
-                ::ron2::Value::Map(map) => {
-                    for (key, value) in map {
-                        match key {
-                            ::ron2::Value::String(name) => {
-                                fields.push((name, value));
+                ::ron2::ast::Expr::Map(m) => {
+                    for entry in m.entries {
+                        match entry.key {
+                            ::ron2::ast::Expr::String(s) => {
+                                fields.push((::std::borrow::Cow::Owned(s.value), entry.value));
                             }
                             _ => {
                                 return Err(::ron2::Error::new(::ron2::error::ErrorKind::Message(

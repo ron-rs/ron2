@@ -7,7 +7,7 @@ use syn::{Data, DeriveInput, Fields, Ident};
 use crate::{
     attr::{ContainerAttrs, FieldAttrs, VariantAttrs},
     field_util::{
-        emit_flatten_helper, generate_flatten_value_merge, validate_transparent_struct,
+        emit_flatten_ast_helper, generate_flatten_ast_merge, validate_transparent_struct,
         FieldSkipMode, TransparentField,
     },
 };
@@ -33,8 +33,7 @@ pub fn derive_to_ron(input: &DeriveInput) -> syn::Result<TokenStream2> {
     Ok(quote! {
         impl #impl_generics ::ron2::ToRon for #name #ty_generics #where_clause {
             fn to_ast(&self) -> ::ron2::error::Result<::ron2::ast::Expr<'static>> {
-                let __value_result: ::ron2::error::Result<::ron2::Value> = (|| { #body })();
-                __value_result.map(::ron2::ast::value_to_expr)
+                #body
             }
         }
     })
@@ -65,6 +64,7 @@ fn derive_struct_ser(
                     .unwrap_or(false)
             });
 
+            let field_count = named.named.len();
             let mut field_serializations = Vec::new();
 
             for field in &named.named {
@@ -80,13 +80,13 @@ fn derive_struct_ser(
 
                 // Handle flatten: merge fields from nested struct
                 if field_attrs.flatten {
-                    let serialize_expr = generate_flatten_value_merge(field_ident);
+                    let serialize_expr = generate_flatten_ast_merge(field_ident);
                     field_serializations.push(serialize_expr);
                     continue;
                 }
 
                 let serialize_expr = quote! {
-                    ::ron2::ToRon::to_ron_value(&self.#field_ident)?
+                    ::ron2::ToRon::to_ast(&self.#field_ident)?
                 };
 
                 // Determine skip condition: opt takes precedence over skip_serializing_if
@@ -102,19 +102,19 @@ fn derive_struct_ser(
                 if let Some(condition) = skip_condition {
                     field_serializations.push(quote! {
                         if !(#condition) {
-                            fields.push((#field_name.to_string(), #serialize_expr));
+                            __fields.push((::std::borrow::Cow::Borrowed(#field_name), #serialize_expr));
                         }
                     });
                 } else {
                     field_serializations.push(quote! {
-                        fields.push((#field_name.to_string(), #serialize_expr));
+                        __fields.push((::std::borrow::Cow::Borrowed(#field_name), #serialize_expr));
                     });
                 }
             }
 
-            // Produce Named struct: StructName(field: val, ...)
+            // Produce Named struct using synthetic_struct
             let flatten_helper = if has_flatten {
-                emit_flatten_helper()
+                emit_flatten_ast_helper()
             } else {
                 quote! {}
             };
@@ -122,12 +122,10 @@ fn derive_struct_ser(
             Ok(quote! {
                 #flatten_helper
 
-                let mut fields: ::ron2::StructFields = ::std::vec::Vec::new();
+                let mut __fields: Vec<(::std::borrow::Cow<'static, str>, ::ron2::ast::Expr<'static>)> =
+                    Vec::with_capacity(#field_count);
                 #(#field_serializations)*
-                Ok(::ron2::Value::Named {
-                    name: #struct_name.to_string(),
-                    content: ::ron2::NamedContent::Struct(fields),
-                })
+                Ok(::ron2::ast::synthetic_struct(#struct_name, __fields))
             })
         }
         Fields::Unnamed(unnamed) => {
@@ -139,25 +137,19 @@ fn derive_struct_ser(
                 .map(|(i, _)| {
                     let index = syn::Index::from(i);
                     quote! {
-                        ::ron2::ToRon::to_ron_value(&self.#index)?
+                        ::ron2::ToRon::to_ast(&self.#index)?
                     }
                 })
                 .collect();
 
             Ok(quote! {
-                Ok(::ron2::Value::Named {
-                    name: #struct_name.to_string(),
-                    content: ::ron2::NamedContent::Tuple(vec![#(#field_serializations),*]),
-                })
+                Ok(::ron2::ast::synthetic_named_tuple(#struct_name, vec![#(#field_serializations),*]))
             })
         }
         Fields::Unit => {
             // Unit struct -> Named unit: UnitStruct
             Ok(quote! {
-                Ok(::ron2::Value::Named {
-                    name: #struct_name.to_string(),
-                    content: ::ron2::NamedContent::Unit,
-                })
+                Ok(::ron2::ast::synthetic_named_unit(#struct_name))
             })
         }
     }
@@ -187,10 +179,7 @@ fn derive_enum_ser(
                 // Unit variant: Variant -> Variant
                 quote! {
                     #name::#variant_ident => {
-                        Ok(::ron2::Value::Named {
-                            name: #variant_name.to_string(),
-                            content: ::ron2::NamedContent::Unit,
-                        })
+                        Ok(::ron2::ast::synthetic_named_unit(#variant_name))
                     }
                 }
             }
@@ -201,16 +190,13 @@ fn derive_enum_ser(
 
                 let field_values: Vec<_> = field_names
                     .iter()
-                    .map(|f| quote! { ::ron2::ToRon::to_ron_value(#f)? })
+                    .map(|f| quote! { ::ron2::ToRon::to_ast(#f)? })
                     .collect();
 
                 // Tuple variant: Variant(a, b) -> Variant(a, b)
                 quote! {
                     #name::#variant_ident(#(#field_names),*) => {
-                        Ok(::ron2::Value::Named {
-                            name: #variant_name.to_string(),
-                            content: ::ron2::NamedContent::Tuple(vec![#(#field_values),*]),
-                        })
+                        Ok(::ron2::ast::synthetic_named_tuple(#variant_name, vec![#(#field_values),*]))
                     }
                 }
             }
@@ -222,6 +208,7 @@ fn derive_enum_ser(
                     .map(|f| f.ident.as_ref().unwrap())
                     .collect();
 
+                let field_count = named.named.len();
                 let mut field_serializations = Vec::new();
                 for field in &named.named {
                     let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
@@ -234,7 +221,7 @@ fn derive_enum_ser(
                         field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
                     let serialize_expr = quote! {
-                        ::ron2::ToRon::to_ron_value(#field_ident)?
+                        ::ron2::ToRon::to_ast(#field_ident)?
                     };
 
                     // Determine skip condition: opt takes precedence over skip_serializing_if
@@ -251,24 +238,22 @@ fn derive_enum_ser(
                     if let Some(condition) = skip_condition {
                         field_serializations.push(quote! {
                             if !(#condition) {
-                                __fields.push((#ron_name.to_string(), #serialize_expr));
+                                __fields.push((::std::borrow::Cow::Borrowed(#ron_name), #serialize_expr));
                             }
                         });
                     } else {
                         field_serializations.push(quote! {
-                            __fields.push((#ron_name.to_string(), #serialize_expr));
+                            __fields.push((::std::borrow::Cow::Borrowed(#ron_name), #serialize_expr));
                         });
                     }
                 }
 
                 quote! {
                     #name::#variant_ident { #(#field_names),* } => {
-                        let mut __fields: ::ron2::StructFields = ::std::vec::Vec::new();
+                        let mut __fields: Vec<(::std::borrow::Cow<'static, str>, ::ron2::ast::Expr<'static>)> =
+                            Vec::with_capacity(#field_count);
                         #(#field_serializations)*
-                        Ok(::ron2::Value::Named {
-                            name: #variant_name.to_string(),
-                            content: ::ron2::NamedContent::Struct(__fields),
-                        })
+                        Ok(::ron2::ast::synthetic_struct(#variant_name, __fields))
                     }
                 }
             }
@@ -292,10 +277,10 @@ fn derive_transparent_struct_ser(name: &Ident, fields: &Fields) -> syn::Result<T
 
     match transparent {
         TransparentField::Named { ident, .. } => Ok(quote! {
-            ::ron2::ToRon::to_ron_value(&self.#ident)
+            ::ron2::ToRon::to_ast(&self.#ident)
         }),
         TransparentField::Unnamed { .. } => Ok(quote! {
-            ::ron2::ToRon::to_ron_value(&self.0)
+            ::ron2::ToRon::to_ast(&self.0)
         }),
     }
 }

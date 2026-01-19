@@ -5,8 +5,8 @@
 
 mod common;
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use ron2::{ToRon, ast::FormatConfig};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main, black_box};
+use ron2::{ToRon, ast::FormatConfig, lexer::Lexer};
 
 /// Benchmark AST parsing using `parse_document()`.
 fn bench_parse_ast(c: &mut Criterion) {
@@ -115,8 +115,49 @@ fn bench_comments(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark pure lexer tokenization (no AST construction).
+fn bench_lexer(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core");
+    let input = common::large_config();
+
+    // Print stats once
+    let token_count = Lexer::new(&input).count();
+    let bytes = input.len();
+    eprintln!(
+        "Lexer stats: {} bytes, {} tokens, {:.1} bytes/token",
+        bytes,
+        token_count,
+        bytes as f64 / token_count as f64
+    );
+
+    group.throughput(Throughput::Bytes(input.len() as u64));
+
+    // Lexer without trivia (value parsing mode)
+    group.bench_function("lexer", |b| {
+        b.iter(|| {
+            let lexer = Lexer::new(&input);
+            for token in lexer {
+                black_box(token);
+            }
+        });
+    });
+
+    // Lexer with trivia (AST parsing mode)
+    group.bench_function("lexer_trivia", |b| {
+        b.iter(|| {
+            let lexer = Lexer::new(&input).with_trivia(true);
+            for token in lexer {
+                black_box(token);
+            }
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
+    bench_lexer,
     bench_parse_ast,
     bench_parse_value,
     bench_serialize_ast,

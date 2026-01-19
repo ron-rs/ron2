@@ -864,6 +864,138 @@ pub fn synthetic_tuple(elements: Vec<Expr<'static>>) -> Expr<'static> {
     })
 }
 
+/// Create a synthetic named struct expression: `Name(field: value, ...)`.
+///
+/// This creates a `StructExpr` with fields body, suitable for serializing
+/// Rust structs with named fields.
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::{synthetic_struct, synthetic_integer};
+/// use std::borrow::Cow;
+///
+/// let fields = vec![
+///     (Cow::Borrowed("x"), synthetic_integer(10i32)),
+///     (Cow::Borrowed("y"), synthetic_integer(20i32)),
+/// ];
+/// let expr = synthetic_struct("Point", fields);
+/// // Results in: Point(x: 10, y: 20)
+/// ```
+#[must_use]
+pub fn synthetic_struct(
+    name: impl Into<Cow<'static, str>>,
+    fields: Vec<(Cow<'static, str>, Expr<'static>)>,
+) -> Expr<'static> {
+    let struct_fields: Vec<StructField<'static>> = fields
+        .into_iter()
+        .map(|(field_name, value)| StructField {
+            leading: Trivia::empty(),
+            name: Ident {
+                span: Span::synthetic(),
+                name: field_name,
+            },
+            pre_colon: Trivia::empty(),
+            colon: Span::synthetic(),
+            post_colon: Trivia::empty(),
+            value,
+            trailing: Trivia::empty(),
+            comma: None,
+        })
+        .collect();
+
+    Expr::Struct(StructExpr {
+        span: Span::synthetic(),
+        name: Ident {
+            span: Span::synthetic(),
+            name: name.into(),
+        },
+        pre_body: Trivia::empty(),
+        body: Some(StructBody::Fields(FieldsBody {
+            open_brace: Span::synthetic(),
+            leading: Trivia::empty(),
+            fields: struct_fields,
+            trailing: Trivia::empty(),
+            close_brace: Span::synthetic(),
+        })),
+    })
+}
+
+/// Create a synthetic named tuple expression: `Name(a, b, c)`.
+///
+/// This creates a `StructExpr` with tuple body, suitable for serializing
+/// Rust tuple structs or enum tuple variants.
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::{synthetic_named_tuple, synthetic_integer};
+///
+/// let elements = vec![
+///     synthetic_integer(10i32),
+///     synthetic_integer(20i32),
+/// ];
+/// let expr = synthetic_named_tuple("Point", elements);
+/// // Results in: Point(10, 20)
+/// ```
+#[must_use]
+pub fn synthetic_named_tuple(
+    name: impl Into<Cow<'static, str>>,
+    elements: Vec<Expr<'static>>,
+) -> Expr<'static> {
+    let tuple_elements: Vec<TupleElement<'static>> = elements
+        .into_iter()
+        .map(|expr| TupleElement {
+            leading: Trivia::empty(),
+            expr,
+            trailing: Trivia::empty(),
+            comma: None,
+        })
+        .collect();
+
+    Expr::Struct(StructExpr {
+        span: Span::synthetic(),
+        name: Ident {
+            span: Span::synthetic(),
+            name: name.into(),
+        },
+        pre_body: Trivia::empty(),
+        body: Some(StructBody::Tuple(TupleBody {
+            open_paren: Span::synthetic(),
+            leading: Trivia::empty(),
+            elements: tuple_elements,
+            trailing: Trivia::empty(),
+            close_paren: Span::synthetic(),
+        })),
+    })
+}
+
+/// Create a synthetic named unit expression: `Name`.
+///
+/// This creates a `StructExpr` with no body, suitable for serializing
+/// Rust unit structs or enum unit variants.
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::synthetic_named_unit;
+///
+/// let expr = synthetic_named_unit("None");
+/// // Results in: None
+/// ```
+#[must_use]
+pub fn synthetic_named_unit(name: impl Into<Cow<'static, str>>) -> Expr<'static> {
+    Expr::Struct(StructExpr {
+        span: Span::synthetic(),
+        name: Ident {
+            span: Span::synthetic(),
+            name: name.into(),
+        },
+        pre_body: Trivia::empty(),
+        body: None,
+    })
+}
+
 // ============================================================================
 // Internal helpers
 // ============================================================================
