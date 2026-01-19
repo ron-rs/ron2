@@ -1,5 +1,8 @@
 //! Span and position types for source location tracking.
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use core::fmt;
 
 /// A position in source text (line and column, 1-indexed).
@@ -139,6 +142,110 @@ impl fmt::Display for Span {
     }
 }
 
+/// Index of line start positions for efficient byte offset → line/column lookup.
+///
+/// Builds a table of line start offsets once and uses binary search to convert
+/// byte offsets to positions.
+///
+/// # Complexity
+///
+/// - Build: O(n) single pass through the source
+/// - Lookup: O(log L) where L = number of lines
+#[derive(Clone, Debug)]
+pub struct LineIndex {
+    /// Byte offsets where each line starts. `line_starts[0]` = 0 (first line starts at offset 0).
+    line_starts: Vec<usize>,
+}
+
+impl LineIndex {
+    /// Build a line index from source text.
+    ///
+    /// Performs a single O(n) pass to find all newline positions.
+    #[must_use]
+    pub fn new(source: &str) -> Self {
+        let mut line_starts = vec![0];
+        for (i, b) in source.bytes().enumerate() {
+            if b == b'\n' {
+                line_starts.push(i + 1);
+            }
+        }
+        Self { line_starts }
+    }
+
+    /// Convert a byte offset to a line/column position.
+    ///
+    /// Uses binary search for O(log L) lookup where L = number of lines.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset` is greater than the source length.
+    #[must_use]
+    pub fn position(&self, offset: usize) -> Position {
+        // partition_point returns the number of elements for which the predicate is true
+        // We want the last line_start that is <= offset
+        let line = self.line_starts.partition_point(|&start| start <= offset);
+        // line is now 1-indexed (partition_point returns count, not index)
+        let line_start = self.line_starts[line - 1];
+        Position {
+            line,
+            col: offset - line_start + 1,
+        }
+    }
+
+    /// Returns the line starts array for creating a cursor.
+    #[must_use]
+    pub fn line_starts(&self) -> &[usize] {
+        &self.line_starts
+    }
+}
+
+/// A cursor for efficient sequential position lookups.
+///
+/// For lexers that compute positions sequentially (cursor only moves forward),
+/// this provides O(k) lookups where k = number of newlines crossed, rather
+/// than O(log L) binary search per lookup.
+#[derive(Clone, Debug)]
+pub struct LineIndexCursor<'a> {
+    line_starts: &'a [usize],
+    /// Current line (1-indexed).
+    line: usize,
+    /// Byte offset where current line starts.
+    line_start: usize,
+}
+
+impl<'a> LineIndexCursor<'a> {
+    /// Create a cursor starting at position (1, 1).
+    #[must_use]
+    pub fn new(line_index: &'a LineIndex) -> Self {
+        Self {
+            line_starts: &line_index.line_starts,
+            line: 1,
+            line_start: 0,
+        }
+    }
+
+    /// Convert a byte offset to position, scanning forward from the last lookup.
+    ///
+    /// The offset must be >= the offset from the previous call (monotonic).
+    /// This is O(k) where k = number of newlines between the last and current offset.
+    #[must_use]
+    pub fn position(&mut self, offset: usize) -> Position {
+        // Scan forward through line starts to find which line we're on
+        while self.line < self.line_starts.len() {
+            let next_line_start = self.line_starts[self.line];
+            if offset < next_line_start {
+                break;
+            }
+            self.line += 1;
+            self.line_start = next_line_start;
+        }
+        Position {
+            line: self.line,
+            col: offset - self.line_start + 1,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -211,5 +318,42 @@ mod tests {
             Position::from_src_end("a\nb\nc"),
             Position { line: 3, col: 2 }
         );
+    }
+
+    #[test]
+    fn test_line_index_single_line() {
+        let idx = LineIndex::new("hello");
+        assert_eq!(idx.position(0), Position { line: 1, col: 1 });
+        assert_eq!(idx.position(4), Position { line: 1, col: 5 });
+        assert_eq!(idx.position(5), Position { line: 1, col: 6 });
+    }
+
+    #[test]
+    fn test_line_index_multiline() {
+        let idx = LineIndex::new("foo\nbar\nbaz");
+        // Line 1: "foo\n" (offsets 0-3)
+        assert_eq!(idx.position(0), Position { line: 1, col: 1 });
+        assert_eq!(idx.position(2), Position { line: 1, col: 3 });
+        assert_eq!(idx.position(3), Position { line: 1, col: 4 }); // newline char
+        // Line 2: "bar\n" (offsets 4-7)
+        assert_eq!(idx.position(4), Position { line: 2, col: 1 });
+        assert_eq!(idx.position(6), Position { line: 2, col: 3 });
+        // Line 3: "baz" (offsets 8-10)
+        assert_eq!(idx.position(8), Position { line: 3, col: 1 });
+        assert_eq!(idx.position(10), Position { line: 3, col: 3 });
+    }
+
+    #[test]
+    fn test_line_index_empty() {
+        let idx = LineIndex::new("");
+        assert_eq!(idx.position(0), Position { line: 1, col: 1 });
+    }
+
+    #[test]
+    fn test_line_index_trailing_newline() {
+        let idx = LineIndex::new("foo\n");
+        assert_eq!(idx.position(0), Position { line: 1, col: 1 });
+        assert_eq!(idx.position(3), Position { line: 1, col: 4 }); // newline
+        assert_eq!(idx.position(4), Position { line: 2, col: 1 }); // after newline
     }
 }

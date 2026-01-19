@@ -384,20 +384,20 @@ fn whitespace_only_has_sensible_error() {
 }
 
 #[test]
-fn unicode_positions_are_character_based() {
+fn unicode_positions_are_byte_based() {
     // Unicode: "日本語" = 3 characters but 9 bytes
+    // Columns are byte-based for performance (O(log n) lookup via LineIndex)
     let source = "\"日本語\" junk";
     let result: Result<Value> = source.parse();
     let err = result.unwrap_err();
 
     // The error should be at "junk"
-    // Position should be character-based, not byte-based
+    // String bytes: " (1) + 日 (3) + 本 (3) + 語 (3) + " (1) + space (1) = 12 bytes
+    // So "junk" starts at byte offset 12, column 13 (1-indexed)
     assert_eq!(err.span().start.line, 1);
-    // After "日本語" (5 chars including quotes) + space = col 7
-    // This tests whether columns are character or byte based
-    assert!(
-        err.span().start.col >= 6 && err.span().start.col <= 12,
-        "Column {} should be reasonable for unicode",
+    assert_eq!(
+        err.span().start.col, 13,
+        "Column {} should be byte-based (expected 13)",
         err.span().start.col
     );
 }

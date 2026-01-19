@@ -7,7 +7,7 @@
 
 use crate::{
     chars::{is_ident_continue_char, is_ident_first_char, is_ident_raw_char, is_whitespace_char},
-    error::{Position, Span},
+    error::{LineIndex, Position, Span},
     token::{Token, TokenKind},
 };
 
@@ -36,10 +36,12 @@ pub struct Lexer<'a> {
     source: &'a str,
     /// Current byte offset in the source
     cursor: usize,
-    /// Current line number (1-indexed)
-    line: usize,
-    /// Current column number (1-indexed)
-    col: usize,
+    /// Line index for position calculation
+    line_index: LineIndex,
+    /// Current line number (1-indexed) for fast sequential position lookups
+    current_line: usize,
+    /// Byte offset where current line starts
+    current_line_start: usize,
     /// Whether to emit trivia tokens (whitespace, comments)
     emit_trivia: bool,
     /// Whether we've emitted the EOF token
@@ -56,8 +58,9 @@ impl<'a> Lexer<'a> {
         Self {
             source,
             cursor: 0,
-            line: 1,
-            col: 1,
+            line_index: LineIndex::new(source),
+            current_line: 1,
+            current_line_start: 0,
             emit_trivia: false,
             eof_emitted: false,
         }
@@ -74,11 +77,24 @@ impl<'a> Lexer<'a> {
     }
 
     /// Returns the current position in the source.
+    ///
+    /// Uses sequential scanning from the last known position, which is O(k)
+    /// where k = number of newlines crossed since last call.
     #[must_use]
-    pub fn current_position(&self) -> Position {
+    pub fn current_position(&mut self) -> Position {
+        let line_starts = self.line_index.line_starts();
+        // Scan forward through line starts to find which line we're on
+        while self.current_line < line_starts.len() {
+            let next_line_start = line_starts[self.current_line];
+            if self.cursor < next_line_start {
+                break;
+            }
+            self.current_line += 1;
+            self.current_line_start = next_line_start;
+        }
         Position {
-            line: self.line,
-            col: self.col,
+            line: self.current_line,
+            col: self.cursor - self.current_line_start + 1,
         }
     }
 
@@ -137,7 +153,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Consumes and returns the next character, updating position tracking.
+    /// Consumes and returns the next character.
     /// Uses a fast path for ASCII characters.
     #[inline]
     fn next_char(&mut self) -> Option<char> {
@@ -146,37 +162,18 @@ impl<'a> Lexer<'a> {
         if b.is_ascii() {
             // Fast path for ASCII
             self.cursor += 1;
-            if b == b'\n' {
-                self.line += 1;
-                self.col = 1;
-            } else {
-                self.col += 1;
-            }
             Some(b as char)
         } else {
             // Slow path for non-ASCII
             let c = self.remaining().chars().next()?;
             self.cursor += c.len_utf8();
-            self.col += 1;
             Some(c)
         }
     }
 
-    /// Advances the cursor by the given number of bytes, updating position tracking.
-    /// Uses byte iteration for efficiency - newlines are always ASCII so byte comparison is correct.
+    /// Advances the cursor by the given number of bytes.
     #[inline]
     fn advance(&mut self, bytes: usize) {
-        let slice = &self.source.as_bytes()[self.cursor..self.cursor + bytes];
-        for &b in slice {
-            if b == b'\n' {
-                self.line += 1;
-                self.col = 1;
-            } else {
-                // For column tracking, we count bytes. This is correct for ASCII
-                // and an approximation for multi-byte UTF-8 (which is rare in RON).
-                self.col += 1;
-            }
-        }
         self.cursor += bytes;
     }
 

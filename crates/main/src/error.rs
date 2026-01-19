@@ -24,7 +24,7 @@ mod path;
 mod span;
 
 pub use path::PathSegment;
-pub use span::{Position, Span};
+pub use span::{LineIndex, LineIndexCursor, Position, Span};
 
 // Compatibility aliases for schema validation
 #[doc(hidden)]

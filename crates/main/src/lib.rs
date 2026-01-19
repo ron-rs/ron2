@@ -66,6 +66,6 @@ pub mod value;
 pub use crate::{
     ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing},
     convert::{AstMapAccess, FromRon, FromRonFields, ParsedInt, Spanned, ToRon, parse_int_raw},
-    error::{Error, ErrorKind, PathSegment, Position, Result, Span},
+    error::{Error, ErrorKind, LineIndex, LineIndexCursor, PathSegment, Position, Result, Span},
     value::{Map, NamedContent, Number, StructFields, Value},
 };
