@@ -1,38 +1,5 @@
 //! Shared test data for benchmarks.
 
-/// Medium config with nested structures (~500 bytes).
-pub const MEDIUM_CONFIG: &str = r#"Config(
-    name: "test application",
-    version: (1, 2, 3),
-    settings: {
-        "debug": true,
-        "timeout": 30,
-        "nested": {
-            "a": 1,
-            "b": 2,
-        },
-    },
-    tags: ["web", "api", "production"],
-    metadata: Some({
-        "author": "test",
-        "license": "MIT",
-    }),
-)"#;
-
-/// Config with comments for testing comment preservation.
-pub const WITH_COMMENTS: &str = r#"// Application configuration
-Config(
-    // Server settings
-    name: "test", // inline comment
-    /* block comment */
-    port: 8080,
-    // Database configuration
-    database: (
-        host: "localhost",
-        port: 5432, // PostgreSQL default
-    ),
-)"#;
-
 /// Generate a large config (~10KB) with many items.
 pub fn large_config() -> String {
     let mut s = String::with_capacity(12000);
@@ -78,11 +45,32 @@ pub fn large_config() -> String {
     s
 }
 
-/// Returns all test inputs as (name, data) pairs.
-pub fn test_inputs() -> Vec<(&'static str, String)> {
-    vec![
-        ("medium", MEDIUM_CONFIG.to_string()),
-        ("with_comments", WITH_COMMENTS.to_string()),
-        ("large", large_config()),
-    ]
+/// Config with comments for testing comment preservation.
+pub fn with_comments() -> String {
+    r#"// Application configuration
+Config(
+    // Server settings
+    name: "test", // inline comment
+    /* block comment */
+    port: 8080,
+    // Database configuration
+    database: (
+        host: "localhost",
+        port: 5432, // PostgreSQL default
+    ),
+)"#
+    .to_string()
+}
+
+/// Similar config without comments (for comparison).
+pub fn without_comments() -> String {
+    r#"Config(
+    name: "test",
+    port: 8080,
+    database: (
+        host: "localhost",
+        port: 5432,
+    ),
+)"#
+    .to_string()
 }

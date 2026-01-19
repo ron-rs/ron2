@@ -33,19 +33,7 @@ serial_test = "3.0"
 tempfile = "3.10"
 
 [[bench]]
-name = "parsing"
-harness = false
-
-[[bench]]
-name = "serialization"
-harness = false
-
-[[bench]]
-name = "formatting"
-harness = false
-
-[[bench]]
-name = "roundtrip"
+name = "core"
 harness = false
 
 [[bench]]
