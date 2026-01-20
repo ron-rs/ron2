@@ -9,7 +9,7 @@ Unlike the main `ron` crate, ron2:
 - **Perfect round-trip**: Comments, whitespace, and formatting are preserved exactly
 - **Zero-copy**: Uses `Cow<'a, str>` for borrowing from source without allocation
 - **No serde dependency**: Lightweight, works without serde
-- **No-std compatible**: Disable `std` feature for embedded use
+- **No external dependencies by default**: Minimal footprint
 
 ## Two APIs: AST and Value
 
@@ -44,13 +44,13 @@ assert_eq!(source, output);
 ### Value API (semantic only)
 
 ```rust
-use ron2::{from_str, to_string, Value};
+use ron2::Value;
 
 // Parse to Value - discards formatting
-let value: Value = from_str("(name: \"example\", count: 42)")?;
+let value: Value = "(name: \"example\", count: 42)".parse()?;
 
 // Serialize with configurable formatting
-let text = to_string(&value)?;
+let text = value.to_string();  // via Display
 ```
 
 ## What the AST Preserves
@@ -97,10 +97,8 @@ GameConfig( // optional struct name
 
 | Feature | Effect |
 |---------|--------|
-| `std` (default) | Enable I/O operations, order-preserving maps via `IndexMap` |
 | `integer128` | Enable `i128`/`u128` support |
-
-Note: `IndexMap` is always available as a dependency. With `std` enabled, the internal `Map` type uses `IndexMap` to preserve insertion order. Without `std`, it falls back to `BTreeMap` (sorted order).
+| `xdg` | Enable XDG base directory fallback for schema storage |
 
 ## Configuration
 

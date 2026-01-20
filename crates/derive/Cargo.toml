@@ -3,7 +3,7 @@ name = "ron2-derive"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Derive macro for generating RON schemas at compile time"
+description = "Derive macros for RON serialization, deserialization, and schema generation"
 
 [lib]
 proc-macro = true

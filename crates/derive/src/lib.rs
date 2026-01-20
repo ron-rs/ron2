@@ -5,7 +5,7 @@
 //! - `#[derive(Ron)]` - Implements ToRon, FromRon, and RonSchema (all three)
 //! - `#[derive(ToRon)]` - Serialize to RON without serde
 //! - `#[derive(FromRon)]` - Deserialize from RON without serde
-//! - `#[derive(RonSchema)]` - Generate RON schema files at compile time
+//! - `#[derive(RonSchema)]` - Generate RON schema definitions
 //!
 //! All derives share the `#[ron(...)]` attribute namespace.
 //!
@@ -103,7 +103,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
 
-/// Derive macro for generating RON schemas at compile time.
+/// Derive macro for generating RON schema definitions.
 ///
 /// # Attributes
 ///

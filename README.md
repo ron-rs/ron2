@@ -14,6 +14,7 @@ ron2-derive = "0.1"
 ```
 
 ```rust
+use ron2::FromRon;
 use ron2_derive::Ron;
 
 #[derive(Ron, Debug)]
@@ -24,36 +25,57 @@ struct Config {
     host: Option<String>,
 }
 
-let config: Config = ron2::from_str("(port: 8080, host: \"localhost\")")?;
-println!("{:?}", config);
+fn main() -> ron2::Result<()> {
+    let config = Config::from_ron("(port: 8080, host: \"localhost\")")?;
+    println!("{:?}", config);
+    Ok(())
+}
 ```
 
 ## Crates
 
-| Crate | Description |
-|-------|-------------|
-| `ron2` | Core parser with AST and Value APIs |
+| Crate         | Description                                                 |
+| ------------- | ----------------------------------------------------------- |
+| `ron2`        | Core parser with AST and Value APIs                         |
 | `ron2-derive` | Derive macros for `FromRon`, `ToRon`, and schema generation |
-| `ron2-lsp` | Language server with completions and diagnostics |
-| `ron2-doc` | Documentation generator from schema files |
-| `ron2-cli` | CLI tools (`ron fmt`, `ron doc`) |
+| `ron2-lsp`    | Language server with completions and diagnostics            |
+| `ron2-doc`    | Documentation generator from schema files                   |
+| `ron2-cli`    | CLI tools (`ron fmt`, `ron doc`)                            |
 
 ## Why ron2?
 
 - **AST-first**: Parses to a complete AST preserving all source information
-- **Perfect round-trip**: Comments, whitespace, and formatting preserved exactly
-- **Rich errors**: Type mismatch errors include precise source locations
-- **Full RON data model**: Custom derive avoids [serde limitations]
+- **Perfect round-trip**: Preserves comments, whitespace, and formatting exactly
+- **Rich errors**: Reports type mismatch errors with precise source locations
+- **Full RON data model**: Avoids [serde limitations] through custom derive
 
-Best for human-edited config files or building custom DSLs.
+ron2 works best for human-edited config files or building custom DSLs.
 
 [serde limitations]: https://github.com/ron-rs/ron?tab=readme-ov-file#limitations
 
 ## Schema & LSP
 
-ron2 generates schemas at compile time from your Rust types. The LSP uses these schemas for completions and validation.
+ron2 can generate schema files from your Rust types. The LSP uses these schemas for completions and validation.
 
-Add a type attribute to your RON files to enable editor support:
+Generate schemas by calling `write_schemas` (e.g., from a test or a dedicated binary):
+
+```rust
+use ron2::schema::RonSchemaType;
+
+// Write to a specific directory
+Config::write_schemas(Some("./schemas"))?;
+
+// Or use the default XDG location (~/.local/share/ron-schemas/)
+Config::write_schemas(None)?;
+```
+
+The LSP searches for schemas in this order:
+
+1. Configured `schemaDirs` (from editor settings)
+2. `RON_SCHEMA_DIR` environment variable
+3. XDG default (`~/.local/share/ron-schemas/`)
+
+Add the `#![type]` attribute to your RON files to enable completions:
 
 ```ron
 #![type = "my_crate::config::Config"]
@@ -64,9 +86,13 @@ Add a type attribute to your RON files to enable editor support:
 )
 ```
 
-The LSP will provide field name completions, type validation, and documentation on hover.
-
 ## CLI Tools
+
+Install the CLI:
+
+```bash
+cargo install ron2-cli
+```
 
 Format RON files:
 
@@ -81,17 +107,17 @@ Generate documentation from schemas:
 ron doc ./schemas -o ./docs
 ```
 
-## When NOT to Use ron2
+## When Not to Use ron2
 
 **Don't use ron2 if:**
 
 - You need serde compatibility (your types only implement Serialize/Deserialize)
-- You're parsing large data volumes (ron2 prioritizes fidelity over speed)
+- You're parsing large data volumes where speed matters more than AST fidelity
 
 **Alternatives:**
 
-- **[ron](https://github.com/ron-rs/ron)** — Mature, fast, serde-based
-- **[nanoserde](https://github.com/not-fl3/nanoserde)** — Minimal dependencies, fast compile
+- **[ron](https://github.com/ron-rs/ron)** — Mature, serde-based, widely used
+- **[nanoserde](https://github.com/not-fl3/nanoserde)** — Minimal dependencies, fast compile times
 
 ## Editor Setup
 

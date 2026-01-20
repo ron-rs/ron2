@@ -1,4 +1,4 @@
-# ron-derive
+# ron2-derive
 
 Derive macros for RON serialization, deserialization, and schema generation.
 
@@ -8,7 +8,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ron-derive = "0.1"
+ron2-derive = "0.1"
 ron2 = "0.1"
 ```
 
@@ -20,7 +20,7 @@ ron2 = "0.1"
 - `#[derive(RonSchema)]` - Generate RON schema files
 
 ```rust
-use ron_derive::Ron;
+use ron2_derive::Ron;
 use ron2::{FromRon, ToRon};
 
 #[derive(Debug, PartialEq, Ron)]

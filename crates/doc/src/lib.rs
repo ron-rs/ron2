@@ -1,4 +1,4 @@
-//! ron-doc - Generate Markdown documentation from RON schema files.
+//! ron2-doc - Generate Markdown documentation from RON schema files.
 //!
 //! This crate provides functionality to generate Markdown documentation
 //! from RON schema files, with support for Astro Starlight frontmatter.

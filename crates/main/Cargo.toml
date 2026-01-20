@@ -10,7 +10,7 @@ authors = [
     "Christopher Durham <cad97@cad97.com>",
 ]
 edition = "2024"
-description = "Rusty Object Notation - AST-powered implementation its own derive macro"
+description = "RON parser with full AST access, perfect round-trip fidelity, and formatting tools"
 categories = ["encoding"]
 rust-version = "1.90.0"
 

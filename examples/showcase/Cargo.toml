@@ -8,6 +8,3 @@ publish = false
 ron2 = { path = "../../crates/main" }
 ron2-derive = { path = "../../crates/derive" }
 ariadne = "0.6"
-
-[profile.release]
-debug = true  # Enable debug symbols for profiling
