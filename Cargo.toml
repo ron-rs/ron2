@@ -16,7 +16,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/torkleyy/ron-extras"
 
 [workspace.dependencies]
-ron2 = { path = "crates/main" }
+ron2 = { path = "crates/main", version = "0.1.0" }
+ron2-derive = { path = "crates/derive", version = "0.1.0" }
+ron2-doc = { path = "crates/doc", version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2"
 itoa = "1.0"

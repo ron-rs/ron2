@@ -3,6 +3,7 @@ name = "ron2-derive"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Derive macros for RON serialization, deserialization, and schema generation"
 
 [lib]
@@ -15,4 +16,4 @@ proc-macro2 = "1"
 dirs = "6"
 
 [dev-dependencies]
-ron2.workspace = true
+ron2 = { path = "../main" }

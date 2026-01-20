@@ -3,6 +3,7 @@ name = "ron2-lsp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Language server providing auto-completions for RON files"
 
 [[bin]]
