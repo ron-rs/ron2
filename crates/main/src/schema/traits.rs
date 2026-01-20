@@ -7,19 +7,19 @@
 //! # Example
 //!
 //! ```rust
-//! use crate::schema::{RonSchemaType, RonList, TypeKind};
+//! use crate::schema::{RonSchema, RonList, TypeKind};
 //!
 //! // A custom list type
 //! struct MyVec<T>(Vec<T>);
 //!
-//! impl<T: RonSchemaType> RonSchemaType for MyVec<T> {
+//! impl<T: RonSchema> RonSchema for MyVec<T> {
 //!     fn type_kind() -> TypeKind {
 //!         TypeKind::List(Box::new(T::type_kind()))
 //!     }
 //! }
 //!
 //! // Mark it as a list type
-//! impl<T: RonSchemaType> RonList for MyVec<T> {
+//! impl<T: RonSchema> RonList for MyVec<T> {
 //!     type Element = T;
 //! }
 //! ```
@@ -58,17 +58,17 @@ use crate::schema::{SchemaError, StorageError};
 /// implement this trait manually:
 ///
 /// ```rust
-/// use crate::schema::{RonSchemaType, TypeKind};
+/// use crate::schema::{RonSchema, TypeKind};
 ///
 /// struct UserId(u64);
 ///
-/// impl RonSchemaType for UserId {
+/// impl RonSchema for UserId {
 ///     fn type_kind() -> TypeKind {
 ///         TypeKind::U64  // UserId serializes as a u64
 ///     }
 /// }
 /// ```
-pub trait RonSchemaType {
+pub trait RonSchema {
     /// Returns the `TypeKind` that represents this type in the schema system.
     fn type_kind() -> TypeKind;
 
@@ -145,30 +145,30 @@ pub trait RonSchemaType {
 
 /// Marker trait for types that behave like lists/sequences.
 ///
-/// Implement this trait alongside `RonSchemaType` to mark a type as list-like.
+/// Implement this trait alongside `RonSchema` to mark a type as list-like.
 /// This allows the LSP and validation system to treat your custom type as a
 /// sequence when providing completions and validating values.
 ///
 /// # Example
 ///
 /// ```rust
-/// use crate::schema::{RonSchemaType, RonList, TypeKind};
+/// use crate::schema::{RonSchema, RonList, TypeKind};
 ///
 /// struct SortedVec<T>(Vec<T>);
 ///
-/// impl<T: RonSchemaType> RonSchemaType for SortedVec<T> {
+/// impl<T: RonSchema> RonSchema for SortedVec<T> {
 ///     fn type_kind() -> TypeKind {
 ///         TypeKind::List(Box::new(T::type_kind()))
 ///     }
 /// }
 ///
-/// impl<T: RonSchemaType> RonList for SortedVec<T> {
+/// impl<T: RonSchema> RonList for SortedVec<T> {
 ///     type Element = T;
 /// }
 /// ```
-pub trait RonList: RonSchemaType {
+pub trait RonList: RonSchema {
     /// The element type of this list.
-    type Element: RonSchemaType;
+    type Element: RonSchema;
 
     /// Returns the `TypeKind` of the element type.
     #[must_use]
@@ -179,19 +179,19 @@ pub trait RonList: RonSchemaType {
 
 /// Marker trait for types that behave like maps/dictionaries.
 ///
-/// Implement this trait alongside `RonSchemaType` to mark a type as map-like.
+/// Implement this trait alongside `RonSchema` to mark a type as map-like.
 /// This allows the LSP and validation system to treat your custom type as a
 /// map when providing completions and validating values.
 ///
 /// # Example
 ///
 /// ```rust
-/// use crate::schema::{RonSchemaType, RonMap, TypeKind};
+/// use crate::schema::{RonSchema, RonMap, TypeKind};
 /// use std::collections::BTreeMap;
 ///
 /// struct OrderedMap<K, V>(BTreeMap<K, V>);
 ///
-/// impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for OrderedMap<K, V> {
+/// impl<K: RonSchema, V: RonSchema> RonSchema for OrderedMap<K, V> {
 ///     fn type_kind() -> TypeKind {
 ///         TypeKind::Map {
 ///             key: Box::new(K::type_kind()),
@@ -200,16 +200,16 @@ pub trait RonList: RonSchemaType {
 ///     }
 /// }
 ///
-/// impl<K: RonSchemaType, V: RonSchemaType> RonMap for OrderedMap<K, V> {
+/// impl<K: RonSchema, V: RonSchema> RonMap for OrderedMap<K, V> {
 ///     type Key = K;
 ///     type Value = V;
 /// }
 /// ```
-pub trait RonMap: RonSchemaType {
+pub trait RonMap: RonSchema {
     /// The key type of this map.
-    type Key: RonSchemaType;
+    type Key: RonSchema;
     /// The value type of this map.
-    type Value: RonSchemaType;
+    type Value: RonSchema;
 
     /// Returns the `TypeKind` of the key type.
     #[must_use]
@@ -226,12 +226,12 @@ pub trait RonMap: RonSchemaType {
 
 /// Marker trait for types that behave like optional values.
 ///
-/// Implement this trait alongside `RonSchemaType` to mark a type as optional-like.
+/// Implement this trait alongside `RonSchema` to mark a type as optional-like.
 /// This is primarily used for `Option<T>` but can be implemented for custom
 /// nullable/optional wrapper types.
-pub trait RonOptional: RonSchemaType {
+pub trait RonOptional: RonSchema {
     /// The inner type when the optional contains a value.
-    type Inner: RonSchemaType;
+    type Inner: RonSchema;
 
     /// Returns the `TypeKind` of the inner type.
     #[must_use]
@@ -244,11 +244,11 @@ pub trait RonOptional: RonSchemaType {
 // Macro Definitions for Repetitive Implementations
 // =============================================================================
 
-/// Implements `RonSchemaType` for primitive types with a direct `TypeKind` mapping.
+/// Implements `RonSchema` for primitive types with a direct `TypeKind` mapping.
 macro_rules! impl_primitive_schema {
     ($($ty:ty => $variant:ident),* $(,)?) => {
         $(
-            impl RonSchemaType for $ty {
+            impl RonSchema for $ty {
                 fn type_kind() -> TypeKind {
                     TypeKind::$variant
                 }
@@ -257,11 +257,11 @@ macro_rules! impl_primitive_schema {
     };
 }
 
-/// Implements `RonSchemaType` for transparent wrapper types that delegate to their inner type.
+/// Implements `RonSchema` for transparent wrapper types that delegate to their inner type.
 macro_rules! impl_transparent_schema {
     ($($ty:ident),* $(,)?) => {
         $(
-            impl<T: RonSchemaType> RonSchemaType for $ty<T> {
+            impl<T: RonSchema> RonSchema for $ty<T> {
                 fn type_kind() -> TypeKind {
                     T::type_kind()
                 }
@@ -270,27 +270,27 @@ macro_rules! impl_transparent_schema {
     };
 }
 
-/// Implements `RonSchemaType` and `RonList` for list-like collection types.
+/// Implements `RonSchema` and `RonList` for list-like collection types.
 macro_rules! impl_list_schema {
     ($($ty:ty),* $(,)?) => {
         $(
-            impl<T: RonSchemaType> RonSchemaType for $ty {
+            impl<T: RonSchema> RonSchema for $ty {
                 fn type_kind() -> TypeKind {
                     TypeKind::List(Box::new(T::type_kind()))
                 }
             }
 
-            impl<T: RonSchemaType> RonList for $ty {
+            impl<T: RonSchema> RonList for $ty {
                 type Element = T;
             }
         )*
     };
 }
 
-/// Implements `RonSchemaType` for tuple types.
+/// Implements `RonSchema` for tuple types.
 macro_rules! impl_tuple_schema {
     ($($T:ident),+) => {
-        impl<$($T: RonSchemaType),+> RonSchemaType for ($($T,)+) {
+        impl<$($T: RonSchema),+> RonSchema for ($($T,)+) {
             fn type_kind() -> TypeKind {
                 TypeKind::Tuple(alloc::vec![$($T::type_kind()),+])
             }
@@ -328,7 +328,7 @@ impl_primitive_schema! {
 }
 
 // &str is a reference type, not handled by the macro
-impl RonSchemaType for &str {
+impl RonSchema for &str {
     fn type_kind() -> TypeKind {
         TypeKind::String
     }
@@ -336,13 +336,13 @@ impl RonSchemaType for &str {
 
 // Option<T>
 
-impl<T: RonSchemaType> RonSchemaType for Option<T> {
+impl<T: RonSchema> RonSchema for Option<T> {
     fn type_kind() -> TypeKind {
         TypeKind::Option(Box::new(T::type_kind()))
     }
 }
 
-impl<T: RonSchemaType> RonOptional for Option<T> {
+impl<T: RonSchema> RonOptional for Option<T> {
     type Inner = T;
 }
 
@@ -352,13 +352,13 @@ impl_list_schema! { Vec<T>, VecDeque<T>, LinkedList<T>, BTreeSet<T> }
 
 // Slices and arrays (special cases with unsized/const generic)
 
-impl<T: RonSchemaType> RonSchemaType for [T] {
+impl<T: RonSchema> RonSchema for [T] {
     fn type_kind() -> TypeKind {
         TypeKind::List(Box::new(T::type_kind()))
     }
 }
 
-impl<T: RonSchemaType, const N: usize> RonSchemaType for [T; N] {
+impl<T: RonSchema, const N: usize> RonSchema for [T; N] {
     fn type_kind() -> TypeKind {
         // Arrays are represented as lists with a known length
         // For now, we just use List; we could add a dedicated Array variant
@@ -366,13 +366,13 @@ impl<T: RonSchemaType, const N: usize> RonSchemaType for [T; N] {
     }
 }
 
-impl<T: RonSchemaType, const N: usize> RonList for [T; N] {
+impl<T: RonSchema, const N: usize> RonList for [T; N] {
     type Element = T;
 }
 
 // HashMap and BTreeMap
 
-impl<K: RonSchemaType, V: RonSchemaType, S: BuildHasher> RonSchemaType for HashMap<K, V, S> {
+impl<K: RonSchema, V: RonSchema, S: BuildHasher> RonSchema for HashMap<K, V, S> {
     fn type_kind() -> TypeKind {
         TypeKind::Map {
             key: Box::new(K::type_kind()),
@@ -381,12 +381,12 @@ impl<K: RonSchemaType, V: RonSchemaType, S: BuildHasher> RonSchemaType for HashM
     }
 }
 
-impl<K: RonSchemaType, V: RonSchemaType, S: BuildHasher> RonMap for HashMap<K, V, S> {
+impl<K: RonSchema, V: RonSchema, S: BuildHasher> RonMap for HashMap<K, V, S> {
     type Key = K;
     type Value = V;
 }
 
-impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for BTreeMap<K, V> {
+impl<K: RonSchema, V: RonSchema> RonSchema for BTreeMap<K, V> {
     fn type_kind() -> TypeKind {
         TypeKind::Map {
             key: Box::new(K::type_kind()),
@@ -395,20 +395,20 @@ impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for BTreeMap<K, V> {
     }
 }
 
-impl<K: RonSchemaType, V: RonSchemaType> RonMap for BTreeMap<K, V> {
+impl<K: RonSchema, V: RonSchema> RonMap for BTreeMap<K, V> {
     type Key = K;
     type Value = V;
 }
 
 // HashSet (special case with BuildHasher bound)
 
-impl<T: RonSchemaType, S: BuildHasher> RonSchemaType for HashSet<T, S> {
+impl<T: RonSchema, S: BuildHasher> RonSchema for HashSet<T, S> {
     fn type_kind() -> TypeKind {
         TypeKind::List(Box::new(T::type_kind()))
     }
 }
 
-impl<T: RonSchemaType, S: BuildHasher> RonList for HashSet<T, S> {
+impl<T: RonSchema, S: BuildHasher> RonList for HashSet<T, S> {
     type Element = T;
 }
 
@@ -418,13 +418,13 @@ impl_transparent_schema! { Box, Rc, Arc, Cell, RefCell }
 
 // Mutex and RwLock (special module paths)
 
-impl<T: RonSchemaType> RonSchemaType for std::sync::Mutex<T> {
+impl<T: RonSchema> RonSchema for std::sync::Mutex<T> {
     fn type_kind() -> TypeKind {
         T::type_kind()
     }
 }
 
-impl<T: RonSchemaType> RonSchemaType for std::sync::RwLock<T> {
+impl<T: RonSchema> RonSchema for std::sync::RwLock<T> {
     fn type_kind() -> TypeKind {
         T::type_kind()
     }
@@ -432,7 +432,7 @@ impl<T: RonSchemaType> RonSchemaType for std::sync::RwLock<T> {
 
 // Cow (special bounds: ToOwned + ?Sized)
 
-impl<T: RonSchemaType + ToOwned + ?Sized> RonSchemaType for Cow<'_, T> {
+impl<T: RonSchema + ToOwned + ?Sized> RonSchema for Cow<'_, T> {
     fn type_kind() -> TypeKind {
         T::type_kind()
     }
@@ -446,7 +446,7 @@ impl_tuple_schema_all!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
 
 // PhantomData (special ?Sized bound)
 
-impl<T: ?Sized> RonSchemaType for PhantomData<T> {
+impl<T: ?Sized> RonSchema for PhantomData<T> {
     fn type_kind() -> TypeKind {
         TypeKind::Unit
     }
@@ -454,7 +454,7 @@ impl<T: ?Sized> RonSchemaType for PhantomData<T> {
 
 // Spanned<T> - transparent wrapper that captures source spans
 
-impl<T: RonSchemaType> RonSchemaType for crate::convert::Spanned<T> {
+impl<T: RonSchema> RonSchema for crate::convert::Spanned<T> {
     fn type_kind() -> TypeKind {
         // Spanned<T> has the same schema as T (span is deserialization metadata)
         T::type_kind()
@@ -542,13 +542,13 @@ mod tests {
         #[allow(dead_code)]
         struct MyVec<T>(Vec<T>);
 
-        impl<T: RonSchemaType> RonSchemaType for MyVec<T> {
+        impl<T: RonSchema> RonSchema for MyVec<T> {
             fn type_kind() -> TypeKind {
                 TypeKind::List(Box::new(T::type_kind()))
             }
         }
 
-        impl<T: RonSchemaType> RonList for MyVec<T> {
+        impl<T: RonSchema> RonList for MyVec<T> {
             type Element = T;
         }
 
@@ -565,7 +565,7 @@ mod tests {
         #[allow(dead_code)]
         struct MyMap<K, V>(std::collections::HashMap<K, V>);
 
-        impl<K: RonSchemaType, V: RonSchemaType> RonSchemaType for MyMap<K, V> {
+        impl<K: RonSchema, V: RonSchema> RonSchema for MyMap<K, V> {
             fn type_kind() -> TypeKind {
                 TypeKind::Map {
                     key: Box::new(K::type_kind()),
@@ -574,7 +574,7 @@ mod tests {
             }
         }
 
-        impl<K: RonSchemaType, V: RonSchemaType> RonMap for MyMap<K, V> {
+        impl<K: RonSchema, V: RonSchema> RonMap for MyMap<K, V> {
             type Key = K;
             type Value = V;
         }

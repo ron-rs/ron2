@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "derive")]
 use crate::schema::write_schema;
-use crate::schema::{RonSchemaType, Schema, SchemaError, StorageError};
+use crate::schema::{RonSchema, Schema, SchemaError, StorageError};
 
 /// A schema entry for recursive collection.
 #[derive(Clone, Copy, Debug)]
@@ -38,7 +38,7 @@ impl SchemaCatalog {
 }
 
 /// Collect schemas recursively starting from `T`.
-pub fn collect_schemas<T: RonSchemaType>() -> Result<SchemaCatalog, SchemaError> {
+pub fn collect_schemas<T: RonSchema>() -> Result<SchemaCatalog, SchemaError> {
     let type_path = T::type_path().ok_or_else(|| {
         SchemaError::Storage(StorageError::Io(
             "type does not support schema storage".to_string(),
@@ -56,9 +56,7 @@ pub fn collect_schemas<T: RonSchemaType>() -> Result<SchemaCatalog, SchemaError>
 
 /// Collect schemas recursively starting from `T` and write them to `output_dir`.
 #[cfg(feature = "derive")]
-pub fn write_schemas<T: RonSchemaType>(
-    output_dir: Option<&str>,
-) -> Result<Vec<PathBuf>, SchemaError> {
+pub fn write_schemas<T: RonSchema>(output_dir: Option<&str>) -> Result<Vec<PathBuf>, SchemaError> {
     let catalog = collect_schemas::<T>()?;
     let output_path = output_dir.map(Path::new);
     catalog.write_all(output_path)

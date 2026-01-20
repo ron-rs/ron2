@@ -12,8 +12,7 @@ use std::{collections::BTreeMap, fs};
 use ron2::{
     ast::FormatConfig,
     schema::{
-        collect_schemas, validate_with_resolver, FromRon, RonSchemaType, Schema, SchemaResolver,
-        ToRon,
+        collect_schemas, validate_with_resolver, FromRon, RonSchema, Schema, SchemaResolver, ToRon,
     },
 };
 use ron_showcase::GameConfig;

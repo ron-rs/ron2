@@ -12,7 +12,7 @@ use crate::{
     type_mapper::{type_to_type_kind_with_generics, PrimitiveKind},
 };
 
-/// Generate the RonSchemaType implementation for a type.
+/// Generate the RonSchema implementation for a type.
 pub fn impl_ron_schema(
     input: &DeriveInput,
     container_attrs: &ContainerAttrs,
@@ -54,7 +54,7 @@ pub fn impl_ron_schema(
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let expanded = quote! {
-        impl #impl_generics ::ron2::schema::RonSchemaType for #name #ty_generics #where_clause {
+        impl #impl_generics ::ron2::schema::RonSchema for #name #ty_generics #where_clause {
             fn type_kind() -> ::ron2::schema::TypeKind {
                 #type_kind_tokens
             }
@@ -76,8 +76,8 @@ pub fn impl_ron_schema(
             #[doc(hidden)]
             pub const __RON_SCHEMA_ENTRY: ::ron2::schema::SchemaEntry = ::ron2::schema::SchemaEntry {
                 type_path: concat!(module_path!(), "::", #type_name),
-                schema: <Self as ::ron2::schema::RonSchemaType>::schema,
-                children: <Self as ::ron2::schema::RonSchemaType>::child_schemas,
+                schema: <Self as ::ron2::schema::RonSchema>::schema,
+                children: <Self as ::ron2::schema::RonSchema>::child_schemas,
             };
         }
     };

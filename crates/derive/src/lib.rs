@@ -124,7 +124,7 @@ use syn::parse_macro_input;
 /// Schemas are written at runtime by calling `write_schemas()` on the type:
 ///
 /// ```ignore
-/// use ron2::schema::RonSchemaType;
+/// use ron2::schema::RonSchema;
 ///
 /// // Write to a specific directory
 /// Config::write_schemas(Some("./schemas"))?;

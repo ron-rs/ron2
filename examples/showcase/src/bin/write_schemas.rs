@@ -1,4 +1,4 @@
-use ron2::schema::RonSchemaType;
+use ron2::schema::RonSchema;
 use ron_showcase::GameConfig;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

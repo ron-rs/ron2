@@ -26,9 +26,9 @@
 //!
 //! # Trait-Based Schema System
 //!
-//! The schema system is built on the [`RonSchemaType`] trait:
+//! The schema system is built on the [`RonSchema`] trait:
 //!
-//! - [`RonSchemaType`] - Core trait for types representable in schemas
+//! - [`RonSchema`] - Core trait for types representable in schemas
 //! - [`RonList`] - Marker trait for list/sequence-like types
 //! - [`RonMap`] - Marker trait for map/dictionary-like types
 //! - [`RonOptional`] - Marker trait for optional/nullable types
@@ -43,19 +43,19 @@
 //! ## Implementing Custom Types
 //!
 //! ```rust
-//! use crate::schema::{RonSchemaType, RonList, TypeKind};
+//! use crate::schema::{RonSchema, RonList, TypeKind};
 //!
 //! // A custom list type
 //! struct MyVec<T>(Vec<T>);
 //!
-//! impl<T: RonSchemaType> RonSchemaType for MyVec<T> {
+//! impl<T: RonSchema> RonSchema for MyVec<T> {
 //!     fn type_kind() -> TypeKind {
 //!         TypeKind::List(Box::new(T::type_kind()))
 //!     }
 //! }
 //!
 //! // Mark it as a list type for additional type information
-//! impl<T: RonSchemaType> RonList for MyVec<T> {
+//! impl<T: RonSchema> RonList for MyVec<T> {
 //!     type Element = T;
 //! }
 //! ```
@@ -101,7 +101,7 @@ pub use error::{
 pub use storage::{SCHEMA_DIR_ENV, resolve_schema_dir, type_path_to_file_path};
 #[cfg(feature = "derive")]
 pub use storage::{find_schema, find_schema_in, read_schema, write_schema};
-pub use traits::{RonList, RonMap, RonOptional, RonSchemaType};
+pub use traits::{RonList, RonMap, RonOptional, RonSchema};
 pub use types::{Field, Schema, TypeKind, Variant, VariantKind};
 #[cfg(feature = "derive")]
 pub use validation::StorageResolver;
