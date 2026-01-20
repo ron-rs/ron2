@@ -44,12 +44,44 @@ fn main() -> ron2::Result<()> {
 
 - **AST-first**: Parses to a complete AST preserving all source information
 - **Perfect round-trip**: Preserves comments, whitespace, and formatting exactly
-- **Rich errors**: Reports type mismatch errors with precise source locations
+- **Rich errors**: Full source spans enable beautiful error messages (see [Error Reporting](#error-reporting))
 - **Full RON data model**: Avoids [serde limitations] through custom derive
 
-ron2 works best for human-edited config files or building custom DSLs.
+ron2 works best for human-edited config files or building custom DSLs. See the [showcase example](examples/showcase/) for a complete demonstration of derive macros, schema validation, and formatting.
 
 [serde limitations]: https://github.com/ron-rs/ron?tab=readme-ov-file#limitations
+
+## Error Reporting
+
+ron2 provides full source spans on all parsed values via the `Spanned<T>` wrapper. This enables beautiful error messages with libraries like [ariadne](https://github.com/zesterer/ariadne):
+
+```rust
+#[derive(FromRon)]
+struct ServerConfig {
+    host: Spanned<String>,
+    port: Spanned<u16>,
+    max_connections: Spanned<u32>,
+}
+
+// Access value and span separately
+if config.port.value == 0 {
+    report_error("port cannot be 0", config.port.span);
+}
+```
+
+```
+Error: max_connections (10) must be >= min_connections (100)
+   ╭─[ config.ron:5:22 ]
+   │
+ 5 │     max_connections: 10,
+   │                      ─┬
+   │                       ╰── max_connections (10) must be >= min_connections (100)
+   │
+   │ Help: increase max_connections or decrease min_connections
+───╯
+```
+
+See the [error-report example](examples/error-report/) for a complete implementation.
 
 ## Schema & LSP
 
