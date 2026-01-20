@@ -8,6 +8,8 @@ use super::{
     error::{Result, SchemaError, ValidationError, ValidationResult},
 };
 use crate::Value;
+use crate::ast::{Expr, StructBody};
+use crate::error::Span;
 
 // =============================================================================
 // Schema Resolver Trait
@@ -203,6 +205,95 @@ pub fn validate_type_with_resolver<R: SchemaResolver>(
 ) -> Result<()> {
     let mut ctx = ValidationContext::new(resolver);
     validate_type_internal(value, kind, &mut ctx).map_err(|e| SchemaError::Validation(Box::new(e)))
+}
+
+// =============================================================================
+// AST-Based Validation Functions
+// =============================================================================
+
+/// Validate an AST expression against a schema.
+///
+/// This function validates directly against the AST, providing precise error spans
+/// that point to the exact location of errors in the source.
+///
+/// `TypeRef` fields accept any value. Use [`validate_expr_with_resolver`] for
+/// full `TypeRef` validation.
+pub fn validate_expr(expr: &Expr<'_>, schema: &Schema) -> Result<()> {
+    validate_expr_with_resolver(expr, schema, &AcceptAllResolver)
+}
+
+/// Validate an AST expression against a type kind.
+///
+/// `TypeRef` fields accept any value. Use [`validate_expr_type_with_resolver`] for
+/// full `TypeRef` validation.
+pub fn validate_expr_type(expr: &Expr<'_>, kind: &TypeKind) -> Result<()> {
+    validate_expr_type_with_resolver(expr, kind, &AcceptAllResolver)
+}
+
+/// Validate an AST expression against a schema with `TypeRef` resolution.
+///
+/// This function resolves `TypeRef` references using the provided resolver,
+/// enabling validation of nested/referenced schemas. Error spans point directly
+/// to the problematic AST nodes.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use ron2::ast::parse_document;
+/// use ron2::schema::{Schema, TypeKind, Field, validate_expr_with_resolver, AcceptAllResolver};
+///
+/// let source = "(port: 8080, host: \"localhost\")";
+/// let doc = parse_document(source).unwrap();
+///
+/// let schema = Schema::new(TypeKind::Struct {
+///     fields: vec![
+///         Field::new("port", TypeKind::U16),
+///         Field::optional("host", TypeKind::String),
+///     ],
+/// });
+///
+/// if let Some(ref expr) = doc.value {
+///     let result = validate_expr_with_resolver(expr, &schema, &AcceptAllResolver);
+/// }
+/// ```
+pub fn validate_expr_with_resolver<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    schema: &Schema,
+    resolver: &R,
+) -> Result<()> {
+    let mut ctx = ValidationContext::new(resolver);
+    validate_expr_internal(expr, &schema.kind, &mut ctx)
+        .map_err(|e| SchemaError::Validation(Box::new(e)))
+}
+
+/// Validate an AST expression against a type kind with `TypeRef` resolution.
+pub fn validate_expr_type_with_resolver<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    kind: &TypeKind,
+    resolver: &R,
+) -> Result<()> {
+    let mut ctx = ValidationContext::new(resolver);
+    validate_expr_internal(expr, kind, &mut ctx).map_err(|e| SchemaError::Validation(Box::new(e)))
+}
+
+/// Validate an AST expression against a schema, collecting ALL validation errors.
+///
+/// Unlike [`validate_expr_with_resolver`] which returns on the first error, this function
+/// continues validation and collects all errors. This is useful for LSP diagnostics
+/// where you want to show all problems at once.
+///
+/// - Skips `Expr::Error` nodes (parser already reported those errors)
+/// - Continues validating siblings after finding an error
+/// - Returns empty vec if validation succeeds
+pub fn validate_expr_collect_all<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    schema: &Schema,
+    resolver: &R,
+) -> Vec<ValidationError> {
+    let mut ctx = ValidationContext::new(resolver);
+    let mut errors = Vec::new();
+    validate_expr_collect_internal(expr, &schema.kind, &mut ctx, &mut errors);
+    errors
 }
 
 // =============================================================================
@@ -687,6 +778,1195 @@ fn type_mismatch(expected: &str, value: &Value) -> ValidationError {
     ValidationError::type_mismatch(expected, actual)
 }
 
+// =============================================================================
+// Internal AST Validation Implementation
+// =============================================================================
+
+/// Get the type name of an expression for error messages.
+fn expr_type_name(expr: &Expr<'_>) -> &'static str {
+    match expr {
+        Expr::Unit(_) => "Unit",
+        Expr::Bool(_) => "Bool",
+        Expr::Char(_) => "Char",
+        Expr::Byte(_) => "Byte",
+        Expr::Number(_) => "Number",
+        Expr::String(_) => "String",
+        Expr::Bytes(_) => "Bytes",
+        Expr::Option(_) => "Option",
+        Expr::Seq(_) => "Seq",
+        Expr::Map(_) => "Map",
+        Expr::Tuple(_) => "Tuple",
+        Expr::AnonStruct(_) => "Struct",
+        Expr::Struct(_) => "Named",
+        Expr::Error(_) => "Error",
+    }
+}
+
+/// Create a type mismatch error with the expression's span.
+fn expr_type_mismatch(expected: &str, expr: &Expr<'_>) -> ValidationError {
+    ValidationError::with_span(
+        crate::error::ErrorKind::TypeMismatch {
+            expected: expected.to_string(),
+            found: expr_type_name(expr).to_string(),
+        },
+        *expr.span(),
+    )
+}
+
+/// Create a missing field error with a span.
+fn missing_field_error(field: &str, span: Span) -> ValidationError {
+    ValidationError::with_span(
+        crate::error::ErrorKind::MissingField {
+            field: field.to_string().into(),
+            outer: None,
+        },
+        span,
+    )
+}
+
+/// Create an unknown field error with a span.
+fn unknown_field_error(field: &str, span: Span) -> ValidationError {
+    ValidationError::with_span(
+        crate::error::ErrorKind::UnknownField {
+            field: field.to_string().into(),
+            expected: &[],
+            outer: None,
+        },
+        span,
+    )
+}
+
+/// Create an unknown variant error with a span.
+fn unknown_variant_error(variant: &str, span: Span) -> ValidationError {
+    ValidationError::with_span(
+        crate::error::ErrorKind::UnknownVariant {
+            variant: variant.to_string().into(),
+            expected: &[],
+            outer: None,
+        },
+        span,
+    )
+}
+
+/// Create a length mismatch error with a span.
+fn length_mismatch_error(expected: usize, found: usize, span: Span) -> ValidationError {
+    ValidationError::with_span(
+        crate::error::ErrorKind::LengthMismatch {
+            expected: expected.to_string(),
+            found,
+            context: None,
+        },
+        span,
+    )
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_expr_internal<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    kind: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    match kind {
+        TypeKind::Bool => match expr {
+            Expr::Bool(_) => Ok(()),
+            _ => Err(expr_type_mismatch("Bool", expr)),
+        },
+        TypeKind::I8
+        | TypeKind::I16
+        | TypeKind::I32
+        | TypeKind::I64
+        | TypeKind::I128
+        | TypeKind::U8
+        | TypeKind::U16
+        | TypeKind::U32
+        | TypeKind::U64
+        | TypeKind::U128 => match expr {
+            Expr::Number(_) => Ok(()),
+            _ => Err(expr_type_mismatch("integer", expr)),
+        },
+        TypeKind::F32 | TypeKind::F64 => match expr {
+            Expr::Number(_) => Ok(()),
+            _ => Err(expr_type_mismatch("float", expr)),
+        },
+        TypeKind::Char => match expr {
+            Expr::Char(_) => Ok(()),
+            _ => Err(expr_type_mismatch("Char", expr)),
+        },
+        TypeKind::String => match expr {
+            Expr::String(_) => Ok(()),
+            _ => Err(expr_type_mismatch("String", expr)),
+        },
+        TypeKind::Unit => match expr {
+            Expr::Unit(_) => Ok(()),
+            _ => Err(expr_type_mismatch("Unit", expr)),
+        },
+        TypeKind::Option(inner) => validate_option_expr(expr, inner, ctx),
+        TypeKind::List(inner) => validate_list_expr(expr, inner, ctx),
+        TypeKind::Map { key, value: val_ty } => validate_map_expr(expr, key, val_ty, ctx),
+        TypeKind::Tuple(types) => validate_tuple_expr(expr, types, ctx),
+        TypeKind::Struct { fields } => validate_struct_expr(expr, fields, ctx),
+        TypeKind::Enum { variants } => validate_enum_expr(expr, variants, ctx),
+        TypeKind::TypeRef(type_path) => validate_typeref_expr(expr, type_path, ctx),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_option_expr<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    inner: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    match expr {
+        Expr::Option(opt) => match &opt.value {
+            None => Ok(()),
+            Some(val) => validate_expr_internal(&val.expr, inner, ctx),
+        },
+        // Allow named None/Some
+        Expr::Struct(s) if s.name.name == "None" && s.body.is_none() => Ok(()),
+        Expr::Struct(s) if s.name.name == "Some" => {
+            if let Some(StructBody::Tuple(body)) = &s.body
+                && body.elements.len() == 1
+            {
+                return validate_expr_internal(&body.elements[0].expr, inner, ctx);
+            }
+            Err(expr_type_mismatch("Option", expr))
+        }
+        _ => Err(expr_type_mismatch("Option", expr)),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_list_expr<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    inner: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    match expr {
+        Expr::Seq(seq) => {
+            for (i, item) in seq.items.iter().enumerate() {
+                validate_expr_internal(&item.expr, inner, ctx).map_err(|e| e.in_element(i))?;
+            }
+            Ok(())
+        }
+        _ => Err(expr_type_mismatch("List", expr)),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_map_expr<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    key_ty: &TypeKind,
+    val_ty: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    match expr {
+        Expr::Map(map) => {
+            for entry in &map.entries {
+                validate_expr_internal(&entry.key, key_ty, ctx)
+                    .map_err(ValidationError::in_map_key)?;
+                let key_str = format_expr_as_key(&entry.key);
+                validate_expr_internal(&entry.value, val_ty, ctx)
+                    .map_err(|e| e.in_map_value(key_str))?;
+            }
+            Ok(())
+        }
+        _ => Err(expr_type_mismatch("Map", expr)),
+    }
+}
+
+/// Format an expression as a key string for error messages.
+fn format_expr_as_key(expr: &Expr<'_>) -> String {
+    match expr {
+        Expr::String(s) => s.value.clone(),
+        Expr::Number(n) => n.raw.to_string(),
+        Expr::Bool(b) => b.value.to_string(),
+        Expr::Char(c) => c.value.to_string(),
+        _ => "<complex>".to_string(),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_tuple_expr<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    types: &[TypeKind],
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    let items: &[_] = match expr {
+        Expr::Tuple(t) => &t.elements,
+        Expr::Seq(s) => {
+            // Sequences can also be used as tuples
+            if s.items.len() != types.len() {
+                return Err(length_mismatch_error(types.len(), s.items.len(), *expr.span()));
+            }
+            for (i, (item, ty)) in s.items.iter().zip(types.iter()).enumerate() {
+                validate_expr_internal(&item.expr, ty, ctx).map_err(|e| e.in_element(i))?;
+            }
+            return Ok(());
+        }
+        Expr::Struct(s) => {
+            // Named tuple struct: Name(a, b, c)
+            if let Some(StructBody::Tuple(body)) = &s.body {
+                &body.elements
+            } else {
+                return Err(expr_type_mismatch("Tuple", expr));
+            }
+        }
+        _ => return Err(expr_type_mismatch("Tuple", expr)),
+    };
+
+    if items.len() != types.len() {
+        return Err(length_mismatch_error(types.len(), items.len(), *expr.span()));
+    }
+
+    for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
+        validate_expr_internal(&item.expr, ty, ctx).map_err(|e| e.in_element(i))?;
+    }
+
+    Ok(())
+}
+
+/// Flattened target for AST-based validation.
+#[derive(Debug)]
+enum ExprFlattenedTarget {
+    Struct {
+        fields: Vec<Field>,
+        presence_based: bool,
+    },
+    MapValue(TypeKind),
+}
+
+fn collect_expr_flattened_targets<R: SchemaResolver>(
+    fields: &[Field],
+    ctx: &mut ValidationContext<R>,
+) -> Vec<ExprFlattenedTarget> {
+    let mut targets = Vec::new();
+
+    for field in fields {
+        if !field.flattened {
+            continue;
+        }
+
+        let Some((kind, mut presence_based)) = resolve_flattened_kind(&field.ty, ctx) else {
+            continue;
+        };
+        presence_based |= field.optional;
+
+        match kind {
+            TypeKind::Struct { fields } => {
+                targets.push(ExprFlattenedTarget::Struct {
+                    fields,
+                    presence_based,
+                });
+            }
+            TypeKind::Map { key, value } => {
+                if matches!(*key, TypeKind::String) {
+                    targets.push(ExprFlattenedTarget::MapValue(*value));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    targets
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_struct_expr<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    fields: &[Field],
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    let flattened_targets = collect_expr_flattened_targets(fields, ctx);
+    let map_value_type = flattened_targets.iter().find_map(|target| {
+        if let ExprFlattenedTarget::MapValue(value_type) = target {
+            Some(value_type)
+        } else {
+            None
+        }
+    });
+
+    match expr {
+        // Unit: () - empty struct
+        Expr::Unit(_) => validate_struct_fields_expr(
+            &[],
+            fields,
+            &flattened_targets,
+            map_value_type,
+            *expr.span(),
+            ctx,
+        ),
+        // Anonymous struct: (field: value, ...)
+        Expr::AnonStruct(anon) => validate_struct_fields_expr(
+            &anon.fields,
+            fields,
+            &flattened_targets,
+            map_value_type,
+            *expr.span(),
+            ctx,
+        ),
+        // Named struct: Name(field: value, ...)
+        Expr::Struct(s) => {
+            match &s.body {
+                Some(StructBody::Fields(f)) => validate_struct_fields_body_expr(
+                    &f.fields,
+                    fields,
+                    &flattened_targets,
+                    map_value_type,
+                    *expr.span(),
+                    ctx,
+                ),
+                Some(StructBody::Tuple(_)) => {
+                    // Tuple struct isn't a fields struct
+                    Err(expr_type_mismatch("Struct", expr))
+                }
+                None => {
+                    // Unit struct: Name - treated as empty fields
+                    validate_struct_fields_expr(
+                        &[],
+                        fields,
+                        &flattened_targets,
+                        map_value_type,
+                        *expr.span(),
+                        ctx,
+                    )
+                }
+            }
+        }
+        _ => Err(expr_type_mismatch("Struct", expr)),
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_struct_fields_expr<R: SchemaResolver>(
+    ast_fields: &[crate::ast::StructField<'_>],
+    schema_fields: &[Field],
+    flattened_targets: &[ExprFlattenedTarget],
+    map_value_type: Option<&TypeKind>,
+    struct_span: Span,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    let explicit_fields: Vec<_> = schema_fields.iter().filter(|f| !f.flattened).collect();
+
+    // Check all provided fields are valid
+    for ast_field in ast_fields {
+        let key_str = ast_field.name.name.as_ref();
+        let schema_field = explicit_fields.iter().find(|f| f.name == key_str);
+
+        if let Some(field) = schema_field {
+            validate_expr_internal(&ast_field.value, &field.ty, ctx)
+                .map_err(|e| e.in_field(key_str))?;
+        }
+
+        let mut matched_flattened_struct = false;
+        for target in flattened_targets {
+            if let ExprFlattenedTarget::Struct { fields, .. } = target
+                && let Some(inner) = fields.iter().find(|f| f.name == key_str)
+            {
+                matched_flattened_struct = true;
+                validate_expr_internal(&ast_field.value, &inner.ty, ctx)
+                    .map_err(|e| e.in_field(key_str))?;
+            }
+        }
+
+        if schema_field.is_none() && !matched_flattened_struct {
+            if let Some(map_value_type) = map_value_type {
+                validate_expr_internal(&ast_field.value, map_value_type, ctx)
+                    .map_err(|e| e.in_field(key_str))?;
+            } else {
+                return Err(unknown_field_error(key_str, ast_field.name.span));
+            }
+        }
+    }
+
+    // Check all required fields are present
+    let has_field = |name: &str| ast_fields.iter().any(|f| f.name.name == name);
+
+    for field in &explicit_fields {
+        if !field.optional && !has_field(&field.name) {
+            return Err(missing_field_error(&field.name, struct_span));
+        }
+    }
+
+    for target in flattened_targets {
+        let ExprFlattenedTarget::Struct {
+            fields,
+            presence_based,
+        } = target
+        else {
+            continue;
+        };
+
+        if *presence_based && !fields.iter().any(|field| has_field(&field.name)) {
+            continue;
+        }
+
+        for field in fields {
+            if !field.optional && !has_field(&field.name) {
+                return Err(missing_field_error(&field.name, struct_span));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_struct_fields_body_expr<R: SchemaResolver>(
+    ast_fields: &[crate::ast::StructField<'_>],
+    schema_fields: &[Field],
+    flattened_targets: &[ExprFlattenedTarget],
+    map_value_type: Option<&TypeKind>,
+    struct_span: Span,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    // This is identical to validate_struct_fields_expr but works with FieldsBody fields
+    validate_struct_fields_expr(
+        ast_fields,
+        schema_fields,
+        flattened_targets,
+        map_value_type,
+        struct_span,
+        ctx,
+    )
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_enum_expr<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    variants: &[Variant],
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    // Extract variant name and content
+    let (variant_name, variant_span, content): (&str, Span, EnumExprContent<'_>) = match expr {
+        // String as unit variant
+        Expr::String(s) => (s.value.as_str(), s.span, EnumExprContent::Unit),
+        // Option None/Some
+        Expr::Option(opt) => {
+            if let Some(val) = &opt.value {
+                ("Some", opt.span, EnumExprContent::Tuple(&[&val.expr]))
+            } else {
+                ("None", opt.span, EnumExprContent::Unit)
+            }
+        }
+        // Named struct/variant
+        Expr::Struct(s) => {
+            let name = s.name.name.as_ref();
+            let span = s.name.span;
+            match &s.body {
+                None => (name, span, EnumExprContent::Unit),
+                Some(StructBody::Tuple(body)) => {
+                    let exprs: Vec<_> = body.elements.iter().map(|e| &e.expr).collect();
+                    (name, span, EnumExprContent::TupleOwned(exprs))
+                }
+                Some(StructBody::Fields(body)) => {
+                    (name, span, EnumExprContent::Struct(&body.fields))
+                }
+            }
+        }
+        _ => return Err(expr_type_mismatch("Enum", expr)),
+    };
+
+    let variant = variants
+        .iter()
+        .find(|v| v.name == variant_name)
+        .ok_or_else(|| unknown_variant_error(variant_name, variant_span))?;
+
+    // Helper to validate tuple content
+    let validate_tuple_content =
+        |items: &[&Expr<'_>], types: &[TypeKind], ctx: &mut ValidationContext<R>| {
+            for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
+                validate_expr_internal(item, ty, ctx)
+                    .map_err(|e| e.in_element(i).in_variant(variant_name))?;
+            }
+            Ok(())
+        };
+
+    match (&variant.kind, content) {
+        // Unit variants
+        (VariantKind::Unit, EnumExprContent::Unit) => Ok(()),
+        // Tuple variants (slice)
+        (VariantKind::Tuple(types), EnumExprContent::Tuple(items)) if items.len() == types.len() => {
+            validate_tuple_content(items, types, ctx)
+        }
+        // Tuple variants (vec)
+        (VariantKind::Tuple(types), EnumExprContent::TupleOwned(ref items))
+            if items.len() == types.len() =>
+        {
+            validate_tuple_content(items, types, ctx)
+        }
+        // Struct variants
+        (VariantKind::Struct(fields), EnumExprContent::Struct(ast_fields)) => {
+            validate_variant_struct_fields(ast_fields, fields, variant_name, variant_span, ctx)
+        }
+        // Type mismatches
+        (VariantKind::Unit, _) => Err(ValidationError::with_span(
+            crate::error::ErrorKind::TypeMismatch {
+                expected: "Unit".to_string(),
+                found: "non-unit content".to_string(),
+            },
+            variant_span,
+        )
+        .in_variant(variant_name)),
+        (_, EnumExprContent::Unit) => Err(ValidationError::with_span(
+            crate::error::ErrorKind::TypeMismatch {
+                expected: "variant content".to_string(),
+                found: "none".to_string(),
+            },
+            variant_span,
+        )
+        .in_variant(variant_name)),
+        (VariantKind::Tuple(types), _) => Err(ValidationError::with_span(
+            crate::error::ErrorKind::TypeMismatch {
+                expected: format!("Tuple({} elements)", types.len()),
+                found: "mismatched content".to_string(),
+            },
+            variant_span,
+        )
+        .in_variant(variant_name)),
+        (VariantKind::Struct(_), _) => Err(ValidationError::with_span(
+            crate::error::ErrorKind::TypeMismatch {
+                expected: "Struct".to_string(),
+                found: "mismatched content".to_string(),
+            },
+            variant_span,
+        )
+        .in_variant(variant_name)),
+    }
+}
+
+/// Content of an enum variant expression.
+enum EnumExprContent<'a> {
+    Unit,
+    Tuple(&'a [&'a Expr<'a>]),
+    TupleOwned(Vec<&'a Expr<'a>>),
+    Struct(&'a [crate::ast::StructField<'a>]),
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_variant_struct_fields<R: SchemaResolver>(
+    ast_fields: &[crate::ast::StructField<'_>],
+    schema_fields: &[Field],
+    variant_name: &str,
+    variant_span: Span,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    for ast_field in ast_fields {
+        let key = ast_field.name.name.as_ref();
+        let field = schema_fields
+            .iter()
+            .find(|f| f.name == key)
+            .ok_or_else(|| unknown_field_error(key, ast_field.name.span).in_variant(variant_name))?;
+
+        validate_expr_internal(&ast_field.value, &field.ty, ctx)
+            .map_err(|e| e.in_field(key).in_variant(variant_name))?;
+    }
+
+    // Check required fields
+    for field in schema_fields {
+        if !field.optional && !ast_fields.iter().any(|f| f.name.name == field.name) {
+            return Err(missing_field_error(&field.name, variant_span).in_variant(variant_name));
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_typeref_expr<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    type_path: &str,
+    ctx: &mut ValidationContext<R>,
+) -> ValidationResult<()> {
+    // Check for circular reference
+    if ctx.is_visiting(type_path) {
+        return Ok(());
+    }
+
+    // Try to resolve the schema
+    match ctx.resolver.resolve(type_path) {
+        Some(schema) => {
+            ctx.start_visiting(type_path);
+            let result = validate_expr_internal(expr, &schema.kind, ctx)
+                .map_err(|e| e.in_type_ref(type_path));
+            ctx.stop_visiting(type_path);
+            result
+        }
+        None => Ok(()),
+    }
+}
+
+// =============================================================================
+// Multi-Error Validation Implementation (collects ALL errors)
+// =============================================================================
+
+/// Internal function that validates an expression and collects all errors.
+/// Skips `Expr::Error` nodes since the parser already reported those.
+fn validate_expr_collect_internal<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    kind: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    // Skip error nodes - parser already reported these
+    if matches!(expr, Expr::Error(_)) {
+        return;
+    }
+
+    match kind {
+        TypeKind::Bool => {
+            if !matches!(expr, Expr::Bool(_)) {
+                errors.push(expr_type_mismatch("Bool", expr));
+            }
+        }
+        TypeKind::I8
+        | TypeKind::I16
+        | TypeKind::I32
+        | TypeKind::I64
+        | TypeKind::I128
+        | TypeKind::U8
+        | TypeKind::U16
+        | TypeKind::U32
+        | TypeKind::U64
+        | TypeKind::U128 => {
+            if !matches!(expr, Expr::Number(_)) {
+                errors.push(expr_type_mismatch("integer", expr));
+            }
+        }
+        TypeKind::F32 | TypeKind::F64 => {
+            if !matches!(expr, Expr::Number(_)) {
+                errors.push(expr_type_mismatch("float", expr));
+            }
+        }
+        TypeKind::Char => {
+            if !matches!(expr, Expr::Char(_)) {
+                errors.push(expr_type_mismatch("Char", expr));
+            }
+        }
+        TypeKind::String => {
+            if !matches!(expr, Expr::String(_)) {
+                errors.push(expr_type_mismatch("String", expr));
+            }
+        }
+        TypeKind::Unit => {
+            if !matches!(expr, Expr::Unit(_)) {
+                errors.push(expr_type_mismatch("Unit", expr));
+            }
+        }
+        TypeKind::Option(inner) => {
+            validate_option_expr_collect(expr, inner, ctx, errors);
+        }
+        TypeKind::List(inner) => {
+            validate_list_expr_collect(expr, inner, ctx, errors);
+        }
+        TypeKind::Map { key, value: val_ty } => {
+            validate_map_expr_collect(expr, key, val_ty, ctx, errors);
+        }
+        TypeKind::Tuple(types) => {
+            validate_tuple_expr_collect(expr, types, ctx, errors);
+        }
+        TypeKind::Struct { fields } => {
+            validate_struct_expr_collect(expr, fields, ctx, errors);
+        }
+        TypeKind::Enum { variants } => {
+            validate_enum_expr_collect(expr, variants, ctx, errors);
+        }
+        TypeKind::TypeRef(type_path) => {
+            validate_typeref_expr_collect(expr, type_path, ctx, errors);
+        }
+    }
+}
+
+fn validate_option_expr_collect<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    inner: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    match expr {
+        Expr::Error(_) => {} // Skip error nodes
+        Expr::Option(opt) => {
+            if let Some(val) = &opt.value {
+                validate_expr_collect_internal(&val.expr, inner, ctx, errors);
+            }
+        }
+        Expr::Struct(s) if s.name.name == "None" && s.body.is_none() => {}
+        Expr::Struct(s) if s.name.name == "Some" => {
+            if let Some(StructBody::Tuple(body)) = &s.body
+                && body.elements.len() == 1
+            {
+                validate_expr_collect_internal(&body.elements[0].expr, inner, ctx, errors);
+                return;
+            }
+            errors.push(expr_type_mismatch("Option", expr));
+        }
+        _ => {
+            errors.push(expr_type_mismatch("Option", expr));
+        }
+    }
+}
+
+fn validate_list_expr_collect<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    inner: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    match expr {
+        Expr::Error(_) => {} // Skip error nodes
+        Expr::Seq(seq) => {
+            for (i, item) in seq.items.iter().enumerate() {
+                let mut item_errors = Vec::new();
+                validate_expr_collect_internal(&item.expr, inner, ctx, &mut item_errors);
+                for e in item_errors {
+                    errors.push(e.in_element(i));
+                }
+            }
+        }
+        _ => {
+            errors.push(expr_type_mismatch("List", expr));
+        }
+    }
+}
+
+fn validate_map_expr_collect<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    key_ty: &TypeKind,
+    val_ty: &TypeKind,
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    match expr {
+        Expr::Error(_) => {} // Skip error nodes
+        Expr::Map(map) => {
+            for entry in &map.entries {
+                let mut key_errors = Vec::new();
+                validate_expr_collect_internal(&entry.key, key_ty, ctx, &mut key_errors);
+                for e in key_errors {
+                    errors.push(ValidationError::in_map_key(e));
+                }
+
+                let key_str = format_expr_as_key(&entry.key);
+                let mut val_errors = Vec::new();
+                validate_expr_collect_internal(&entry.value, val_ty, ctx, &mut val_errors);
+                for e in val_errors {
+                    errors.push(e.in_map_value(key_str.clone()));
+                }
+            }
+        }
+        _ => {
+            errors.push(expr_type_mismatch("Map", expr));
+        }
+    }
+}
+
+fn validate_tuple_expr_collect<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    types: &[TypeKind],
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let items: &[_] = match expr {
+        Expr::Error(_) => return, // Skip error nodes
+        Expr::Tuple(t) => &t.elements,
+        Expr::Seq(s) => {
+            if s.items.len() != types.len() {
+                errors.push(length_mismatch_error(types.len(), s.items.len(), *expr.span()));
+                return;
+            }
+            for (i, (item, ty)) in s.items.iter().zip(types.iter()).enumerate() {
+                let mut item_errors = Vec::new();
+                validate_expr_collect_internal(&item.expr, ty, ctx, &mut item_errors);
+                for e in item_errors {
+                    errors.push(e.in_element(i));
+                }
+            }
+            return;
+        }
+        Expr::Struct(s) => {
+            if let Some(StructBody::Tuple(body)) = &s.body {
+                &body.elements
+            } else {
+                errors.push(expr_type_mismatch("Tuple", expr));
+                return;
+            }
+        }
+        _ => {
+            errors.push(expr_type_mismatch("Tuple", expr));
+            return;
+        }
+    };
+
+    if items.len() != types.len() {
+        errors.push(length_mismatch_error(types.len(), items.len(), *expr.span()));
+        return;
+    }
+
+    for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
+        let mut item_errors = Vec::new();
+        validate_expr_collect_internal(&item.expr, ty, ctx, &mut item_errors);
+        for e in item_errors {
+            errors.push(e.in_element(i));
+        }
+    }
+}
+
+fn validate_struct_expr_collect<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    fields: &[Field],
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let flattened_targets = collect_expr_flattened_targets(fields, ctx);
+    let map_value_type = flattened_targets.iter().find_map(|target| {
+        if let ExprFlattenedTarget::MapValue(value_type) = target {
+            Some(value_type)
+        } else {
+            None
+        }
+    });
+
+    match expr {
+        Expr::Error(_) => {} // Skip error nodes
+        Expr::Unit(_) => {
+            validate_struct_fields_expr_collect(
+                &[],
+                fields,
+                &flattened_targets,
+                map_value_type,
+                *expr.span(),
+                ctx,
+                errors,
+            );
+        }
+        Expr::AnonStruct(anon) => {
+            validate_struct_fields_expr_collect(
+                &anon.fields,
+                fields,
+                &flattened_targets,
+                map_value_type,
+                *expr.span(),
+                ctx,
+                errors,
+            );
+        }
+        Expr::Struct(s) => match &s.body {
+            Some(StructBody::Fields(f)) => {
+                validate_struct_fields_expr_collect(
+                    &f.fields,
+                    fields,
+                    &flattened_targets,
+                    map_value_type,
+                    *expr.span(),
+                    ctx,
+                    errors,
+                );
+            }
+            Some(StructBody::Tuple(_)) => {
+                errors.push(expr_type_mismatch("Struct", expr));
+            }
+            None => {
+                validate_struct_fields_expr_collect(
+                    &[],
+                    fields,
+                    &flattened_targets,
+                    map_value_type,
+                    *expr.span(),
+                    ctx,
+                    errors,
+                );
+            }
+        },
+        _ => {
+            errors.push(expr_type_mismatch("Struct", expr));
+        }
+    }
+}
+
+fn validate_struct_fields_expr_collect<R: SchemaResolver>(
+    ast_fields: &[crate::ast::StructField<'_>],
+    schema_fields: &[Field],
+    flattened_targets: &[ExprFlattenedTarget],
+    map_value_type: Option<&TypeKind>,
+    struct_span: Span,
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let explicit_fields: Vec<_> = schema_fields.iter().filter(|f| !f.flattened).collect();
+
+    // Check all provided fields are valid
+    for ast_field in ast_fields {
+        // Skip error nodes in field values
+        if matches!(ast_field.value, Expr::Error(_)) {
+            continue;
+        }
+
+        let key_str = ast_field.name.name.as_ref();
+        let schema_field = explicit_fields.iter().find(|f| f.name == key_str);
+
+        if let Some(field) = schema_field {
+            let mut field_errors = Vec::new();
+            validate_expr_collect_internal(&ast_field.value, &field.ty, ctx, &mut field_errors);
+            for e in field_errors {
+                errors.push(e.in_field(key_str));
+            }
+        }
+
+        let mut matched_flattened_struct = false;
+        for target in flattened_targets {
+            if let ExprFlattenedTarget::Struct {
+                fields: inner_fields,
+                ..
+            } = target
+                && let Some(inner) = inner_fields.iter().find(|f| f.name == key_str)
+            {
+                matched_flattened_struct = true;
+                let mut field_errors = Vec::new();
+                validate_expr_collect_internal(&ast_field.value, &inner.ty, ctx, &mut field_errors);
+                for e in field_errors {
+                    errors.push(e.in_field(key_str));
+                }
+            }
+        }
+
+        if schema_field.is_none() && !matched_flattened_struct {
+            if let Some(map_value_type) = map_value_type {
+                let mut field_errors = Vec::new();
+                validate_expr_collect_internal(&ast_field.value, map_value_type, ctx, &mut field_errors);
+                for e in field_errors {
+                    errors.push(e.in_field(key_str));
+                }
+            } else {
+                errors.push(unknown_field_error(key_str, ast_field.name.span));
+            }
+        }
+    }
+
+    // Check all required fields are present
+    let has_field = |name: &str| ast_fields.iter().any(|f| f.name.name == name);
+
+    for field in &explicit_fields {
+        if !field.optional && !has_field(&field.name) {
+            errors.push(missing_field_error(&field.name, struct_span));
+        }
+    }
+
+    for target in flattened_targets {
+        let ExprFlattenedTarget::Struct {
+            fields: inner_fields,
+            presence_based,
+        } = target
+        else {
+            continue;
+        };
+
+        if *presence_based && !inner_fields.iter().any(|field| has_field(&field.name)) {
+            continue;
+        }
+
+        for field in inner_fields {
+            if !field.optional && !has_field(&field.name) {
+                errors.push(missing_field_error(&field.name, struct_span));
+            }
+        }
+    }
+}
+
+fn validate_enum_expr_collect<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    variants: &[Variant],
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    // Skip error nodes
+    if matches!(expr, Expr::Error(_)) {
+        return;
+    }
+
+    // Extract variant name and content
+    let (variant_name, variant_span, content): (&str, Span, EnumExprContent<'_>) = match expr {
+        Expr::String(s) => (s.value.as_str(), s.span, EnumExprContent::Unit),
+        Expr::Option(opt) => {
+            if let Some(val) = &opt.value {
+                ("Some", opt.span, EnumExprContent::Tuple(&[&val.expr]))
+            } else {
+                ("None", opt.span, EnumExprContent::Unit)
+            }
+        }
+        Expr::Struct(s) => {
+            let name = s.name.name.as_ref();
+            let span = s.name.span;
+            match &s.body {
+                None => (name, span, EnumExprContent::Unit),
+                Some(StructBody::Tuple(body)) => {
+                    let exprs: Vec<_> = body.elements.iter().map(|e| &e.expr).collect();
+                    (name, span, EnumExprContent::TupleOwned(exprs))
+                }
+                Some(StructBody::Fields(body)) => {
+                    (name, span, EnumExprContent::Struct(&body.fields))
+                }
+            }
+        }
+        _ => {
+            errors.push(expr_type_mismatch("Enum", expr));
+            return;
+        }
+    };
+
+    let Some(variant) = variants.iter().find(|v| v.name == variant_name) else {
+        errors.push(unknown_variant_error(variant_name, variant_span));
+        return;
+    };
+
+    // Helper to validate tuple content
+    let validate_tuple_content =
+        |items: &[&Expr<'_>],
+         types: &[TypeKind],
+         ctx: &mut ValidationContext<R>,
+         errors: &mut Vec<ValidationError>| {
+            for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
+                let mut item_errors = Vec::new();
+                validate_expr_collect_internal(item, ty, ctx, &mut item_errors);
+                for e in item_errors {
+                    errors.push(e.in_element(i).in_variant(variant_name));
+                }
+            }
+        };
+
+    match (&variant.kind, content) {
+        (VariantKind::Unit, EnumExprContent::Unit) => {}
+        (VariantKind::Tuple(types), EnumExprContent::Tuple(items)) if items.len() == types.len() => {
+            validate_tuple_content(items, types, ctx, errors);
+        }
+        (VariantKind::Tuple(types), EnumExprContent::TupleOwned(ref items))
+            if items.len() == types.len() =>
+        {
+            validate_tuple_content(items, types, ctx, errors);
+        }
+        (VariantKind::Struct(fields), EnumExprContent::Struct(ast_fields)) => {
+            validate_variant_struct_fields_collect(
+                ast_fields,
+                fields,
+                variant_name,
+                variant_span,
+                ctx,
+                errors,
+            );
+        }
+        (VariantKind::Unit, _) => {
+            errors.push(
+                ValidationError::with_span(
+                    crate::error::ErrorKind::TypeMismatch {
+                        expected: "Unit".to_string(),
+                        found: "non-unit content".to_string(),
+                    },
+                    variant_span,
+                )
+                .in_variant(variant_name),
+            );
+        }
+        (_, EnumExprContent::Unit) => {
+            errors.push(
+                ValidationError::with_span(
+                    crate::error::ErrorKind::TypeMismatch {
+                        expected: "variant content".to_string(),
+                        found: "none".to_string(),
+                    },
+                    variant_span,
+                )
+                .in_variant(variant_name),
+            );
+        }
+        (VariantKind::Tuple(types), _) => {
+            errors.push(
+                ValidationError::with_span(
+                    crate::error::ErrorKind::TypeMismatch {
+                        expected: format!("Tuple({} elements)", types.len()),
+                        found: "mismatched content".to_string(),
+                    },
+                    variant_span,
+                )
+                .in_variant(variant_name),
+            );
+        }
+        (VariantKind::Struct(_), _) => {
+            errors.push(
+                ValidationError::with_span(
+                    crate::error::ErrorKind::TypeMismatch {
+                        expected: "Struct".to_string(),
+                        found: "mismatched content".to_string(),
+                    },
+                    variant_span,
+                )
+                .in_variant(variant_name),
+            );
+        }
+    }
+}
+
+fn validate_variant_struct_fields_collect<R: SchemaResolver>(
+    ast_fields: &[crate::ast::StructField<'_>],
+    schema_fields: &[Field],
+    variant_name: &str,
+    variant_span: Span,
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for ast_field in ast_fields {
+        // Skip error nodes in field values
+        if matches!(ast_field.value, Expr::Error(_)) {
+            continue;
+        }
+
+        let key = ast_field.name.name.as_ref();
+        let Some(field) = schema_fields.iter().find(|f| f.name == key) else {
+            errors.push(unknown_field_error(key, ast_field.name.span).in_variant(variant_name));
+            continue;
+        };
+
+        let mut field_errors = Vec::new();
+        validate_expr_collect_internal(&ast_field.value, &field.ty, ctx, &mut field_errors);
+        for e in field_errors {
+            errors.push(e.in_field(key).in_variant(variant_name));
+        }
+    }
+
+    // Check required fields
+    for field in schema_fields {
+        if !field.optional && !ast_fields.iter().any(|f| f.name.name == field.name) {
+            errors.push(missing_field_error(&field.name, variant_span).in_variant(variant_name));
+        }
+    }
+}
+
+fn validate_typeref_expr_collect<R: SchemaResolver>(
+    expr: &Expr<'_>,
+    type_path: &str,
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    // Skip error nodes
+    if matches!(expr, Expr::Error(_)) {
+        return;
+    }
+
+    // Check for circular reference
+    if ctx.is_visiting(type_path) {
+        return;
+    }
+
+    // Try to resolve the schema
+    if let Some(schema) = ctx.resolver.resolve(type_path) {
+        ctx.start_visiting(type_path);
+        let mut inner_errors = Vec::new();
+        validate_expr_collect_internal(expr, &schema.kind, ctx, &mut inner_errors);
+        for e in inner_errors {
+            errors.push(e.in_type_ref(type_path));
+        }
+        ctx.stop_visiting(type_path);
+    }
+    // If no schema found, accept any value (backward compatible)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -777,5 +2057,199 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("field 'items'"), "Error: {msg}");
         assert!(msg.contains("element 1"), "Error: {msg}");
+    }
+
+    // =========================================================================
+    // AST-Based Validation Tests
+    // =========================================================================
+
+    mod ast_validation {
+        use super::*;
+        use crate::ast::parse_document;
+        use crate::error::PathSegment;
+
+        #[test]
+        fn test_ast_validation_basic() {
+            let source = "(port: 8080, host: \"localhost\")";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![
+                    Field::new("port", TypeKind::U16),
+                    Field::optional("host", TypeKind::String),
+                ],
+            });
+
+            let result = validate_expr(doc.value.as_ref().unwrap(), &schema);
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_ast_validation_type_mismatch_has_span() {
+            let source = "(value: \"wrong\")";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::I32)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            // The error should have a real span (not synthetic)
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let span = v.span();
+                // Span should point to the "wrong" string value
+                assert!(!span.is_synthetic(), "Expected non-synthetic span");
+                assert_eq!(&source[span.start_offset..span.end_offset], "\"wrong\"");
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_validation_nested_error_has_correct_span() {
+            let source = r#"(items: [1, "wrong", 3])"#;
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("items", TypeKind::List(Box::new(TypeKind::I32)))],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let span = v.span();
+                // Span should point to "wrong", not "items" or the whole list
+                assert!(!span.is_synthetic(), "Expected non-synthetic span");
+                assert_eq!(
+                    &source[span.start_offset..span.end_offset],
+                    "\"wrong\"",
+                    "Span should point to the wrong value"
+                );
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_validation_unknown_field_has_span() {
+            let source = "(known: 1, unknown_field: 2)";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("known", TypeKind::I32)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let span = v.span();
+                // Span should point to the unknown field name
+                assert!(!span.is_synthetic(), "Expected non-synthetic span");
+                assert_eq!(
+                    &source[span.start_offset..span.end_offset],
+                    "unknown_field"
+                );
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_validation_missing_field_uses_struct_span() {
+            let source = "(optional_field: 1)";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![
+                    Field::new("required", TypeKind::I32),
+                    Field::optional("optional_field", TypeKind::I32),
+                ],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let span = v.span();
+                // For missing field, span should be the whole struct
+                assert!(!span.is_synthetic(), "Expected non-synthetic span");
+                assert_eq!(&source[span.start_offset..span.end_offset], source);
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_validation_deeply_nested_error() {
+            let source = r#"Config(
+                data: (
+                    items: [
+                        (name: "first"),
+                        (name: 123),
+                    ],
+                ),
+            )"#;
+            let doc = parse_document(source).unwrap();
+            let item_schema = TypeKind::Struct {
+                fields: vec![Field::new("name", TypeKind::String)],
+            };
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new(
+                    "data",
+                    TypeKind::Struct {
+                        fields: vec![Field::new("items", TypeKind::List(Box::new(item_schema)))],
+                    },
+                )],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let span = v.span();
+                // Span should point to 123, not the whole structure
+                assert!(!span.is_synthetic(), "Expected non-synthetic span");
+                assert_eq!(&source[span.start_offset..span.end_offset], "123");
+
+                // Check path context
+                assert!(v.path().iter().any(|p| matches!(p, PathSegment::Field(f) if f == "name")));
+                assert!(v.path().iter().any(|p| matches!(p, PathSegment::Element(1))));
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_validation_option_some_with_span() {
+            let source = "Some(\"wrong\")";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Option(Box::new(TypeKind::I32)));
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let span = v.span();
+                assert!(!span.is_synthetic(), "Expected non-synthetic span");
+                assert_eq!(&source[span.start_offset..span.end_offset], "\"wrong\"");
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_validation_enum_unknown_variant_span() {
+            let source = "BadVariant";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Enum {
+                variants: vec![
+                    crate::schema::Variant::unit("GoodVariant"),
+                    crate::schema::Variant::unit("OtherVariant"),
+                ],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let span = v.span();
+                assert!(!span.is_synthetic(), "Expected non-synthetic span");
+                assert_eq!(&source[span.start_offset..span.end_offset], "BadVariant");
+            } else {
+                panic!("Expected validation error");
+            }
+        }
     }
 }

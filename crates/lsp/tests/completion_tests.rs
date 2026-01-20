@@ -1041,3 +1041,61 @@ graphics:
         );
     }
 }
+
+mod diagnostic_integration {
+    use ron2_lsp::{diagnostics, Document, SchemaResolver};
+    use tower_lsp::lsp_types::{DiagnosticSeverity, Url};
+
+    use super::*;
+
+    fn make_doc(content: &str) -> Document {
+        Document::new(
+            Url::parse("file:///test.ron").unwrap(),
+            content.to_string(),
+            1,
+        )
+    }
+
+    fn make_resolver() -> SchemaResolver {
+        let resolver = SchemaResolver::new();
+        resolver.set_schema_dirs(vec![showcase_schemas_dir()]);
+        resolver
+    }
+
+    #[test]
+    fn test_nested_type_mismatch_span_and_message() {
+        // window.width expects U32, but we provide a string
+        // Note: This test provides all required fields to isolate the type mismatch error
+        let content = r#"#![type = "ron_showcase::GameConfig"]
+
+(
+    title: "Test",
+    version: "1.0",
+    window: (
+        width: "not_a_number",
+        height: 1080,
+    ),
+    graphics: Low,
+    audio: (master_volume: 1.0),
+    keybindings: {},
+    player: (name: "Player1", ship: Scout),
+)"#;
+        let doc = make_doc(content);
+        let resolver = make_resolver();
+
+        let diagnostics = diagnostics::validate_document(&doc, &resolver);
+
+        // Should have exactly one error - the type mismatch on width
+        assert_eq!(diagnostics.len(), 1, "Should have exactly one error");
+
+        let diag = &diagnostics[0];
+
+        // Verify error points to the wrong value "not_a_number"
+        assert_eq!(diag.range.start.line, 6, "Error should be on line 6");
+
+        // Verify message is SHORT - no path prefix, just the error
+        assert_eq!(diag.message, "expected integer, found String");
+
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+    }
+}

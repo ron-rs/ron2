@@ -106,8 +106,9 @@ pub use types::{Field, Schema, TypeKind, Variant, VariantKind};
 #[cfg(feature = "derive")]
 pub use validation::StorageResolver;
 pub use validation::{
-    AcceptAllResolver, SchemaResolver, validate, validate_type, validate_type_with_resolver,
-    validate_with_resolver,
+    AcceptAllResolver, SchemaResolver, validate, validate_expr, validate_expr_collect_all,
+    validate_expr_type, validate_expr_type_with_resolver, validate_expr_with_resolver,
+    validate_type, validate_type_with_resolver, validate_with_resolver,
 };
 
 // Re-export conversion traits from crate

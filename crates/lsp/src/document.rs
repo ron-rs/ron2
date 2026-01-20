@@ -25,8 +25,8 @@ pub struct Document {
     pub ast: Option<AstDocument<'static>>,
     /// Parsed RON value (if parsing succeeded, converted from AST).
     pub parsed_value: Option<ron2::Value>,
-    /// Parse error (if parsing failed).
-    pub parse_error: Option<ParseError>,
+    /// Parse errors (if any parsing failed).
+    pub parse_errors: Vec<ParseError>,
     /// Line offsets for position calculations.
     line_offsets: Vec<usize>,
 }
@@ -37,6 +37,8 @@ pub struct ParseError {
     pub message: String,
     pub line: usize,
     pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
 }
 
 impl Document {
@@ -50,7 +52,7 @@ impl Document {
             schema_attr: None,
             ast: None,
             parsed_value: None,
-            parse_error: None,
+            parse_errors: Vec::new(),
             line_offsets: Vec::new(),
         };
         doc.update(content, version);
@@ -112,7 +114,7 @@ impl Document {
     fn parse_content(&mut self) {
         self.ast = None;
         self.parsed_value = None;
-        self.parse_error = None;
+        self.parse_errors = Vec::new();
         self.type_attr = None;
         self.schema_attr = None;
 
@@ -140,19 +142,25 @@ impl Document {
         let parsed_value = ast::to_value(&doc).and_then(|r| r.ok());
         let ast_doc = doc.into_owned();
 
-        let parse_error = errors.first().map(|err| ParseError {
-            message: format!("{}", err.kind()),
-            line: err.span().start.line.saturating_sub(1),
-            col: err.span().start.col.saturating_sub(1),
-        });
+        // Collect ALL parse errors
+        let parse_errors: Vec<ParseError> = errors
+            .iter()
+            .map(|err| ParseError {
+                message: format!("{}", err.kind()),
+                line: err.span().start.line.saturating_sub(1),
+                col: err.span().start.col.saturating_sub(1),
+                end_line: err.span().end.line.saturating_sub(1),
+                end_col: err.span().end.col.saturating_sub(1),
+            })
+            .collect();
 
         self.type_attr = type_attr;
         self.schema_attr = schema_attr;
         self.parsed_value = parsed_value;
         self.ast = Some(ast_doc);
-        self.parse_error = parse_error;
+        self.parse_errors = parse_errors;
 
-        if self.parse_error.is_some() {
+        if !self.parse_errors.is_empty() {
             // AST parsing failed - fall back to text-based attribute extraction
             // so completions and schema resolution still work
             self.extract_attributes_from_text();

@@ -25,6 +25,7 @@ pub fn span_to_range(span: &ron2::error::Span) -> Range {
 /// Find the position of a field name in the document.
 ///
 /// Uses AST-based lookup when available, falling back to text search.
+#[allow(dead_code)]
 pub fn find_field_position(doc: &Document, field: &str) -> Option<Range> {
     // Prefer AST-based position (more accurate)
     if let Some(range) = find_word_range_from_ast(doc, field) {
@@ -50,6 +51,7 @@ pub fn find_word_range_from_ast(doc: &Document, name: &str) -> Option<Range> {
 }
 
 /// Find the position of text in the document using simple text search.
+#[allow(dead_code)]
 pub fn find_text_position(doc: &Document, text: &str) -> Option<Range> {
     for (line_idx, line) in doc.content.lines().enumerate() {
         if let Some(col) = line.find(text) {

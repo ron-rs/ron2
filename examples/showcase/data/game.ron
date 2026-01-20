@@ -1,7 +1,7 @@
 // Game configuration for "Space Adventure"
 // This file demonstrates RON with schema validation
 
-#![type = "ron_showcase::GameConfig"]
+#![type = "example_showcase::GameConfig"]
 
 (
     title: "Space Adventure",

@@ -3,23 +3,18 @@
 //! Validates RON files against their schemas and produces
 //! diagnostic messages for errors.
 
-use ron2::schema::{
-    validate_with_resolver, PathSegment, SchemaError, ValidationError, ValidationErrorKind,
-};
+use ron2::error::Span;
+use ron2::schema::{ValidationError, ValidationErrorKind, validate_expr_collect_all};
 use tower_lsp::lsp_types::*;
 
-use crate::{
-    document::Document,
-    lsp_utils::{find_field_position, find_text_position},
-    schema_resolver::SchemaResolver,
-};
+use crate::{document::Document, schema_resolver::SchemaResolver};
 
 /// Validate a document and return diagnostics.
 pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
-    // Add parse error diagnostic if present
-    if let Some(ref error) = doc.parse_error {
+    // Add ALL parse error diagnostics
+    for error in &doc.parse_errors {
         diagnostics.push(Diagnostic {
             range: Range {
                 start: Position {
@@ -27,8 +22,8 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
                     character: error.col as u32,
                 },
                 end: Position {
-                    line: error.line as u32,
-                    character: (error.col + 1) as u32,
+                    line: error.end_line as u32,
+                    character: error.end_col as u32,
                 },
             },
             severity: Some(DiagnosticSeverity::ERROR),
@@ -36,9 +31,10 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
             message: error.message.clone(),
             ..Default::default()
         });
-        // Don't continue validation if we can't parse the file
-        return diagnostics;
     }
+
+    // Continue with schema validation even if there are parse errors
+    // (the parser recovers and produces partial AST)
 
     // If no type or schema attribute, we can't validate
     if doc.type_attr.is_none() && doc.schema_attr.is_none() {
@@ -78,202 +74,90 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
         return diagnostics;
     };
 
-    // Validate the parsed value against the schema
-    let Some(ref value) = doc.parsed_value else {
+    // Validate the AST against the schema (provides precise error spans)
+    let Some(ref ast) = doc.ast else {
+        return diagnostics;
+    };
+    let Some(ref expr) = ast.value else {
         return diagnostics;
     };
 
-    if let Err(error) = validate_with_resolver(value, &schema, resolver) {
-        diagnostics.extend(validation_error_to_diagnostics(&error, doc));
+    // Use multi-error validation that collects all errors
+    let validation_errors = validate_expr_collect_all(expr, &schema, resolver);
+    for error in validation_errors {
+        diagnostics.push(validation_error_to_diagnostic(&error));
     }
 
     diagnostics
 }
 
-/// Convert a validation error to diagnostics.
-fn validation_error_to_diagnostics(error: &SchemaError, doc: &Document) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
+/// Convert a validation error to a diagnostic.
+///
+/// The error span comes directly from the AST, providing precise positioning.
+fn validation_error_to_diagnostic(error: &ValidationError) -> Diagnostic {
+    // Convert the error span to LSP range
+    let range = span_to_range(error.span());
 
-    // Default range at position 0,0
-    let default_range = Range {
-        start: Position {
-            line: 0,
-            character: 0,
-        },
-        end: Position {
-            line: 0,
-            character: 0,
-        },
-    };
+    // Format the error message
+    let message = format_error_message(error);
 
-    // Try to find a better position based on the error path and kind
-    let (message, improved_range) = format_validation_error(error, doc);
-
-    diagnostics.push(Diagnostic {
-        range: improved_range.unwrap_or(default_range),
+    Diagnostic {
+        range,
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("ron-schema".to_string()),
         message,
         ..Default::default()
-    });
-
-    diagnostics
+    }
 }
 
-/// Format a validation error and try to find its position.
-fn format_validation_error(error: &SchemaError, doc: &Document) -> (String, Option<Range>) {
-    // Handle storage errors (shouldn't occur during validation, but handle gracefully)
-    let validation_error = match error {
-        SchemaError::Validation(v) => v,
-        SchemaError::Storage(_) => return (error.to_string(), None),
-    };
-
-    format_validation_error_inner(validation_error, doc)
+/// Convert a ron2 Span to an LSP Range.
+fn span_to_range(span: &Span) -> Range {
+    // ron2 spans use 1-based line/column, LSP uses 0-based
+    Range {
+        start: Position {
+            line: span.start.line.saturating_sub(1) as u32,
+            character: span.start.col.saturating_sub(1) as u32,
+        },
+        end: Position {
+            line: span.end.line.saturating_sub(1) as u32,
+            character: span.end.col.saturating_sub(1) as u32,
+        },
+    }
 }
 
-/// Format a ValidationError and try to find its position.
-fn format_validation_error_inner(
-    error: &ValidationError,
-    doc: &Document,
-) -> (String, Option<Range>) {
-    // Build context prefix from path (path is stored innermost-first, display outermost-first)
-    let context_prefix = if error.path().is_empty() {
-        String::new()
-    } else {
-        let path_str: Vec<String> = error.path().iter().rev().map(format_path_segment).collect();
-        format!("{}: ", path_str.join(" -> "))
-    };
-
-    // Try to find position based on innermost path segment
-    let range = find_position_from_path(error.path(), doc);
-
-    // Format the message based on error kind
-    let message = match error.kind() {
+/// Format a validation error message.
+///
+/// Since AST validation provides precise spans pointing directly to the error location,
+/// path context is not needed - just return concise error messages.
+fn format_error_message(error: &ValidationError) -> String {
+    match error.kind() {
         ValidationErrorKind::TypeMismatch { expected, found } => {
-            format!(
-                "{}Type mismatch: expected {}, got {}",
-                context_prefix, expected, found
-            )
+            format!("expected {}, found {}", expected, found)
         }
         ValidationErrorKind::MissingField { field, .. } => {
-            format!("{}Missing required field: {}", context_prefix, field)
+            format!("missing required field `{}`", field)
         }
         ValidationErrorKind::UnknownField { field, .. } => {
-            format!("{}Unknown field: {}", context_prefix, field)
+            format!("unknown field `{}`", field)
         }
         ValidationErrorKind::UnknownVariant { variant, .. } => {
-            format!("{}Unknown enum variant: {}", context_prefix, variant)
+            format!("unknown variant `{}`", variant)
         }
         ValidationErrorKind::LengthMismatch {
             expected, found, ..
         } => {
-            format!(
-                "{}Tuple length mismatch: expected {} elements, got {}",
-                context_prefix, expected, found
-            )
+            format!("expected {} elements, found {}", expected, found)
         }
         ValidationErrorKind::DuplicateField { field, .. } => {
-            format!("{}Duplicate field: {}", context_prefix, field)
+            format!("duplicate field `{}`", field)
         }
         ValidationErrorKind::IntegerOutOfBounds { value, target_type } => {
-            format!(
-                "{}Integer {} out of bounds for {}",
-                context_prefix, value, target_type
-            )
+            format!("{} out of range for {}", value, target_type)
         }
-        // Handle other ErrorKind variants with a generic message
-        _ => format!("{}{}", context_prefix, error.kind()),
-    };
-
-    // Try to find better position for specific error kinds if path didn't help
-    let final_range = range.or_else(|| find_position_from_kind(error.kind(), doc));
-
-    (message, final_range)
-}
-
-/// Format a path segment for display.
-fn format_path_segment(segment: &PathSegment) -> String {
-    match segment {
-        PathSegment::Field(name) => format!("field '{}'", name),
-        PathSegment::Element(idx) => format!("element {}", idx),
-        PathSegment::MapKey => "map key".to_string(),
-        PathSegment::MapValue(key) => format!("value for '{}'", key),
-        PathSegment::Variant(name) => format!("variant '{}'", name),
-        PathSegment::TypeRef(path) => format!("type '{}'", path),
+        _ => format!("{}", error.kind()),
     }
 }
 
-/// Try to find a position based on the error path.
-fn find_position_from_path(path: &[PathSegment], doc: &Document) -> Option<Range> {
-    // Try to find position from innermost segment first
-    for segment in path.iter().rev() {
-        match segment {
-            PathSegment::Field(name) => {
-                if let Some(range) = find_field_position(doc, name) {
-                    return Some(range);
-                }
-            }
-            PathSegment::Variant(name) => {
-                if let Some(range) = find_text_position(doc, name) {
-                    return Some(range);
-                }
-            }
-            _ => continue,
-        }
-    }
-    None
-}
-
-/// Try to find a position based on the error kind.
-fn find_position_from_kind(kind: &ValidationErrorKind, doc: &Document) -> Option<Range> {
-    match kind {
-        ValidationErrorKind::MissingField { .. } => find_field_insert_position(doc),
-        ValidationErrorKind::UnknownField { field, .. } => find_field_position(doc, field),
-        ValidationErrorKind::UnknownVariant { variant, .. } => find_text_position(doc, variant),
-        _ => None,
-    }
-}
-
-/// Find a position where a missing field could be inserted.
-fn find_field_insert_position(doc: &Document) -> Option<Range> {
-    // If we have an AST, use the root expression span
-    if let Some(ref ast) = doc.ast {
-        if let Some(ref expr) = ast.value {
-            let span = expr.span();
-            // Return the opening delimiter position
-            return Some(Range {
-                start: Position {
-                    line: span.start.line.saturating_sub(1) as u32,
-                    character: span.start.col.saturating_sub(1) as u32,
-                },
-                end: Position {
-                    line: span.start.line.saturating_sub(1) as u32,
-                    character: span.start.col as u32,
-                },
-            });
-        }
-    }
-
-    // Fall back to text search
-    for (line_idx, line) in doc.content.lines().enumerate() {
-        if line.trim().starts_with("#![") {
-            continue;
-        }
-        if let Some(col) = line.find('(') {
-            return Some(Range {
-                start: Position {
-                    line: line_idx as u32,
-                    character: col as u32,
-                },
-                end: Position {
-                    line: line_idx as u32,
-                    character: (col + 1) as u32,
-                },
-            });
-        }
-    }
-    None
-}
 
 #[cfg(test)]
 mod tests {
@@ -316,17 +200,4 @@ mod tests {
         assert!(diagnostics.is_empty());
     }
 
-    #[test]
-    fn test_format_path_segment() {
-        assert_eq!(
-            format_path_segment(&PathSegment::Field("name".to_string())),
-            "field 'name'"
-        );
-        assert_eq!(format_path_segment(&PathSegment::Element(0)), "element 0");
-        assert_eq!(format_path_segment(&PathSegment::MapKey), "map key");
-        assert_eq!(
-            format_path_segment(&PathSegment::Variant("Some".to_string())),
-            "variant 'Some'"
-        );
-    }
 }
