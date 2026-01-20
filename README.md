@@ -1,66 +1,102 @@
-## ron-extras
+# ron-extras
 
-Alternative, AST-powered implementation of the Rusty Object Notation (RON).
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.90.0-blue.svg)]()
 
-- **ron2**: Standalone RON parser with full AST access, perfect round-trip fidelity and pretty printing with comment preservation
-- **ron2-derive**: Proc macro for AST<->Type conversions and schemas at compile time
-- **ron2-lsp**: Language server providing auto-completions for RON files
-- **ron2-doc**: RON Schema to Markdown docs generation
-- **ron2-cli**: Command Line Interface to format RON and generate markdown docs from RON schema
+A RON parser with full AST access, schema-driven LSP completions, and formatting tools.
+
+## Quick Start
+
+```toml
+[dependencies]
+ron2 = "0.1"
+ron2-derive = "0.1"
+```
+
+```rust
+use ron2_derive::Ron;
+
+#[derive(Ron, Debug)]
+struct Config {
+    /// Server port
+    port: u16,
+    /// Optional hostname
+    host: Option<String>,
+}
+
+let config: Config = ron2::from_str("(port: 8080, host: \"localhost\")")?;
+println!("{:?}", config);
+```
+
+## Crates
+
+| Crate | Description |
+|-------|-------------|
+| `ron2` | Core parser with AST and Value APIs |
+| `ron2-derive` | Derive macros for `FromRon`, `ToRon`, and schema generation |
+| `ron2-lsp` | Language server with completions and diagnostics |
+| `ron2-doc` | Documentation generator from schema files |
+| `ron2-cli` | CLI tools (`ron fmt`, `ron doc`) |
 
 ## Why ron2?
 
-Unlike the main `ron` crate, ron2:
-
 - **AST-first**: Parses to a complete AST preserving all source information
-- **Rich errors**: Since we already have the AST structure, type mismatch errors are more accurate
-- **Perfect round-trip**: Comments, whitespace, and formatting are preserved exactly
-- **Full RON data model**: Do to using our own derive, we don't run into [serde limitations]
+- **Perfect round-trip**: Comments, whitespace, and formatting preserved exactly
+- **Rich errors**: Type mismatch errors include precise source locations
+- **Full RON data model**: Custom derive avoids [serde limitations]
+
+Best for human-edited config files or building custom DSLs.
 
 [serde limitations]: https://github.com/ron-rs/ron?tab=readme-ov-file#limitations
 
-This implementation is best for projects relying on complex, human-edited config files or for building custom DSLs.
+## Schema & LSP
 
-## Who is ron2 not for?
+ron2 generates schemas at compile time from your Rust types. The LSP uses these schemas for completions and validation.
 
-- You need to work with types that only support serde
-- You need to parse huge amounts of data (ron2 is a lot slower)
-
-You should consider using if these alternatives are a better fit for your use case:
-
-### Reference implementation
-
-Use the reference implementation at https://github.com/ron-rs/ron
-if you want a mature and fast implementation of a RON parser,
-while accepting the limitations of serde's data model.
-
-### Minimal implementation
-
-If you care about compile and lean dependency trees, use https://github.com/not-fl3/nanoserde
-to derive non-pretty printing serialization for Rust types.
-
-## Additions to the RON format
-
-Our goal is to be 100% compatible with the reference implementation, however we introduce two new attributes:
+Add a type attribute to your RON files to enable editor support:
 
 ```ron
-#![type = "crate::path::to::MyStruct"]
+#![type = "my_crate::config::Config"]
+
+(
+    port: 8080,
+    host: "localhost",
+)
 ```
 
-This attribute allows to resolve which schema to load, and enables LSP completions and validation.
+The LSP will provide field name completions, type validation, and documentation on hover.
 
-```ron
-#![schema = "schemas/MyType.schema.ron"]
+## CLI Tools
+
+Format RON files:
+
+```bash
+ron fmt config.ron              # Format in place
+ron fmt --check config.ron      # Check formatting (for CI)
 ```
+
+Generate documentation from schemas:
+
+```bash
+ron doc ./schemas -o ./docs
+```
+
+## When NOT to Use ron2
+
+**Don't use ron2 if:**
+
+- You need serde compatibility (your types only implement Serialize/Deserialize)
+- You're parsing large data volumes (ron2 prioritizes fidelity over speed)
+
+**Alternatives:**
+
+- **[ron](https://github.com/ron-rs/ron)** — Mature, fast, serde-based
+- **[nanoserde](https://github.com/not-fl3/nanoserde)** — Minimal dependencies, fast compile
 
 ## Editor Setup
 
-See [EDITOR_SETUP.md](EDITOR_SETUP.md) for instructions on integrating with Helix, VS Code, and other editors.
+See [EDITOR_SETUP.md](EDITOR_SETUP.md) for Helix, VS Code, and other editor integrations.
 
-## Acknowledgments
+## Acknowledgments & License
 
-The `ron2` crate is derived from [ron](https://github.com/ron-rs/ron). 
-
-## License
-
-Dual-licensed under Apache-2.0 and MIT, same as the original `ron` crate.
+Derived from [ron](https://github.com/ron-rs/ron). Dual-licensed under Apache-2.0 and MIT.
