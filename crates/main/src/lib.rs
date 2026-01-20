@@ -1,8 +1,9 @@
 //! RON2 - Rusty Object Notation parser with full AST access
 //!
-//! This crate provides a standalone RON parser with two APIs:
+//! This crate provides a standalone RON parser with three APIs:
 //! - **AST API**: Full fidelity parsing with perfect round-trip support
 //! - **Value API**: Simplified access to semantic content only
+//! - **Typed Conversions**: [`FromRon`] and [`ToRon`] traits for Rust types
 //!
 //! No serde dependency required.
 //!
@@ -20,13 +21,21 @@
 //! # Value Example (semantic only)
 //!
 //! ```
-//! use ron2::{Value, ToRon, FormatConfig};
+//! use ron2::Value;
 //!
-//! let value: Value = "Point(x: 1, y: 2)".parse().unwrap();
-//! // Pretty output (default)
-//! let pretty = value.to_ron().unwrap();
-//! // Compact output (no whitespace)
-//! let compact = value.to_ron_with(&FormatConfig::minimal()).unwrap();
+//! let value: Value = "[1, 2, 3]".parse().unwrap();
+//! assert!(matches!(value, Value::Seq(_)));
+//! ```
+//!
+//! # Typed Conversions
+//!
+//! ```
+//! use ron2::{FromRon, ToRon};
+//!
+//! let numbers: Vec<i32> = Vec::from_ron("[1, 2, 3]").unwrap();
+//! assert_eq!(numbers, vec![1, 2, 3]);
+//!
+//! let ron_string = numbers.to_ron().unwrap();
 //! ```
 
 #![deny(clippy::correctness)]

@@ -175,8 +175,6 @@ use crate::{
 ///
 /// Captures both the deserialized value and the exact location (line, column,
 /// byte offsets) where it appeared in the RON source.
-///
-/// See the [module-level documentation](self) for detailed usage examples.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spanned<T> {
     /// The deserialized value.
