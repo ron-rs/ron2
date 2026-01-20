@@ -9,13 +9,13 @@
 
 use std::{collections::BTreeMap, fs};
 
+use example_showcase::GameConfig;
 use ron2::{
     ast::FormatConfig,
     schema::{
         collect_schemas, validate_with_resolver, FromRon, RonSchema, Schema, SchemaResolver, ToRon,
     },
 };
-use ron_showcase::GameConfig;
 
 struct CatalogResolver {
     schemas: BTreeMap<String, Schema>,
