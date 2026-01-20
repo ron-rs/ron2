@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ron2_derive::Ron;
+use ron2::Ron;
 
 /// Main game configuration.
 #[derive(Debug, Clone, Ron)]

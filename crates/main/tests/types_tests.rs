@@ -6,6 +6,8 @@
 //! - Field and Variant builders
 //! - Nested types (Vec of Option of Struct, etc.)
 
+#![cfg(feature = "derive")]
+
 use ron2::{
     ast::FormatConfig,
     schema::{Field, FromRon, Schema, ToRon, TypeKind, Variant, VariantKind},

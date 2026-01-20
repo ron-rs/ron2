@@ -1,10 +1,11 @@
 use alloc::collections::{BTreeMap, VecDeque};
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use std::collections::HashSet;
+#[cfg(feature = "derive")]
+use std::path::{Path, PathBuf};
 
-use crate::schema::{RonSchemaType, Schema, SchemaError, StorageError, write_schema};
+#[cfg(feature = "derive")]
+use crate::schema::write_schema;
+use crate::schema::{RonSchemaType, Schema, SchemaError, StorageError};
 
 /// A schema entry for recursive collection.
 #[derive(Clone, Copy, Debug)]
@@ -26,6 +27,7 @@ pub struct SchemaCatalog {
 
 impl SchemaCatalog {
     /// Write all schemas in this catalog to disk.
+    #[cfg(feature = "derive")]
     pub fn write_all(&self, output_dir: Option<&Path>) -> Result<Vec<PathBuf>, SchemaError> {
         let mut written = Vec::with_capacity(self.schemas.len());
         for (type_path, schema) in &self.schemas {
@@ -53,6 +55,7 @@ pub fn collect_schemas<T: RonSchemaType>() -> Result<SchemaCatalog, SchemaError>
 }
 
 /// Collect schemas recursively starting from `T` and write them to `output_dir`.
+#[cfg(feature = "derive")]
 pub fn write_schemas<T: RonSchemaType>(
     output_dir: Option<&str>,
 ) -> Result<Vec<PathBuf>, SchemaError> {

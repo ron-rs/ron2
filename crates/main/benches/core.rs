@@ -8,7 +8,7 @@ mod common;
 use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use ron2::{ToRon, __internal::Lexer, ast::FormatConfig};
+use ron2::{__internal::Lexer, ToRon, ast::FormatConfig};
 
 /// Benchmark AST parsing using `parse_document()`.
 fn bench_parse_ast(c: &mut Criterion) {

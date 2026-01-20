@@ -3,8 +3,9 @@
 //! This module tests that ron2 can parse ron output and vice versa,
 //! validating roundtrips and semantic equivalence.
 
+#![cfg(feature = "derive")]
+
 use ron2::{FromRon, ToRon, Value, ast::FormatConfig};
-use ron2_derive::{FromRon, ToRon};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

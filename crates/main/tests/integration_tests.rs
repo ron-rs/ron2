@@ -5,6 +5,8 @@
 //! - Schema resolution precedence
 //! - Complete workflows from schema definition to validation
 
+#![cfg(feature = "derive")]
+
 use std::{env, ffi::OsStr, fs};
 
 use ron2::schema::{

@@ -3,6 +3,8 @@
 //! These tests ensure that errors provide precise location information
 //! and helpful messages that enable rustc-like diagnostics.
 
+#![cfg(feature = "derive")]
+
 use ron2::{Result, Value, error::ErrorKind};
 
 // =============================================================================

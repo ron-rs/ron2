@@ -1,3 +1,4 @@
+#[cfg(feature = "derive")]
 use std::path::{Path, PathBuf};
 
 use ahash::{HashSet, HashSetExt};
@@ -58,11 +59,15 @@ impl SchemaResolver for AcceptAllResolver {
 ///
 /// This resolver uses the storage functions to find and load schemas
 /// based on type paths.
+///
+/// This type is only available when the `derive` feature is enabled.
+#[cfg(feature = "derive")]
 pub struct StorageResolver {
     /// Optional additional search directory (checked before default locations).
     search_dir: Option<PathBuf>,
 }
 
+#[cfg(feature = "derive")]
 impl StorageResolver {
     /// Create a new storage resolver using default schema locations.
     #[must_use]
@@ -85,12 +90,14 @@ impl StorageResolver {
     }
 }
 
+#[cfg(feature = "derive")]
 impl Default for StorageResolver {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "derive")]
 impl SchemaResolver for StorageResolver {
     fn resolve(&self, type_path: &str) -> Option<Schema> {
         if let Some(ref dir) = self.search_dir {

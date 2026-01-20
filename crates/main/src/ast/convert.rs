@@ -1037,12 +1037,27 @@ fn format_number(n: &Number) -> (String, NumberKind) {
         Number::I64(v) => format_signed(*v),
         #[cfg(feature = "integer128")]
         Number::I128(v) => format_signed(*v),
-        Number::U8(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
-        Number::U16(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
-        Number::U32(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
-        Number::U64(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
+        Number::U8(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
+        Number::U16(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
+        Number::U32(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
+        Number::U64(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
         #[cfg(feature = "integer128")]
-        Number::U128(v) => (itoa::Buffer::new().format(*v).to_owned(), NumberKind::Integer),
+        Number::U128(v) => (
+            itoa::Buffer::new().format(*v).to_owned(),
+            NumberKind::Integer,
+        ),
         Number::F32(f) => format_float(f64::from(f.get())),
         Number::F64(f) => format_float(f.get()),
         // Handle non-exhaustive variant

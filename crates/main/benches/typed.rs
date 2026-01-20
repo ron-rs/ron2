@@ -6,7 +6,6 @@
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use ron2::{FromRon, ToRon};
-use ron2_derive::{FromRon, ToRon};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

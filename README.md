@@ -10,12 +10,10 @@ A RON parser with full AST access, schema-driven LSP completions, and formatting
 ```toml
 [dependencies]
 ron2 = "0.1"
-ron2-derive = "0.1"
 ```
 
 ```rust
-use ron2::FromRon;
-use ron2_derive::Ron;
+use ron2::{FromRon, Ron};
 
 #[derive(Ron, Debug)]
 struct Config {

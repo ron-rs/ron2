@@ -1,9 +1,14 @@
 //! Tests for generic type handling in schema collection and writing.
 
-use ron2::schema::{
-    RonSchemaType, TypeKind, collect_schemas, read_schema, type_path_to_file_path, write_schemas,
+#![cfg(feature = "derive")]
+
+use ron2::{
+    RonSchema,
+    schema::{
+        RonSchemaType, TypeKind, collect_schemas, read_schema, type_path_to_file_path,
+        write_schemas,
+    },
 };
-use ron2_derive::RonSchema;
 
 #[allow(dead_code)]
 #[derive(RonSchema)]

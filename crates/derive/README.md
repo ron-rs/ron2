@@ -2,14 +2,24 @@
 
 Derive macros for RON serialization, deserialization, and schema generation.
 
+> **Note:** These macros are re-exported from `ron2` with the default `derive` feature.
+> You only need this crate directly if you want to use the macros without the rest of `ron2`.
+
 ## Usage
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
+ron2 = "0.1"  # Includes derive macros by default
+```
+
+Or for standalone use:
+
+```toml
+[dependencies]
 ron2-derive = "0.1"
-ron2 = "0.1"
+ron2 = { version = "0.1", default-features = false }
 ```
 
 ## Derive Macros

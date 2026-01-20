@@ -7,6 +7,8 @@
 //! - Environment variable override
 //! - XDG fallback
 
+#![cfg(feature = "derive")]
+
 use std::{env, ffi::OsStr, fs, path::PathBuf};
 
 use ron2::schema::{

@@ -89,21 +89,26 @@ pub mod traits;
 pub mod types;
 pub mod validation;
 
-// Re-export conversion traits from crate
-pub use collect::{SchemaCatalog, SchemaEntry, collect_schemas, write_schemas};
+// Re-export types (always available)
+// Re-export functions that require the derive feature
+#[cfg(feature = "derive")]
+pub use collect::write_schemas;
+pub use collect::{SchemaCatalog, SchemaEntry, collect_schemas};
 pub use error::{
     PathSegment, Position, Result, SchemaError, Span, StorageError, ValidationError,
     ValidationErrorKind, ValidationResult,
 };
-pub use storage::{
-    SCHEMA_DIR_ENV, find_schema, find_schema_in, read_schema, resolve_schema_dir,
-    type_path_to_file_path, write_schema,
-};
+pub use storage::{SCHEMA_DIR_ENV, resolve_schema_dir, type_path_to_file_path};
+#[cfg(feature = "derive")]
+pub use storage::{find_schema, find_schema_in, read_schema, write_schema};
 pub use traits::{RonList, RonMap, RonOptional, RonSchemaType};
 pub use types::{Field, Schema, TypeKind, Variant, VariantKind};
+#[cfg(feature = "derive")]
+pub use validation::StorageResolver;
 pub use validation::{
-    AcceptAllResolver, SchemaResolver, StorageResolver, validate, validate_type,
-    validate_type_with_resolver, validate_with_resolver,
+    AcceptAllResolver, SchemaResolver, validate, validate_type, validate_type_with_resolver,
+    validate_with_resolver,
 };
 
+// Re-export conversion traits from crate
 pub use crate::{AstMapAccess, FormatConfig, FromRon, ToRon};

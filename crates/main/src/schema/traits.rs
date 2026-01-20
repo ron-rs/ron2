@@ -35,12 +35,13 @@ use core::{
     hash::BuildHasher,
     marker::PhantomData,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-};
+use std::collections::{HashMap, HashSet};
+#[cfg(feature = "derive")]
+use std::path::{Path, PathBuf};
 
-use crate::schema::{Schema, SchemaEntry, SchemaError, StorageError, TypeKind};
+use crate::schema::{Schema, SchemaEntry, TypeKind};
+#[cfg(feature = "derive")]
+use crate::schema::{SchemaError, StorageError};
 
 /// Core trait for types that can be represented in the RON schema system.
 ///
@@ -117,6 +118,9 @@ pub trait RonSchemaType {
     ///
     /// Returns the path to the written schema file, or `None` if this type
     /// doesn't support schema storage (e.g., primitive types).
+    ///
+    /// Only available when the `derive` feature is enabled.
+    #[cfg(feature = "derive")]
     fn write_schema(output_dir: Option<&Path>) -> Result<PathBuf, SchemaError> {
         let type_path = Self::type_path().ok_or_else(|| {
             SchemaError::Storage(StorageError::Io(
@@ -128,6 +132,9 @@ pub trait RonSchemaType {
     }
 
     /// Writes this type's schema and all child schemas recursively.
+    ///
+    /// Only available when the `derive` feature is enabled.
+    #[cfg(feature = "derive")]
     fn write_schemas(output_dir: Option<&str>) -> Result<Vec<PathBuf>, SchemaError>
     where
         Self: Sized,

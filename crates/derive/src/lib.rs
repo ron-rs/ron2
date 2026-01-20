@@ -121,9 +121,20 @@ use syn::parse_macro_input;
 ///
 /// # Schema Output
 ///
-/// Schemas are written at compile time when either:
-/// - `RON_SCHEMA_DIR` environment variable is set (schemas written to that directory)
-/// - `RON_SCHEMA_GLOBAL=1` environment variable is set (schemas written to XDG data dir)
+/// Schemas are written at runtime by calling `write_schemas()` on the type:
+///
+/// ```ignore
+/// use ron2::schema::RonSchemaType;
+///
+/// // Write to a specific directory
+/// Config::write_schemas(Some("./schemas"))?;
+///
+/// // Or use the default XDG location (~/.local/share/ron-schemas/)
+/// Config::write_schemas(None)?;
+/// ```
+///
+/// Schema files are named by their fully-qualified type path:
+/// `my_crate::config::Config` → `my_crate/config/Config.schema.ron`
 #[proc_macro_derive(RonSchema, attributes(ron))]
 pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);

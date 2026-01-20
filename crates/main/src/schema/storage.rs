@@ -1,15 +1,12 @@
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::{env, path::PathBuf};
+#[cfg(feature = "derive")]
+use std::{fs, path::Path};
 
-use crate::{
-    FromRon, ToRon,
-    schema::{
-        Schema,
-        error::{Result, SchemaError},
-    },
-};
+#[cfg(feature = "derive")]
+use crate::schema::Schema;
+use crate::schema::error::{Result, SchemaError};
+#[cfg(feature = "derive")]
+use crate::{FromRon, ToRon};
 
 /// Environment variable for schema directory override.
 pub const SCHEMA_DIR_ENV: &str = "RON_SCHEMA_DIR";
@@ -67,6 +64,7 @@ pub fn type_path_to_file_path(type_path: &str) -> PathBuf {
 /// Write a schema to the configured schema directory.
 ///
 /// If `output_dir` is provided, it takes precedence over environment variable and XDG default.
+#[cfg(feature = "derive")]
 pub fn write_schema(
     type_path: &str,
     schema: &Schema,
@@ -93,6 +91,7 @@ pub fn write_schema(
 }
 
 /// Read a schema from a file path.
+#[cfg(feature = "derive")]
 pub fn read_schema(path: &Path) -> Result<Schema> {
     let contents = fs::read_to_string(path)?;
     let schema = Schema::from_ron(&contents)?;
@@ -102,6 +101,7 @@ pub fn read_schema(path: &Path) -> Result<Schema> {
 /// Find and read a schema by type path.
 ///
 /// Searches in the schema directory resolved by `resolve_schema_dir()`.
+#[cfg(feature = "derive")]
 pub fn find_schema(type_path: &str) -> Result<Schema> {
     let base_dir = resolve_schema_dir()?;
     let file_path = base_dir.join(type_path_to_file_path(type_path));
@@ -114,6 +114,7 @@ pub fn find_schema(type_path: &str) -> Result<Schema> {
 }
 
 /// Find a schema by type path, searching in a specific directory first.
+#[cfg(feature = "derive")]
 pub fn find_schema_in(type_path: &str, search_dir: &Path) -> Result<Schema> {
     let file_path = search_dir.join(type_path_to_file_path(type_path));
 

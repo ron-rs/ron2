@@ -72,6 +72,10 @@ mod util;
 pub mod value;
 
 // Re-export formatting config types from ast::fmt
+// Re-export derive macros when the derive feature is enabled
+#[cfg(feature = "derive")]
+pub use ron2_derive::{FromRon, Ron, RonSchema, ToRon};
+
 pub use crate::{
     ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing},
     convert::{AstMapAccess, FromRon, FromRonFields, Spanned, ToRon},

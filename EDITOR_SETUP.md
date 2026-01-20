@@ -57,10 +57,10 @@
    )
    ```
 
-5. **Generate schemas** (if using `ron2-derive`)
+5. **Generate schemas** (using derive macros)
 
    ```rust
-   use ron2_derive::Ron;
+   use ron2::Ron;
 
    #[derive(Ron)]
    #[ron(output = "schemas/")]  // Output directory relative to crate root

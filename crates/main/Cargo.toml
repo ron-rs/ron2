@@ -15,7 +15,8 @@ categories = ["encoding"]
 rust-version = "1.90.0"
 
 [features]
-default = []
+default = ["derive"]
+derive = ["dep:ron2-derive"]
 integer128 = []
 xdg = ["dep:dirs"]
 internal-span-substring-test = ["dep:unicode-segmentation"]
@@ -26,7 +27,7 @@ bitflags = { version = "2.10", default-features = false }
 dirs = { version = "6.0.0", optional = true }
 indexmap = { version = "2.13", default-features = false, features = ["std"] }
 itoa.workspace = true
-ron2-derive = { path = "../derive" }
+ron2-derive = { path = "../derive", optional = true }
 unicode-ident = { version = "1.0", default-features = false }
 unicode-segmentation = { version = "1.12", default-features = false, optional = true }
 
@@ -44,6 +45,7 @@ harness = false
 [[bench]]
 name = "typed"
 harness = false
+required-features = ["derive"]
 
 [package.metadata.docs.rs]
 features = ["integer128"]

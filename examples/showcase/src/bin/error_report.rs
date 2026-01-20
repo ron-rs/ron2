@@ -8,7 +8,6 @@
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use ron2::{Error as RonError, FromRon, Span, Spanned};
-use ron2_derive::FromRon;
 
 // Simple config struct with validation requirements
 #[derive(Debug, FromRon)]

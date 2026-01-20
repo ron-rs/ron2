@@ -1,12 +1,14 @@
 use core::fmt;
 
-use ron2_derive::{FromRon, ToRon};
-
 /// Root schema definition for a Rust type.
-#[derive(Debug, Clone, PartialEq, FromRon, ToRon)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "derive", derive(ron2_derive::FromRon, ron2_derive::ToRon))]
 pub struct Schema {
     /// Documentation from the Rust type's doc comments.
-    #[ron(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "derive",
+        ron(default, skip_serializing_if = "Option::is_none")
+    )]
     pub doc: Option<String>,
     /// The kind of type this schema represents.
     pub kind: TypeKind,
@@ -22,7 +24,8 @@ pub struct Schema {
 ///
 /// Custom types implementing these traits will serialize to the same `TypeKind`
 /// variants, allowing the validation and LSP systems to work uniformly.
-#[derive(Debug, Clone, PartialEq, FromRon, ToRon)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "derive", derive(ron2_derive::FromRon, ron2_derive::ToRon))]
 pub enum TypeKind {
     // Primitives
     Bool,
@@ -195,38 +198,53 @@ impl fmt::Display for TypeKind {
 }
 
 /// A field in a struct.
-#[derive(Debug, Clone, PartialEq, FromRon, ToRon)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "derive", derive(ron2_derive::FromRon, ron2_derive::ToRon))]
 pub struct Field {
     /// Field name.
     pub name: String,
     /// Field type.
     pub ty: TypeKind,
     /// Documentation from doc comments.
-    #[ron(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "derive",
+        ron(default, skip_serializing_if = "Option::is_none")
+    )]
     pub doc: Option<String>,
     /// Whether this field is optional (has a default value).
-    #[ron(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(
+        feature = "derive",
+        ron(default, skip_serializing_if = "std::ops::Not::not")
+    )]
     pub optional: bool,
     /// Whether this field is flattened (its fields are merged into the parent).
     /// Only valid when `ty` is a Struct or `TypeRef` to a struct.
-    #[ron(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(
+        feature = "derive",
+        ron(default, skip_serializing_if = "std::ops::Not::not")
+    )]
     pub flattened: bool,
 }
 
 /// A variant in an enum.
-#[derive(Debug, Clone, PartialEq, FromRon, ToRon)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "derive", derive(ron2_derive::FromRon, ron2_derive::ToRon))]
 pub struct Variant {
     /// Variant name.
     pub name: String,
     /// Documentation from doc comments.
-    #[ron(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "derive",
+        ron(default, skip_serializing_if = "Option::is_none")
+    )]
     pub doc: Option<String>,
     /// The kind of variant.
     pub kind: VariantKind,
 }
 
 /// The kind of enum variant.
-#[derive(Debug, Clone, PartialEq, FromRon, ToRon)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "derive", derive(ron2_derive::FromRon, ron2_derive::ToRon))]
 pub enum VariantKind {
     /// Unit variant: `Variant`
     Unit,
