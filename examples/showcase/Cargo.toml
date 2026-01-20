@@ -1,9 +1,8 @@
 [package]
-name = "ron-showcase"
+name = "example-showcase"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-ron2 = { path = "../../crates/main" }
-ariadne = "0.6"
+ron2.workspace = true

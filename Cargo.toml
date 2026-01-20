@@ -6,7 +6,7 @@ members = [
     "crates/lsp",
     "crates/doc",
     "crates/cli",
-    "examples/showcase",
+    "examples/showcase", "examples/error-report",
 ]
 
 [workspace.package]

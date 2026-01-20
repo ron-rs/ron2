@@ -389,6 +389,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-error-report"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
+ "ron2",
+]
+
+[[package]]
+name = "example-showcase"
+version = "0.1.0"
+dependencies = [
+ "ron2",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1017,14 +1032,6 @@ dependencies = [
  "serde_derive",
  "typeid",
  "unicode-ident",
-]
-
-[[package]]
-name = "ron-showcase"
-version = "0.1.0"
-dependencies = [
- "ariadne",
- "ron2",
 ]
 
 [[package]]
