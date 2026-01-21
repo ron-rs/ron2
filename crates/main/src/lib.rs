@@ -78,7 +78,9 @@ pub use ron2_derive::{FromRon, Ron, RonSchema, ToRon};
 
 pub use crate::{
     ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing},
-    convert::{AstMapAccess, FromRon, FromRonFields, Spanned, ToRon},
+    convert::{
+        AstMapAccess, FromRon, FromRonFields, SerializeConfig, Spanned, ToRon, ToRonDocument,
+    },
     error::{Error, ErrorKind, PathSegment, Position, Result, Span},
     value::{Map, NamedContent, Number, StructFields, Value},
 };

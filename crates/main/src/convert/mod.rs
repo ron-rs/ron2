@@ -255,6 +255,150 @@ impl FromRon for Value {
     }
 }
 
+// =============================================================================
+// SerializeConfig and ToRonDocument
+// =============================================================================
+
+use alloc::borrow::Cow;
+
+use crate::ast::{Attribute, Document, Trivia, format_document};
+
+/// Configuration for serializing typed RON documents.
+///
+/// This controls how types are serialized to RON format, including whether
+/// to include the `#![type = "..."]` attribute for LSP support.
+///
+/// # Example
+///
+/// ```ignore
+/// use ron2::{ToRonDocument, SerializeConfig};
+///
+/// let config = Config { port: 8080 };
+///
+/// // With type attribute (default)
+/// let ron = config.to_typed_ron()?;
+/// // #![type = "my_crate::Config"]
+/// //
+/// // Config(port: 8080)
+///
+/// // Without type attribute
+/// let ron = config.to_typed_ron_with(&SerializeConfig::without_type_attribute())?;
+/// // Config(port: 8080)
+/// ```
+#[derive(Clone, Debug)]
+pub struct SerializeConfig {
+    /// Format configuration for the output.
+    pub format: FormatConfig,
+    /// Whether to include the `#![type = "..."]` attribute.
+    pub include_type_attribute: bool,
+}
+
+impl Default for SerializeConfig {
+    fn default() -> Self {
+        Self {
+            format: FormatConfig::default(),
+            include_type_attribute: true,
+        }
+    }
+}
+
+impl SerializeConfig {
+    /// Create a new `SerializeConfig` with default settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a config that excludes the type attribute.
+    #[must_use]
+    pub fn without_type_attribute() -> Self {
+        Self {
+            include_type_attribute: false,
+            ..Default::default()
+        }
+    }
+
+    /// Set the format configuration.
+    #[must_use]
+    pub fn format(mut self, format: FormatConfig) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Set whether to include the type attribute.
+    #[must_use]
+    pub fn type_attribute(mut self, include: bool) -> Self {
+        self.include_type_attribute = include;
+        self
+    }
+}
+
+/// Extension trait for serializing types with `#![type = "..."]` attribute.
+///
+/// This trait is automatically implemented for any type that implements both
+/// [`ToRon`] and [`RonSchema`](crate::schema::RonSchema). It provides methods
+/// to serialize values as complete RON documents with type attribution for
+/// LSP support.
+///
+/// # Example
+///
+/// ```ignore
+/// use ron2::{ToRonDocument, Ron, RonSchema};
+///
+/// #[derive(Ron, RonSchema)]
+/// struct Config {
+///     port: u16,
+/// }
+///
+/// let config = Config { port: 8080 };
+///
+/// // Serialize with type attribute
+/// let ron = config.to_typed_ron()?;
+/// assert!(ron.starts_with("#![type = \""));
+/// ```
+pub trait ToRonDocument: ToRon + crate::schema::RonSchema {
+    /// Convert this value to a typed RON document.
+    ///
+    /// If the type implements `RonSchema::type_path()` and `include_type_attribute`
+    /// is true in the config, the document will include a `#![type = "..."]` attribute.
+    fn to_typed_document(&self, config: &SerializeConfig) -> Result<Document<'static>> {
+        let mut doc = Document {
+            source: Cow::Borrowed(""),
+            leading: Trivia::empty(),
+            attributes: Vec::new(),
+            pre_value: Trivia::empty(),
+            value: Some(self.to_ast()?),
+            trailing: Trivia::empty(),
+        };
+
+        if config.include_type_attribute
+            && let Some(type_path) = Self::type_path()
+        {
+            doc.attributes.push(Attribute::synthetic_type(type_path));
+        }
+
+        Ok(doc)
+    }
+
+    /// Convert this value to a typed RON string with default settings.
+    ///
+    /// This includes the `#![type = "..."]` attribute if the type has a type path.
+    fn to_typed_ron(&self) -> Result<String> {
+        let config = SerializeConfig::default();
+        let doc = self.to_typed_document(&config)?;
+        Ok(format_document(&doc, &config.format))
+    }
+
+    /// Convert this value to a typed RON string with custom settings.
+    fn to_typed_ron_with(&self, config: &SerializeConfig) -> Result<String> {
+        let doc = self.to_typed_document(config)?;
+        Ok(format_document(&doc, &config.format))
+    }
+}
+
+// Blanket implementation for all types implementing both ToRon and RonSchema
+impl<T: ToRon + crate::schema::RonSchema> ToRonDocument for T {}
+
 #[cfg(test)]
 mod tests {
     use alloc::{collections::BTreeMap, vec, vec::Vec};
@@ -543,5 +687,65 @@ mod tests {
 
         let value: Value = Value::from_ron("None").unwrap();
         assert_eq!(value, Value::Option(None));
+    }
+
+    #[test]
+    fn test_serialize_config_default() {
+        let config = super::SerializeConfig::default();
+        assert!(config.include_type_attribute);
+    }
+
+    #[test]
+    fn test_serialize_config_without_type_attribute() {
+        let config = super::SerializeConfig::without_type_attribute();
+        assert!(!config.include_type_attribute);
+    }
+
+    #[test]
+    fn test_serialize_config_builder() {
+        let config = super::SerializeConfig::new()
+            .type_attribute(false)
+            .format(FormatConfig::minimal());
+        assert!(!config.include_type_attribute);
+    }
+
+    #[test]
+    fn test_to_typed_ron_primitives_no_type_path() {
+        use super::ToRonDocument;
+
+        // Primitives don't have type_path, so they shouldn't include type attribute
+        let result = 42i32.to_typed_ron().unwrap();
+        assert!(!result.contains("#![type"));
+        assert!(result.contains("42"));
+
+        let result = "hello".to_typed_ron().unwrap();
+        assert!(!result.contains("#![type"));
+        assert!(result.contains("hello"));
+
+        let result = vec![1, 2, 3].to_typed_ron().unwrap();
+        assert!(!result.contains("#![type"));
+    }
+
+    #[test]
+    fn test_to_typed_document_structure() {
+        use super::ToRonDocument;
+
+        let config = super::SerializeConfig::default();
+        let doc = 42i32.to_typed_document(&config).unwrap();
+
+        // Should have a value but no type attribute (primitives have no type_path)
+        assert!(doc.value.is_some());
+        assert!(doc.attributes.is_empty());
+    }
+
+    #[test]
+    fn test_to_typed_ron_with_config() {
+        use super::ToRonDocument;
+
+        let config =
+            super::SerializeConfig::without_type_attribute().format(FormatConfig::minimal());
+
+        let result = vec![1, 2, 3].to_typed_ron_with(&config).unwrap();
+        assert_eq!(result, "[1,2,3]");
     }
 }

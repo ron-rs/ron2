@@ -262,6 +262,22 @@ impl_into_owned!(Attribute {
     content: owned(AttributeContent),
 });
 
+impl Attribute<'_> {
+    /// Create a synthetic `#![type = "..."]` attribute.
+    ///
+    /// This is useful when constructing documents programmatically.
+    /// The created attribute has synthetic spans (line 0, column 0).
+    #[must_use]
+    pub fn synthetic_type(type_path: &str) -> Attribute<'static> {
+        Attribute {
+            span: Span::synthetic(),
+            leading: Trivia::empty(),
+            name: Cow::Owned("type".to_string()),
+            content: AttributeContent::Value(Cow::Owned(alloc::format!("\"{type_path}\""))),
+        }
+    }
+}
+
 /// The content of an attribute after the name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttributeContent<'a> {
