@@ -249,6 +249,12 @@ impl ToRon for Value {
     }
 }
 
+impl FromRon for Value {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
+        expr_to_value(expr)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::{collections::BTreeMap, vec, vec::Vec};
@@ -483,5 +489,59 @@ mod tests {
         let parsed: IndexSet<i32> = IndexSet::from_ron(ron).unwrap();
         let values: Vec<_> = parsed.iter().copied().collect();
         assert_eq!(values, vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn test_value_from_ron() {
+        use crate::value::Number;
+
+        // Simple number
+        let value: Value = Value::from_ron("42").unwrap();
+        assert_eq!(value, Value::Number(Number::U8(42)));
+
+        // String
+        let value: Value = Value::from_ron(r#""hello""#).unwrap();
+        assert_eq!(value, Value::String("hello".to_string()));
+
+        // Boolean
+        let value: Value = Value::from_ron("true").unwrap();
+        assert_eq!(value, Value::Bool(true));
+
+        // Sequence
+        let value: Value = Value::from_ron("[1, 2, 3]").unwrap();
+        assert_eq!(
+            value,
+            Value::Seq(vec![
+                Value::Number(Number::U8(1)),
+                Value::Number(Number::U8(2)),
+                Value::Number(Number::U8(3)),
+            ])
+        );
+
+        // Anonymous struct
+        let value: Value = Value::from_ron(r#"(name: "test", count: 5)"#).unwrap();
+        if let Value::Struct(fields) = value {
+            assert_eq!(fields.len(), 2);
+            assert_eq!(
+                fields[0],
+                ("name".to_string(), Value::String("test".to_string()))
+            );
+            assert_eq!(
+                fields[1],
+                ("count".to_string(), Value::Number(Number::U8(5)))
+            );
+        } else {
+            panic!("Expected Struct, got {value:?}");
+        }
+
+        // Option
+        let value: Value = Value::from_ron("Some(42)").unwrap();
+        assert_eq!(
+            value,
+            Value::Option(Some(Box::new(Value::Number(Number::U8(42)))))
+        );
+
+        let value: Value = Value::from_ron("None").unwrap();
+        assert_eq!(value, Value::Option(None));
     }
 }
