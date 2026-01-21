@@ -1771,6 +1771,40 @@ fn validate_struct_fields_expr_collect<R: SchemaResolver>(
     }
 }
 
+/// Validate tuple variant content against expected types.
+fn validate_enum_tuple_content<R: SchemaResolver>(
+    items: &[&Expr<'_>],
+    types: &[TypeKind],
+    variant_name: &str,
+    ctx: &mut ValidationContext<R>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
+        let mut item_errors = Vec::new();
+        validate_expr_collect_internal(item, ty, ctx, &mut item_errors);
+        for e in item_errors {
+            errors.push(e.in_element(i).in_variant(variant_name));
+        }
+    }
+}
+
+/// Create a variant kind mismatch error.
+fn variant_kind_mismatch_error(
+    expected: &str,
+    found: &str,
+    variant_name: &str,
+    variant_span: Span,
+) -> ValidationError {
+    ValidationError::with_span(
+        crate::error::ErrorKind::TypeMismatch {
+            expected: expected.to_string(),
+            found: found.to_string(),
+        },
+        variant_span,
+    )
+    .in_variant(variant_name)
+}
+
 fn validate_enum_expr_collect<R: SchemaResolver>(
     expr: &Expr<'_>,
     variants: &[Variant],
@@ -1817,30 +1851,15 @@ fn validate_enum_expr_collect<R: SchemaResolver>(
         return;
     };
 
-    // Helper to validate tuple content
-    let validate_tuple_content =
-        |items: &[&Expr<'_>],
-         types: &[TypeKind],
-         ctx: &mut ValidationContext<R>,
-         errors: &mut Vec<ValidationError>| {
-            for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
-                let mut item_errors = Vec::new();
-                validate_expr_collect_internal(item, ty, ctx, &mut item_errors);
-                for e in item_errors {
-                    errors.push(e.in_element(i).in_variant(variant_name));
-                }
-            }
-        };
-
     match (&variant.kind, content) {
         (VariantKind::Unit, EnumExprContent::Unit) => {}
         (VariantKind::Tuple(types), EnumExprContent::Tuple(items)) if items.len() == types.len() => {
-            validate_tuple_content(items, types, ctx, errors);
+            validate_enum_tuple_content(items, types, variant_name, ctx, errors);
         }
         (VariantKind::Tuple(types), EnumExprContent::TupleOwned(ref items))
             if items.len() == types.len() =>
         {
-            validate_tuple_content(items, types, ctx, errors);
+            validate_enum_tuple_content(items, types, variant_name, ctx, errors);
         }
         (VariantKind::Struct(fields), EnumExprContent::Struct(ast_fields)) => {
             validate_variant_struct_fields_collect(
@@ -1853,52 +1872,36 @@ fn validate_enum_expr_collect<R: SchemaResolver>(
             );
         }
         (VariantKind::Unit, _) => {
-            errors.push(
-                ValidationError::with_span(
-                    crate::error::ErrorKind::TypeMismatch {
-                        expected: "Unit".to_string(),
-                        found: "non-unit content".to_string(),
-                    },
-                    variant_span,
-                )
-                .in_variant(variant_name),
-            );
+            errors.push(variant_kind_mismatch_error(
+                "Unit",
+                "non-unit content",
+                variant_name,
+                variant_span,
+            ));
         }
         (_, EnumExprContent::Unit) => {
-            errors.push(
-                ValidationError::with_span(
-                    crate::error::ErrorKind::TypeMismatch {
-                        expected: "variant content".to_string(),
-                        found: "none".to_string(),
-                    },
-                    variant_span,
-                )
-                .in_variant(variant_name),
-            );
+            errors.push(variant_kind_mismatch_error(
+                "variant content",
+                "none",
+                variant_name,
+                variant_span,
+            ));
         }
         (VariantKind::Tuple(types), _) => {
-            errors.push(
-                ValidationError::with_span(
-                    crate::error::ErrorKind::TypeMismatch {
-                        expected: format!("Tuple({} elements)", types.len()),
-                        found: "mismatched content".to_string(),
-                    },
-                    variant_span,
-                )
-                .in_variant(variant_name),
-            );
+            errors.push(variant_kind_mismatch_error(
+                &format!("Tuple({} elements)", types.len()),
+                "mismatched content",
+                variant_name,
+                variant_span,
+            ));
         }
         (VariantKind::Struct(_), _) => {
-            errors.push(
-                ValidationError::with_span(
-                    crate::error::ErrorKind::TypeMismatch {
-                        expected: "Struct".to_string(),
-                        found: "mismatched content".to_string(),
-                    },
-                    variant_span,
-                )
-                .in_variant(variant_name),
-            );
+            errors.push(variant_kind_mismatch_error(
+                "Struct",
+                "mismatched content",
+                variant_name,
+                variant_span,
+            ));
         }
     }
 }

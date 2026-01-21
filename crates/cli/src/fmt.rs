@@ -78,11 +78,10 @@ pub fn run(args: FmtArgs) -> Result<ExitCode> {
     match &args.output {
         Some(path) => {
             // Don't overwrite if content is the same
-            if let Ok(existing) = fs::read_to_string(path) {
-                if existing == formatted {
+            if let Ok(existing) = fs::read_to_string(path)
+                && existing == formatted {
                     return Ok(ExitCode::SUCCESS);
                 }
-            }
             fs::write(path, &formatted)
                 .with_context(|| format!("failed to write to {}", path.display()))?;
         }

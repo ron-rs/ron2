@@ -283,9 +283,9 @@ pub fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
     let mut docs = Vec::new();
 
     for attr in attrs {
-        if attr.path().is_ident("doc") {
-            if let syn::Meta::NameValue(meta) = &attr.meta {
-                if let Expr::Lit(syn::ExprLit {
+        if attr.path().is_ident("doc")
+            && let syn::Meta::NameValue(meta) = &attr.meta
+                && let Expr::Lit(syn::ExprLit {
                     lit: Lit::Str(lit_str),
                     ..
                 }) = &meta.value
@@ -295,8 +295,6 @@ pub fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
                     let trimmed = value.strip_prefix(' ').unwrap_or(&value);
                     docs.push(trimmed.to_string());
                 }
-            }
-        }
     }
 
     if docs.is_empty() {

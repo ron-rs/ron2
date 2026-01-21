@@ -74,12 +74,11 @@ pub fn run(args: DocArgs) -> Result<()> {
         let content = generate_single_page(&schemas, &config);
 
         // Ensure parent directory exists
-        if let Some(parent) = args.output.parent() {
-            if !parent.as_os_str().is_empty() {
+        if let Some(parent) = args.output.parent()
+            && !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("failed to create directory: {}", parent.display()))?;
             }
-        }
 
         fs::write(&args.output, &content)
             .with_context(|| format!("failed to write {}", args.output.display()))?;

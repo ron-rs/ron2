@@ -708,11 +708,10 @@ fn extract_option_inner(ty: &syn::Type) -> Option<&syn::Type> {
 
         if is_option {
             let seg = path.segments.last()?;
-            if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+            if let syn::PathArguments::AngleBracketed(args) = &seg.arguments
+                && let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
                     return Some(inner);
                 }
-            }
         }
     }
     None

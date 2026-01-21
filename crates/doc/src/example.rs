@@ -100,8 +100,8 @@ fn generate_type_example(
 
         // TypeRef: resolve or use placeholder
         TypeKind::TypeRef(path) => {
-            if current_depth < max_depth {
-                if let Some(resolved) = schemas.get(path.as_str()) {
+            if current_depth < max_depth
+                && let Some(resolved) = schemas.get(path.as_str()) {
                     return generate_type_example(
                         &resolved.kind,
                         max_depth,
@@ -110,7 +110,6 @@ fn generate_type_example(
                         indent_level,
                     );
                 }
-            }
             // Use short name as placeholder
             let short_name = path.split("::").last().unwrap_or(path);
             format!("/* {} */", short_name)

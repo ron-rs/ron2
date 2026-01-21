@@ -176,13 +176,11 @@ impl LanguageServer for RonLanguageServer {
             }
         }
         // Fall back to root_uri if no workspace folders
-        if roots.is_empty() {
-            if let Some(root_uri) = params.root_uri {
-                if let Ok(path) = root_uri.to_file_path() {
+        if roots.is_empty()
+            && let Some(root_uri) = params.root_uri
+                && let Ok(path) = root_uri.to_file_path() {
                     roots.push(path);
                 }
-            }
-        }
         *self.workspace_roots.write().await = roots;
 
         // Process initialization options

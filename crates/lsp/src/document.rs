@@ -173,18 +173,15 @@ impl Document {
             let trimmed = line.trim();
 
             if let Some(rest) = trimmed.strip_prefix("#![type") {
-                if self.type_attr.is_none() {
-                    if let Some(value) = extract_attribute_value_from_text(rest) {
+                if self.type_attr.is_none()
+                    && let Some(value) = extract_attribute_value_from_text(rest) {
                         self.type_attr = Some(value);
                     }
-                }
-            } else if let Some(rest) = trimmed.strip_prefix("#![schema") {
-                if self.schema_attr.is_none() {
-                    if let Some(value) = extract_attribute_value_from_text(rest) {
+            } else if let Some(rest) = trimmed.strip_prefix("#![schema")
+                && self.schema_attr.is_none()
+                    && let Some(value) = extract_attribute_value_from_text(rest) {
                         self.schema_attr = Some(value);
                     }
-                }
-            }
         }
     }
 
@@ -253,8 +250,8 @@ impl Document {
             return CompletionContext::Value;
         }
 
-        if let Some(ast) = self.ast.as_ref() {
-            if let Some(expr) = ast.value.as_ref() {
+        if let Some(ast) = self.ast.as_ref()
+            && let Some(expr) = ast.value.as_ref() {
                 let span = expr.span();
                 if offset >= span.start_offset && offset <= span.end_offset {
                     if find_field_containing_offset(expr, offset).is_some() {
@@ -271,7 +268,6 @@ impl Document {
                     }
                 }
             }
-        }
 
         // After an open paren, comma, or at root level in a struct
         if paren_depth > 0 || brace_depth > 0 {
