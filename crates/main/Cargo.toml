@@ -1,7 +1,8 @@
 [package]
 name = "ron2"
-version = "0.1.0"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 repository.workspace = true
 keywords = ["parser", "serialization", "ron"]
 authors = [
@@ -10,7 +11,6 @@ authors = [
     "Dzmitry Malyshau <kvarkus@gmail.com>",
     "Christopher Durham <cad97@cad97.com>",
 ]
-edition = "2024"
 description = "RON parser with full AST access, perfect round-trip fidelity, and formatting tools"
 categories = ["encoding"]
 rust-version = "1.90.0"
