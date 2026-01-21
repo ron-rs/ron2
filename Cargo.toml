@@ -18,9 +18,9 @@ readme = "README.md"
 rust-version = "1.90.0"
 
 [workspace.dependencies]
-ron2 = { path = "crates/main" }
-ron2-derive = { path = "crates/derive" }
-ron2-doc = { path = "crates/doc" }
+ron2 = { path = "crates/main", version = "0.2.0" }
+ron2-derive = { path = "crates/derive", version = "0.2.0" }
+ron2-doc = { path = "crates/doc", version = "0.2.0" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2"
 itoa = "1.0"
