@@ -6,7 +6,7 @@
 //! 3. Context about expected vs actual types
 //! 4. Suggestions for valid alternatives (for unknown fields/variants)
 
-use ron2::{error::ErrorKind, FromRon};
+use ron2::{FromRon, error::ErrorKind};
 use ron2_derive::Ron;
 
 // =============================================================================

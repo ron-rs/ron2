@@ -9,7 +9,7 @@ use syn::{Data, DeriveInput, Fields, Ident};
 
 use crate::{
     attr::{ContainerAttrs, FieldAttrs, FieldDefault, VariantAttrs},
-    field_util::{validate_transparent_struct, FieldSkipMode, TransparentField},
+    field_util::{FieldSkipMode, TransparentField, validate_transparent_struct},
 };
 
 /// Generate FromRon implementation for a type.
@@ -709,9 +709,10 @@ fn extract_option_inner(ty: &syn::Type) -> Option<&syn::Type> {
         if is_option {
             let seg = path.segments.last()?;
             if let syn::PathArguments::AngleBracketed(args) = &seg.arguments
-                && let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
-                    return Some(inner);
-                }
+                && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
+            {
+                return Some(inner);
+            }
         }
     }
     None

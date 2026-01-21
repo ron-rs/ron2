@@ -6,10 +6,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use ahash::{HashMap, HashMapExt};
-use ron2_lsp::{diagnostics, hover, provide_completions, Document, SchemaResolver};
+use ron2_lsp::{Document, SchemaResolver, diagnostics, hover, provide_completions};
 use serde::Deserialize;
 use tokio::sync::RwLock;
-use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer, LspService, Server};
+use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc::Result, lsp_types::*};
 
 /// LSP configuration settings.
 ///
@@ -178,9 +178,10 @@ impl LanguageServer for RonLanguageServer {
         // Fall back to root_uri if no workspace folders
         if roots.is_empty()
             && let Some(root_uri) = params.root_uri
-                && let Ok(path) = root_uri.to_file_path() {
-                    roots.push(path);
-                }
+            && let Ok(path) = root_uri.to_file_path()
+        {
+            roots.push(path);
+        }
         *self.workspace_roots.write().await = roots;
 
         // Process initialization options

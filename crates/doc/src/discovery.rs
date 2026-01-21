@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use ron2::schema::{storage::read_schema, Schema};
+use ron2::schema::{Schema, storage::read_schema};
 use walkdir::WalkDir;
 
 /// A discovered schema with its metadata.
@@ -79,7 +79,7 @@ fn file_path_to_type_path(path: &Path, base: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ron2::schema::{write_schema, Field, TypeKind};
+    use ron2::schema::{Field, TypeKind, write_schema};
 
     use super::*;
 

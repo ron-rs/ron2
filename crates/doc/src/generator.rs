@@ -7,7 +7,7 @@ use crate::{
     config::{DocConfig, OutputFormat, OutputMode},
     discovery::DiscoveredSchema,
     example::{build_schema_map, generate_example},
-    link::{type_path_short_name, LinkResolver},
+    link::{LinkResolver, type_path_short_name},
 };
 
 /// Link mode for type formatting.

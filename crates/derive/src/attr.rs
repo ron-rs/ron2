@@ -285,16 +285,16 @@ pub fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("doc")
             && let syn::Meta::NameValue(meta) = &attr.meta
-                && let Expr::Lit(syn::ExprLit {
-                    lit: Lit::Str(lit_str),
-                    ..
-                }) = &meta.value
-                {
-                    let value = lit_str.value();
-                    // Trim leading space that's typically added by rustdoc
-                    let trimmed = value.strip_prefix(' ').unwrap_or(&value);
-                    docs.push(trimmed.to_string());
-                }
+            && let Expr::Lit(syn::ExprLit {
+                lit: Lit::Str(lit_str),
+                ..
+            }) = &meta.value
+        {
+            let value = lit_str.value();
+            // Trim leading space that's typically added by rustdoc
+            let trimmed = value.strip_prefix(' ').unwrap_or(&value);
+            docs.push(trimmed.to_string());
+        }
     }
 
     if docs.is_empty() {

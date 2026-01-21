@@ -5,8 +5,8 @@ use std::{fs, path::PathBuf};
 use anyhow::{Context, Result};
 use clap::Args;
 use ron2_doc::{
-    discover_schemas, generate_index, generate_markdown, generate_sidebar, generate_single_page,
-    link::type_path_to_md_path, DocConfig, OutputFormat, OutputMode,
+    DocConfig, OutputFormat, OutputMode, discover_schemas, generate_index, generate_markdown,
+    generate_sidebar, generate_single_page, link::type_path_to_md_path,
 };
 
 /// Generate documentation from RON schema files
@@ -75,10 +75,11 @@ pub fn run(args: DocArgs) -> Result<()> {
 
         // Ensure parent directory exists
         if let Some(parent) = args.output.parent()
-            && !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create directory: {}", parent.display()))?;
-            }
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+        }
 
         fs::write(&args.output, &content)
             .with_context(|| format!("failed to write {}", args.output.display()))?;

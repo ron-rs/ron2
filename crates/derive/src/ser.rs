@@ -7,8 +7,8 @@ use syn::{Data, DeriveInput, Fields, Ident};
 use crate::{
     attr::{ContainerAttrs, FieldAttrs, VariantAttrs},
     field_util::{
-        emit_flatten_ast_helper, generate_flatten_ast_merge, validate_transparent_struct,
-        FieldSkipMode, TransparentField,
+        FieldSkipMode, TransparentField, emit_flatten_ast_helper, generate_flatten_ast_merge,
+        validate_transparent_struct,
     },
 };
 

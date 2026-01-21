@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use crate::{
     config::DocConfig,
     discovery::DiscoveredSchema,
-    generator::{generate_type_content, generate_type_example, LinkMode},
+    generator::{LinkMode, generate_type_content, generate_type_example},
     link::LinkResolver,
 };
 

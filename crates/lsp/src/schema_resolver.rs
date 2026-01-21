@@ -10,7 +10,7 @@ use std::{
 
 use ahash::{HashMap, HashMapExt};
 use ron2::schema::{
-    find_schema, find_schema_in, read_schema, Schema, SchemaResolver as SchemaResolverTrait,
+    Schema, SchemaResolver as SchemaResolverTrait, find_schema, find_schema_in, read_schema,
 };
 
 use crate::document::Document;

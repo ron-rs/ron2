@@ -7,9 +7,9 @@ use quote::quote;
 use syn::{DeriveInput, Fields, GenericArgument, GenericParam, PathArguments, Type};
 
 use crate::{
-    attr::{extract_doc_comment, ContainerAttrs, FieldAttrs, VariantAttrs},
-    field_util::{validate_transparent_struct, FieldSkipMode, TransparentField},
-    type_mapper::{type_to_type_kind_with_generics, PrimitiveKind},
+    attr::{ContainerAttrs, FieldAttrs, VariantAttrs, extract_doc_comment},
+    field_util::{FieldSkipMode, TransparentField, validate_transparent_struct},
+    type_mapper::{PrimitiveKind, type_to_type_kind_with_generics},
 };
 
 /// Generate the RonSchema implementation for a type.

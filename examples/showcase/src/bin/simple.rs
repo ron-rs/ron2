@@ -13,7 +13,7 @@ use example_showcase::GameConfig;
 use ron2::{
     ast::FormatConfig,
     schema::{
-        collect_schemas, validate_with_resolver, FromRon, RonSchema, Schema, SchemaResolver, ToRon,
+        FromRon, RonSchema, Schema, SchemaResolver, ToRon, collect_schemas, validate_with_resolver,
     },
 };
 

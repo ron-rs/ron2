@@ -7,9 +7,11 @@ use super::{
     Field, Schema, TypeKind, Variant, VariantKind,
     error::{Result, SchemaError, ValidationError, ValidationResult},
 };
-use crate::Value;
-use crate::ast::{Expr, StructBody};
-use crate::error::Span;
+use crate::{
+    Value,
+    ast::{Expr, StructBody},
+    error::Span,
+};
 
 // =============================================================================
 // Schema Resolver Trait
@@ -996,7 +998,11 @@ fn validate_tuple_expr<R: SchemaResolver>(
         Expr::Seq(s) => {
             // Sequences can also be used as tuples
             if s.items.len() != types.len() {
-                return Err(length_mismatch_error(types.len(), s.items.len(), *expr.span()));
+                return Err(length_mismatch_error(
+                    types.len(),
+                    s.items.len(),
+                    *expr.span(),
+                ));
             }
             for (i, (item, ty)) in s.items.iter().zip(types.iter()).enumerate() {
                 validate_expr_internal(&item.expr, ty, ctx).map_err(|e| e.in_element(i))?;
@@ -1015,7 +1021,11 @@ fn validate_tuple_expr<R: SchemaResolver>(
     };
 
     if items.len() != types.len() {
-        return Err(length_mismatch_error(types.len(), items.len(), *expr.span()));
+        return Err(length_mismatch_error(
+            types.len(),
+            items.len(),
+            *expr.span(),
+        ));
     }
 
     for (i, (item, ty)) in items.iter().zip(types.iter()).enumerate() {
@@ -1285,7 +1295,9 @@ fn validate_enum_expr<R: SchemaResolver>(
         // Unit variants
         (VariantKind::Unit, EnumExprContent::Unit) => Ok(()),
         // Tuple variants (slice)
-        (VariantKind::Tuple(types), EnumExprContent::Tuple(items)) if items.len() == types.len() => {
+        (VariantKind::Tuple(types), EnumExprContent::Tuple(items))
+            if items.len() == types.len() =>
+        {
             validate_tuple_content(items, types, ctx)
         }
         // Tuple variants (vec)
@@ -1355,7 +1367,9 @@ fn validate_variant_struct_fields<R: SchemaResolver>(
         let field = schema_fields
             .iter()
             .find(|f| f.name == key)
-            .ok_or_else(|| unknown_field_error(key, ast_field.name.span).in_variant(variant_name))?;
+            .ok_or_else(|| {
+                unknown_field_error(key, ast_field.name.span).in_variant(variant_name)
+            })?;
 
         validate_expr_internal(&ast_field.value, &field.ty, ctx)
             .map_err(|e| e.in_field(key).in_variant(variant_name))?;
@@ -1570,7 +1584,11 @@ fn validate_tuple_expr_collect<R: SchemaResolver>(
         Expr::Tuple(t) => &t.elements,
         Expr::Seq(s) => {
             if s.items.len() != types.len() {
-                errors.push(length_mismatch_error(types.len(), s.items.len(), *expr.span()));
+                errors.push(length_mismatch_error(
+                    types.len(),
+                    s.items.len(),
+                    *expr.span(),
+                ));
                 return;
             }
             for (i, (item, ty)) in s.items.iter().zip(types.iter()).enumerate() {
@@ -1597,7 +1615,11 @@ fn validate_tuple_expr_collect<R: SchemaResolver>(
     };
 
     if items.len() != types.len() {
-        errors.push(length_mismatch_error(types.len(), items.len(), *expr.span()));
+        errors.push(length_mismatch_error(
+            types.len(),
+            items.len(),
+            *expr.span(),
+        ));
         return;
     }
 
@@ -1731,7 +1753,12 @@ fn validate_struct_fields_expr_collect<R: SchemaResolver>(
         if schema_field.is_none() && !matched_flattened_struct {
             if let Some(map_value_type) = map_value_type {
                 let mut field_errors = Vec::new();
-                validate_expr_collect_internal(&ast_field.value, map_value_type, ctx, &mut field_errors);
+                validate_expr_collect_internal(
+                    &ast_field.value,
+                    map_value_type,
+                    ctx,
+                    &mut field_errors,
+                );
                 for e in field_errors {
                     errors.push(e.in_field(key_str));
                 }
@@ -1853,7 +1880,9 @@ fn validate_enum_expr_collect<R: SchemaResolver>(
 
     match (&variant.kind, content) {
         (VariantKind::Unit, EnumExprContent::Unit) => {}
-        (VariantKind::Tuple(types), EnumExprContent::Tuple(items)) if items.len() == types.len() => {
+        (VariantKind::Tuple(types), EnumExprContent::Tuple(items))
+            if items.len() == types.len() =>
+        {
             validate_enum_tuple_content(items, types, variant_name, ctx, errors);
         }
         (VariantKind::Tuple(types), EnumExprContent::TupleOwned(ref items))
@@ -2068,8 +2097,7 @@ mod tests {
 
     mod ast_validation {
         use super::*;
-        use crate::ast::parse_document;
-        use crate::error::PathSegment;
+        use crate::{ast::parse_document, error::PathSegment};
 
         #[test]
         fn test_ast_validation_basic() {
@@ -2145,10 +2173,7 @@ mod tests {
                 let span = v.span();
                 // Span should point to the unknown field name
                 assert!(!span.is_synthetic(), "Expected non-synthetic span");
-                assert_eq!(
-                    &source[span.start_offset..span.end_offset],
-                    "unknown_field"
-                );
+                assert_eq!(&source[span.start_offset..span.end_offset], "unknown_field");
             } else {
                 panic!("Expected validation error");
             }
@@ -2209,8 +2234,16 @@ mod tests {
                 assert_eq!(&source[span.start_offset..span.end_offset], "123");
 
                 // Check path context
-                assert!(v.path().iter().any(|p| matches!(p, PathSegment::Field(f) if f == "name")));
-                assert!(v.path().iter().any(|p| matches!(p, PathSegment::Element(1))));
+                assert!(
+                    v.path()
+                        .iter()
+                        .any(|p| matches!(p, PathSegment::Field(f) if f == "name"))
+                );
+                assert!(
+                    v.path()
+                        .iter()
+                        .any(|p| matches!(p, PathSegment::Element(1)))
+                );
             } else {
                 panic!("Expected validation error");
             }

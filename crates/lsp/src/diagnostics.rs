@@ -3,8 +3,10 @@
 //! Validates RON files against their schemas and produces
 //! diagnostic messages for errors.
 
-use ron2::error::Span;
-use ron2::schema::{ValidationError, ValidationErrorKind, validate_expr_collect_all};
+use ron2::{
+    error::Span,
+    schema::{ValidationError, ValidationErrorKind, validate_expr_collect_all},
+};
 use tower_lsp::lsp_types::*;
 
 use crate::{document::Document, schema_resolver::SchemaResolver};
@@ -158,7 +160,6 @@ fn format_error_message(error: &ValidationError) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use tower_lsp::lsp_types::Url;
@@ -199,5 +200,4 @@ mod tests {
         // No diagnostics because there's no schema to validate against
         assert!(diagnostics.is_empty());
     }
-
 }

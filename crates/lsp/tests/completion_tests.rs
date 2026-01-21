@@ -8,7 +8,7 @@ use std::{
     sync::OnceLock,
 };
 
-use ron2::schema::{write_schema, Field, Schema, TypeKind, Variant};
+use ron2::schema::{Field, Schema, TypeKind, Variant, write_schema};
 use tower_lsp::lsp_types::{Position, Url};
 
 // Import from ron-lsp (need to make these pub in lib.rs or use a test helper)
@@ -1043,7 +1043,7 @@ graphics:
 }
 
 mod diagnostic_integration {
-    use ron2_lsp::{diagnostics, Document, SchemaResolver};
+    use ron2_lsp::{Document, SchemaResolver, diagnostics};
     use tower_lsp::lsp_types::{DiagnosticSeverity, Url};
 
     use super::*;

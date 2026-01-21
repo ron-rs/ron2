@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::Args;
-use ron2::ast::{format_document, parse_document, FormatConfig};
+use ron2::ast::{FormatConfig, format_document, parse_document};
 
 /// Format RON files
 #[derive(Args, Debug)]
@@ -79,9 +79,10 @@ pub fn run(args: FmtArgs) -> Result<ExitCode> {
         Some(path) => {
             // Don't overwrite if content is the same
             if let Ok(existing) = fs::read_to_string(path)
-                && existing == formatted {
-                    return Ok(ExitCode::SUCCESS);
-                }
+                && existing == formatted
+            {
+                return Ok(ExitCode::SUCCESS);
+            }
             fs::write(path, &formatted)
                 .with_context(|| format!("failed to write to {}", path.display()))?;
         }

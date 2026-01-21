@@ -3,9 +3,9 @@
 #![allow(dead_code)]
 
 use ron2::{
+    FromRon, ToRon,
     ast::FormatConfig,
     schema::{RonSchema, TypeKind, VariantKind},
-    FromRon, ToRon,
 };
 use ron2_derive::{Ron, RonSchema};
 

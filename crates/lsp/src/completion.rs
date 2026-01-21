@@ -4,8 +4,8 @@
 //! based on the schema.
 
 use ron2::{
-    schema::{Field, Schema, TypeKind, Variant},
     Value,
+    schema::{Field, Schema, TypeKind, Variant},
 };
 use tower_lsp::lsp_types::*;
 
@@ -38,9 +38,10 @@ pub fn provide_completions(
         CompletionContext::Value => {
             // Try to determine which field we're completing a value for
             if let Some(field_name) = find_field_at_cursor(doc, position.line, position.character)
-                && let Some(field_type) = get_field_type(&schema.kind, &field_name) {
-                    return completions_for_value_type(field_type, resolver);
-                }
+                && let Some(field_type) = get_field_type(&schema.kind, &field_name)
+            {
+                return completions_for_value_type(field_type, resolver);
+            }
             // Fall back to root type completions
             completions_for_value_type(&schema.kind, resolver)
         }
