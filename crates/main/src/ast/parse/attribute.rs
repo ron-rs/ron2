@@ -100,7 +100,7 @@ impl<'a> AttributeParser<'a> for AstParser<'a> {
                 if self.peek_kind() != TokenKind::RParen {
                     return Err(Self::error(
                         name_tok.span,
-                        Self::expected("closing `]`", Some("attribute")),
+                        Self::expected("closing `)`", Some("attribute")),
                     ));
                 }
                 let _rparen = self.next_token();
