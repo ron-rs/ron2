@@ -85,13 +85,16 @@ fn derive_struct_ser(
                     continue;
                 }
 
+                let field_ty = &field.ty;
                 let serialize_expr = quote! {
                     ::ron2::ToRon::to_ast(&self.#field_ident)?
                 };
 
                 // Determine skip condition: opt takes precedence over skip_serializing_if
                 let skip_condition = if field_attrs.opt {
-                    Some(quote! { self.#field_ident == ::std::default::Default::default() })
+                    Some(
+                        quote! { self.#field_ident == <#field_ty as ::std::default::Default>::default() },
+                    )
                 } else {
                     field_attrs
                         .skip_serializing_if
@@ -217,6 +220,7 @@ fn derive_enum_ser(
                     }
 
                     let field_ident = field.ident.as_ref().unwrap();
+                    let field_ty = &field.ty;
                     let ron_name =
                         field_attrs.effective_name(&field_ident.to_string(), container_attrs);
 
@@ -227,7 +231,9 @@ fn derive_enum_ser(
                     // Determine skip condition: opt takes precedence over skip_serializing_if
                     // Note: field_ident is bound by reference in pattern, so we dereference for comparison
                     let skip_condition = if field_attrs.opt {
-                        Some(quote! { #field_ident == &::std::default::Default::default() })
+                        Some(
+                            quote! { *#field_ident == <#field_ty as ::std::default::Default>::default() },
+                        )
                     } else {
                         field_attrs
                             .skip_serializing_if

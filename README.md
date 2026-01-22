@@ -30,6 +30,8 @@ fn main() -> ron2::Result<()> {
 }
 ```
 
+See [Derive Attributes](crates/derive/README.md#container-attributes) for the full attribute reference.
+
 ## Crates
 
 | Crate         | Description                                                 |

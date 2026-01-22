@@ -603,6 +603,8 @@ fn derive_enum_de(
                 let mut field_extractions = Vec::new();
                 let mut field_names = Vec::new();
                 let mut known_fields = Vec::new();
+                let mut all_fields_have_defaults = true;
+                let mut unit_extractions = Vec::new();
 
                 for field in &named.named {
                     let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
@@ -610,6 +612,16 @@ fn derive_enum_de(
                     let field_ty = &field.ty;
 
                     field_names.push(field_ident.clone());
+
+                    // Track if all fields have defaults (for empty tuple case)
+                    if !field_attrs.has_default() && !field_attrs.flatten {
+                        all_fields_have_defaults = false;
+                    }
+
+                    // Generate unit extraction (default value) for this field
+                    unit_extractions.push(quote! {
+                        let #field_ident: #field_ty = ::std::default::Default::default();
+                    });
 
                     if field_attrs.should_skip_deserializing() {
                         field_extractions.push(quote! {
@@ -643,6 +655,18 @@ fn derive_enum_de(
                     quote! {}
                 };
 
+                // Generate empty tuple case only if all fields have defaults
+                let empty_tuple_case = if all_fields_have_defaults {
+                    quote! {
+                        Some(::ron2::ast::StructBody::Tuple(t)) if t.elements.is_empty() => {
+                            #(#unit_extractions)*
+                            Ok(#name::#variant_ident { #(#field_names),* })
+                        }
+                    }
+                } else {
+                    quote! {}
+                };
+
                 quote! {
                     #variant_name => {
                         match &s.body {
@@ -656,6 +680,7 @@ fn derive_enum_de(
                                 #deny_unknown
                                 Ok(#name::#variant_ident { #(#field_names),* })
                             }
+                            #empty_tuple_case
                             _ => Err(::ron2::Error::with_span(
                                 ::ron2::error::ErrorKind::TypeMismatch {
                                     expected: concat!("struct variant ", #variant_name).to_string(),

@@ -769,6 +769,93 @@ mod field_opt {
         let parsed_explicit: Message = Message::from_ron(ron_explicit).unwrap();
         assert_eq!(Message::Data { count: 0 }, parsed_explicit);
     }
+
+    // Tests for type inference with Vec<T> - the opt attribute must generate
+    // fully-qualified type comparisons to avoid E0283 ambiguous trait errors
+    #[derive(Debug, Ron, PartialEq, Default)]
+    struct ConfigWithVec {
+        name: String,
+        #[ron(opt)]
+        tags: Vec<String>,
+        #[ron(opt)]
+        counts: Vec<i32>,
+    }
+
+    #[test]
+    fn opt_with_vec_roundtrip() {
+        let original = ConfigWithVec {
+            name: "test".to_string(),
+            tags: vec!["a".to_string(), "b".to_string()],
+            counts: vec![1, 2, 3],
+        };
+        let ron = original.to_ron().unwrap();
+        let parsed: ConfigWithVec = ConfigWithVec::from_ron(&ron).unwrap();
+        assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn opt_with_vec_omits_empty() {
+        let config = ConfigWithVec {
+            name: "test".to_string(),
+            tags: vec![],
+            counts: vec![],
+        };
+        let ron = config.to_ron().unwrap();
+        assert!(ron.contains("name"));
+        assert!(!ron.contains("tags"));
+        assert!(!ron.contains("counts"));
+    }
+
+    #[test]
+    fn opt_with_vec_deserialize_missing() {
+        let ron = r#"ConfigWithVec(name: "test")"#;
+        let config: ConfigWithVec = ConfigWithVec::from_ron(ron).unwrap();
+        assert_eq!(config.name, "test");
+        assert!(config.tags.is_empty());
+        assert!(config.counts.is_empty());
+    }
+
+    // Test with nested Option types
+    #[derive(Debug, Ron, PartialEq, Default)]
+    struct ConfigWithNestedOption {
+        #[ron(opt)]
+        maybe_value: Option<i32>,
+    }
+
+    #[test]
+    fn opt_with_option_type() {
+        let config = ConfigWithNestedOption { maybe_value: None };
+        let ron = config.to_ron().unwrap();
+        assert!(!ron.contains("maybe_value"));
+
+        let config2 = ConfigWithNestedOption {
+            maybe_value: Some(42),
+        };
+        let ron2 = config2.to_ron().unwrap();
+        assert!(ron2.contains("maybe_value"));
+        assert!(ron2.contains("42"));
+    }
+
+    // Test enum variant with all opt fields at default (roundtrip bug)
+    #[derive(Debug, Ron, PartialEq)]
+    enum Event {
+        Click {
+            #[ron(opt)]
+            x: i32,
+            #[ron(opt)]
+            y: i32,
+        },
+    }
+
+    #[test]
+    fn enum_all_opt_fields_at_default_roundtrip() {
+        // When all opt fields are at default, the variant should still roundtrip
+        let original = Event::Click { x: 0, y: 0 };
+        let ron = original.to_ron().unwrap();
+        println!("Serialized: {}", ron);
+        let parsed: Event = Event::from_ron(&ron).unwrap();
+        assert_eq!(original, parsed);
+    }
 }
 
 // =============================================================================
