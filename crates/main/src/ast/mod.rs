@@ -54,6 +54,7 @@ pub use fmt::{
 };
 pub use parse::{parse_document, parse_document_lossy};
 pub use ser::{serialize_document, serialize_document_to};
+pub use unescape::decode_string;
 
 use crate::error::{Error, Span};
 

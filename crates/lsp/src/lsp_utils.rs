@@ -6,22 +6,6 @@ use tower_lsp::lsp_types::{Position, Range};
 
 use crate::document::Document;
 
-/// Convert a ron2 Span to an LSP Range.
-///
-/// ron2 uses 1-indexed lines and columns, while LSP uses 0-indexed.
-pub fn span_to_range(span: &ron2::error::Span) -> Range {
-    Range {
-        start: Position {
-            line: span.start.line.saturating_sub(1) as u32,
-            character: span.start.col.saturating_sub(1) as u32,
-        },
-        end: Position {
-            line: span.end.line.saturating_sub(1) as u32,
-            character: span.end.col.saturating_sub(1) as u32,
-        },
-    }
-}
-
 /// Find the position of a field name in the document.
 ///
 /// Uses AST-based lookup when available, falling back to text search.
@@ -44,25 +28,37 @@ pub fn find_word_range_from_ast(doc: &Document, name: &str) -> Option<Range> {
     let fields = doc.get_ast_fields_with_spans();
     for (field_name, span) in fields {
         if field_name == name {
-            return Some(span_to_range(&span));
+            return Some(doc.span_to_range(&span));
         }
     }
     None
 }
 
+/// Convert a byte column offset to UTF-16 code units for a given line.
+fn byte_col_to_utf16(line: &str, byte_col: usize) -> u32 {
+    line[..byte_col]
+        .chars()
+        .map(|c| if (c as u32) >= 0x10000 { 2u32 } else { 1u32 })
+        .sum()
+}
+
 /// Find the position of text in the document using simple text search.
+///
+/// Converts byte offsets to UTF-16 code units for LSP compatibility.
 #[allow(dead_code)]
 pub fn find_text_position(doc: &Document, text: &str) -> Option<Range> {
     for (line_idx, line) in doc.content.lines().enumerate() {
-        if let Some(col) = line.find(text) {
+        if let Some(byte_col) = line.find(text) {
+            let utf16_start = byte_col_to_utf16(line, byte_col);
+            let utf16_end = byte_col_to_utf16(line, byte_col + text.len());
             return Some(Range {
                 start: Position {
                     line: line_idx as u32,
-                    character: col as u32,
+                    character: utf16_start,
                 },
                 end: Position {
                     line: line_idx as u32,
-                    character: (col + text.len()) as u32,
+                    character: utf16_end,
                 },
             });
         }

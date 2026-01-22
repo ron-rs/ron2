@@ -488,23 +488,70 @@ pub enum CompletionContext {
 }
 
 /// Strip surrounding quotes from a string literal (e.g., `"value"` -> `value`).
+///
+/// Handles both regular strings and raw strings (`r"..."`, `r#"..."#`).
+/// Processes escape sequences in regular strings.
 fn strip_string_quotes(s: &str) -> String {
     let s = s.trim();
-    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
+    // Use ron2's decode_string which handles raw strings and escape sequences
+    match ron2::ast::decode_string(s) {
+        Ok((value, _kind)) => value,
+        Err(_) => {
+            // Fallback for malformed strings - just strip simple quotes
+            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                s[1..s.len() - 1].to_string()
+            } else {
+                s.to_string()
+            }
+        }
     }
 }
 
 /// Extract the value from an attribute like `= "value"]` (text-based fallback).
+///
+/// Handles both regular strings and raw strings (`r"..."`, `r#"..."#`).
 fn extract_attribute_value_from_text(rest: &str) -> Option<String> {
     let rest = rest.trim();
     let rest = rest.strip_prefix('=')?;
     let rest = rest.trim();
-    let rest = rest.strip_prefix('"')?;
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+
+    // Handle raw strings: r"...", r#"..."#, etc.
+    if let Some(raw_rest) = rest.strip_prefix('r') {
+        let hash_count = raw_rest.chars().take_while(|&c| c == '#').count();
+        let after_hashes = &raw_rest[hash_count..];
+        if !after_hashes.starts_with('"') {
+            return None;
+        }
+        let content_start = hash_count + 1; // hashes + opening quote
+        let remaining = &raw_rest[content_start..];
+        let end_delim = format!("\"{}", "#".repeat(hash_count));
+        let end_pos = remaining.find(&end_delim)?;
+        return Some(remaining[..end_pos].to_string());
+    }
+
+    // Handle regular strings with escape processing
+    if !rest.starts_with('"') {
+        return None;
+    }
+    // Find the closing quote (not preceded by unescaped backslash)
+    let content = &rest[1..]; // Skip opening quote
+    let mut end = 0;
+    let mut chars = content.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            // Found closing quote - extract and decode
+            let raw = &rest[..end + 2]; // Include both quotes
+            return ron2::ast::decode_string(raw).ok().map(|(v, _)| v);
+        }
+        if c == '\\' {
+            // Skip escaped character
+            if let Some(escaped) = chars.next() {
+                end += escaped.len_utf8();
+            }
+        }
+        end += c.len_utf8();
+    }
+    None
 }
 
 /// Check if a byte is a valid identifier character.
@@ -583,5 +630,92 @@ mod tests {
 
         // After comma, should be field name context
         assert_eq!(doc.context_at_position(2, 4), CompletionContext::FieldName);
+    }
+
+    #[test]
+    fn test_extract_raw_string_type_attribute() {
+        let content = r###"#![type = r#"my_crate::config::AppConfig"#]
+
+(
+    port: 8080,
+)
+"###;
+        let doc = Document::new(
+            Url::parse("file:///test.ron").unwrap(),
+            content.to_string(),
+            1,
+        );
+        assert_eq!(
+            doc.type_attr,
+            Some("my_crate::config::AppConfig".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_escaped_string_type_attribute() {
+        let content = r#"#![type = "my_crate::config::App\"Config"]
+
+(
+    port: 8080,
+)
+"#;
+        let doc = Document::new(
+            Url::parse("file:///test.ron").unwrap(),
+            content.to_string(),
+            1,
+        );
+        assert_eq!(
+            doc.type_attr,
+            Some("my_crate::config::App\"Config".to_string())
+        );
+    }
+
+    #[test]
+    fn test_utf16_position_conversion_with_emoji() {
+        // Emoji like 😀 takes 4 bytes in UTF-8 but 2 UTF-16 code units
+        let content = "a😀b";
+        let doc = Document::new(
+            Url::parse("file:///test.ron").unwrap(),
+            content.to_string(),
+            1,
+        );
+
+        // Position of 'b' in UTF-16: a (1) + 😀 (2) = 3
+        let pos = doc.offset_to_position(5); // byte offset of 'b' (a=1, 😀=4)
+        assert_eq!(pos.character, 3); // UTF-16 column
+
+        // Converting back: UTF-16 position 3 should give byte offset 5
+        let offset = doc.position_to_offset(0, 3);
+        assert_eq!(offset, Some(5));
+    }
+
+    #[test]
+    fn test_span_to_range_with_emoji() {
+        // Test that span_to_range correctly converts byte offsets to UTF-16
+        let content = "(emoji: \"😀\", next: 42)";
+        let doc = Document::new(
+            Url::parse("file:///test.ron").unwrap(),
+            content.to_string(),
+            1,
+        );
+
+        // Get AST fields with spans
+        let fields = doc.get_ast_fields_with_spans();
+        assert_eq!(fields.len(), 2);
+
+        // Find the "next" field
+        let (name, span) = fields.iter().find(|(n, _)| n == "next").unwrap();
+        assert_eq!(name, "next");
+
+        // Convert span to LSP range
+        let range = doc.span_to_range(span);
+
+        // The "next" field starts after: (emoji: "😀", - that's byte offset 14
+        // In UTF-16: ( (1) + emoji (5) + : (1) + space (1) + " (1) + 😀 (2) + " (1) + , (1) + space (1) = 14
+        // But wait, emoji is 5 chars = 5 code units, 😀 is 2 code units
+        // Let me recalculate: ( + e + m + o + j + i + : + " " + " + 😀 + " + , + " " + n
+        // Position of 'n' in next: 1 + 5 + 1 + 1 + 1 + 2 + 1 + 1 + 1 = 14
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 14); // UTF-16 position
     }
 }
