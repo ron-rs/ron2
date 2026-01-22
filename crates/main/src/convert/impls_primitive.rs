@@ -63,8 +63,8 @@ macro_rules! impl_to_ron_int {
 }
 
 impl_to_ron_int! {
-    i8, i16, i32, i64,
-    u8, u16, u32, u64,
+    i8, i16, i32, i64, isize,
+    u8, u16, u32, u64, usize,
 }
 
 #[cfg(feature = "integer128")]
@@ -151,7 +151,7 @@ macro_rules! impl_from_ron_int {
     };
 }
 
-impl_from_ron_int!(i8, i16, i32, i64, u8, u16, u32, u64);
+impl_from_ron_int!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
 #[cfg(feature = "integer128")]
 impl_from_ron_int!(i128, u128);

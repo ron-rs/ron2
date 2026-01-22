@@ -169,24 +169,23 @@ fn derive_named_struct_de(
         field_extractions.push(extraction);
     }
 
-    // Generate Unit case only if all fields have defaults
-    let unit_case = if all_fields_have_defaults {
-        // Build unit extractions using defaults
-        let mut unit_extractions = Vec::new();
-        for field in &named.named {
-            let field_attrs = FieldAttrs::from_ast(&field.attrs)?;
-            let field_ident = field.ident.as_ref().unwrap();
+    // Build unit extractions using defaults (shared between unit case and empty tuple case)
+    let unit_extractions: Vec<_> = named
+        .named
+        .iter()
+        .filter_map(|field| {
+            let field_attrs = FieldAttrs::from_ast(&field.attrs).ok()?;
+            let field_ident = field.ident.as_ref()?;
             let field_ty = &field.ty;
 
             if field_attrs.should_skip_deserializing() {
-                unit_extractions.push(quote! {
+                return Some(quote! {
                     let #field_ident: #field_ty = ::std::default::Default::default();
                 });
-                continue;
             }
 
             // Note: opt implies default (uses Default::default())
-            let unit_extraction = match &field_attrs.default {
+            let extraction = match &field_attrs.default {
                 FieldDefault::Default => {
                     quote! {
                         let #field_ident: #field_ty = ::std::default::Default::default();
@@ -204,12 +203,27 @@ fn derive_named_struct_de(
                 }
                 _ => quote! {},
             };
-            unit_extractions.push(unit_extraction);
-        }
+            Some(extraction)
+        })
+        .collect();
 
+    // Generate Unit case only if all fields have defaults
+    let unit_case = if all_fields_have_defaults {
         quote! {
             // Unit: () - accept for structs with all fields having defaults
             ::ron2::ast::Expr::Unit(_) => {
+                #(#unit_extractions)*
+                Ok(#name { #(#field_names),* })
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    // Generate empty tuple case (Config()) only if all fields have defaults
+    let empty_tuple_case = if all_fields_have_defaults {
+        quote! {
+            Some(::ron2::ast::StructBody::Tuple(t)) if t.elements.is_empty() => {
                 #(#unit_extractions)*
                 Ok(#name { #(#field_names),* })
             }
@@ -255,6 +269,7 @@ fn derive_named_struct_de(
                         #deny_unknown
                         Ok(#name { #(#field_names),* })
                     }
+                    #empty_tuple_case
                     _ => Err(::ron2::Error::with_span(
                         ::ron2::error::ErrorKind::TypeMismatch {
                             expected: concat!("struct ", #struct_name).to_string(),

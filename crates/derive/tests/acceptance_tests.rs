@@ -701,6 +701,22 @@ mod field_opt {
         assert_eq!(parsed2, AllOpt::default());
     }
 
+    #[test]
+    fn deserialize_named_empty_tuple_when_all_have_defaults() {
+        #[derive(Debug, Ron, PartialEq, Default)]
+        struct AllOpt {
+            #[ron(opt)]
+            a: i32,
+            #[ron(opt)]
+            b: bool,
+        }
+
+        // Named empty tuple syntax Config() works because all fields have defaults
+        let ron = "AllOpt()";
+        let parsed: AllOpt = AllOpt::from_ron(ron).unwrap();
+        assert_eq!(parsed, AllOpt::default());
+    }
+
     // Test opt on enum struct variants
     #[derive(Debug, Ron, PartialEq)]
     enum Message {
