@@ -3,10 +3,7 @@
 //! Validates RON files against their schemas and produces
 //! diagnostic messages for errors.
 
-use ron2::{
-    error::Span,
-    schema::{ValidationError, ValidationErrorKind, validate_expr_collect_all},
-};
+use ron2::schema::{ValidationError, ValidationErrorKind, validate_expr_collect_all};
 use tower_lsp::lsp_types::*;
 
 use crate::{document::Document, schema_resolver::SchemaResolver};
@@ -87,7 +84,7 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
     // Use multi-error validation that collects all errors
     let validation_errors = validate_expr_collect_all(expr, &schema, resolver);
     for error in validation_errors {
-        diagnostics.push(validation_error_to_diagnostic(&error));
+        diagnostics.push(validation_error_to_diagnostic(doc, &error));
     }
 
     diagnostics
@@ -96,9 +93,8 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
 /// Convert a validation error to a diagnostic.
 ///
 /// The error span comes directly from the AST, providing precise positioning.
-fn validation_error_to_diagnostic(error: &ValidationError) -> Diagnostic {
-    // Convert the error span to LSP range
-    let range = span_to_range(error.span());
+fn validation_error_to_diagnostic(doc: &Document, error: &ValidationError) -> Diagnostic {
+    let range = doc.span_to_range(error.span());
 
     // Format the error message
     let message = format_error_message(error);
@@ -109,21 +105,6 @@ fn validation_error_to_diagnostic(error: &ValidationError) -> Diagnostic {
         source: Some("ron-schema".to_string()),
         message,
         ..Default::default()
-    }
-}
-
-/// Convert a ron2 Span to an LSP Range.
-fn span_to_range(span: &Span) -> Range {
-    // ron2 spans use 1-based line/column, LSP uses 0-based
-    Range {
-        start: Position {
-            line: span.start.line.saturating_sub(1) as u32,
-            character: span.start.col.saturating_sub(1) as u32,
-        },
-        end: Position {
-            line: span.end.line.saturating_sub(1) as u32,
-            character: span.end.col.saturating_sub(1) as u32,
-        },
     }
 }
 

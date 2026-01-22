@@ -1067,16 +1067,25 @@ struct Identifier<'a>(&'a str);
 
 impl fmt::Display for Identifier<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.is_empty() || !self.0.chars().all(is_ident_raw_char) {
+        let (raw_prefix, ident) = match self.0.strip_prefix("r#") {
+            Some(rest) => (true, rest),
+            None => (false, self.0),
+        };
+
+        if ident.is_empty() || !ident.chars().all(is_ident_raw_char) {
             return write!(f, "{:?}_[invalid identifier]", self.0);
         }
 
-        let mut chars = self.0.chars();
+        if raw_prefix {
+            return write!(f, "`r#{ident}`");
+        }
+
+        let mut chars = ident.chars();
 
         if !chars.next().is_some_and(is_ident_first_char) || !chars.all(is_xid_continue) {
-            write!(f, "`r#{}`", self.0)
+            write!(f, "`r#{ident}`")
         } else {
-            write!(f, "`{}`", self.0)
+            write!(f, "`{ident}`")
         }
     }
 }
@@ -1122,6 +1131,10 @@ mod tests {
         check_message(
             &Error::missing_field_in("name", "Config"),
             "missing required field `name` in `Config`",
+        );
+        check_message(
+            &Error::missing_field("r#type"),
+            "missing required field `r#type`",
         );
         check_message(
             &Error::integer_out_of_bounds("256", "u8"),

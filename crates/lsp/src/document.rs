@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use ron2::ast::{self, AttributeContent, Document as AstDocument};
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::{Position, Range, Url};
 
 /// A parsed RON document.
 #[derive(Debug)]
@@ -84,30 +84,77 @@ impl Document {
         }
     }
 
+    fn line_bounds(&self, line: usize) -> Option<(usize, usize, usize)> {
+        let start = *self.line_offsets.get(line)?;
+        let end_with_break = if line + 1 < self.line_offsets.len() {
+            self.line_offsets[line + 1]
+        } else {
+            self.content.len()
+        };
+        let mut end = end_with_break;
+        if end > start {
+            let bytes = self.content.as_bytes();
+            if bytes[end - 1] == b'\n' {
+                end -= 1;
+                if end > start && bytes[end - 1] == b'\r' {
+                    end -= 1;
+                }
+            }
+        }
+        Some((start, end, end_with_break))
+    }
+
     /// Convert a line and column (0-based) to a byte offset.
     pub fn position_to_offset(&self, line: u32, col: u32) -> Option<usize> {
         let line = line as usize;
-        if line >= self.line_offsets.len() {
-            return None;
-        }
-        let line_start = self.line_offsets[line];
         let col = col as usize;
+        let (line_start, line_end, _) = self.line_bounds(line)?;
 
-        // Calculate byte offset accounting for UTF-8
-        let line_content = if line + 1 < self.line_offsets.len() {
-            &self.content[line_start..self.line_offsets[line + 1]]
-        } else {
-            &self.content[line_start..]
-        };
+        let line_content = &self.content[line_start..line_end];
+        let mut utf16_count = 0usize;
 
-        for (char_count, (i, _)) in line_content.char_indices().enumerate() {
-            if char_count == col {
-                return Some(line_start + i);
+        for (byte_idx, ch) in line_content.char_indices() {
+            if utf16_count >= col {
+                return Some(line_start + byte_idx);
             }
+            let units = if (ch as u32) >= 0x10000 { 2 } else { 1 };
+            if utf16_count + units > col {
+                return Some(line_start + byte_idx);
+            }
+            utf16_count += units;
         }
 
         // Column is at or past end of line
-        Some(line_start + line_content.len())
+        Some(line_end)
+    }
+
+    /// Convert a byte offset to an LSP position (0-based, UTF-16 code units).
+    pub fn offset_to_position(&self, offset: usize) -> Position {
+        let offset = offset.min(self.content.len());
+        let line = self
+            .line_offsets
+            .partition_point(|&start| start <= offset)
+            .saturating_sub(1);
+        let (line_start, line_end, _) = self.line_bounds(line).unwrap_or((0, 0, 0));
+        let offset = offset.min(line_end);
+        let line_content = &self.content[line_start..offset];
+        let mut utf16_count = 0usize;
+        for ch in line_content.chars() {
+            utf16_count += if (ch as u32) >= 0x10000 { 2 } else { 1 };
+        }
+
+        Position {
+            line: line as u32,
+            character: utf16_count as u32,
+        }
+    }
+
+    /// Convert a ron2 span to an LSP range.
+    pub fn span_to_range(&self, span: &ron2::error::Span) -> Range {
+        Range {
+            start: self.offset_to_position(span.start_offset),
+            end: self.offset_to_position(span.end_offset),
+        }
     }
 
     /// Parse the RON content using the AST parser.
@@ -145,12 +192,16 @@ impl Document {
         // Collect ALL parse errors
         let parse_errors: Vec<ParseError> = errors
             .iter()
-            .map(|err| ParseError {
-                message: format!("{}", err.kind()),
-                line: err.span().start.line.saturating_sub(1),
-                col: err.span().start.col.saturating_sub(1),
-                end_line: err.span().end.line.saturating_sub(1),
-                end_col: err.span().end.col.saturating_sub(1),
+            .map(|err| {
+                let start = self.offset_to_position(err.span().start_offset);
+                let end = self.offset_to_position(err.span().end_offset);
+                ParseError {
+                    message: format!("{}", err.kind()),
+                    line: start.line as usize,
+                    col: start.character as usize,
+                    end_line: end.line as usize,
+                    end_col: end.character as usize,
+                }
             })
             .collect();
 
