@@ -498,6 +498,10 @@ fn derive_enum_de(
 ) -> syn::Result<TokenStream2> {
     let mut variant_arms = Vec::new();
 
+    // Track variants named "None" and "Some" (after rename rules) for Expr::Option handling
+    let mut none_variant: Option<Ident> = None;
+    let mut some_variant: Option<(Ident, syn::Type)> = None;
+
     for variant in &data.variants {
         let variant_attrs = VariantAttrs::from_ast(&variant.attrs)?;
 
@@ -508,6 +512,19 @@ fn derive_enum_de(
         let variant_ident = &variant.ident;
         let variant_name =
             variant_attrs.effective_name(&variant_ident.to_string(), container_attrs);
+
+        // Track None/Some variants for Expr::Option handling
+        if variant_name == "None"
+            && let Fields::Unit = &variant.fields
+        {
+            none_variant = Some(variant_ident.clone());
+        } else if variant_name == "Some"
+            && let Fields::Unnamed(unnamed) = &variant.fields
+            && unnamed.unnamed.len() == 1
+        {
+            let field_ty = unnamed.unnamed.first().unwrap().ty.clone();
+            some_variant = Some((variant_ident.clone(), field_ty));
+        }
 
         let arm = match &variant.fields {
             Fields::Unit => {
@@ -672,6 +689,55 @@ fn derive_enum_de(
 
     let enum_name = name.to_string();
 
+    // Generate Expr::Option handling if enum has None or Some variants
+    let option_arm = if none_variant.is_some() || some_variant.is_some() {
+        let none_handling = if let Some(none_ident) = &none_variant {
+            quote! {
+                None => Ok(#name::#none_ident),
+            }
+        } else {
+            quote! {
+                None => Err(::ron2::Error::with_span(
+                    ::ron2::error::ErrorKind::TypeMismatch {
+                        expected: concat!("enum ", #enum_name).to_string(),
+                        found: "option None".to_string(),
+                    },
+                    opt.span.clone(),
+                )),
+            }
+        };
+
+        let some_handling = if let Some((some_ident, field_ty)) = &some_variant {
+            quote! {
+                Some(inner) => {
+                    let field_0: #field_ty = <#field_ty as ::ron2::FromRon>::from_ast(&inner.expr)?;
+                    Ok(#name::#some_ident(field_0))
+                }
+            }
+        } else {
+            quote! {
+                Some(_) => Err(::ron2::Error::with_span(
+                    ::ron2::error::ErrorKind::TypeMismatch {
+                        expected: concat!("enum ", #enum_name).to_string(),
+                        found: "option Some".to_string(),
+                    },
+                    opt.span.clone(),
+                )),
+            }
+        };
+
+        quote! {
+            ::ron2::ast::Expr::Option(opt) => {
+                match &opt.value {
+                    #none_handling
+                    #some_handling
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         // Enums in RON are parsed as Expr::Struct with the variant name
         match expr {
@@ -689,6 +755,7 @@ fn derive_enum_de(
                     )),
                 }
             }
+            #option_arm
             _ => Err(::ron2::Error::with_span(
                 ::ron2::error::ErrorKind::TypeMismatch {
                     expected: concat!("enum ", #enum_name).to_string(),

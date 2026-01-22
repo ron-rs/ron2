@@ -671,3 +671,78 @@ fn test_tuple_struct_element_error_span() {
         "Error should point to the invalid string"
     );
 }
+
+// =============================================================================
+// Enum variants named None/Some (parsed as Expr::Option)
+// =============================================================================
+
+/// Enum with a unit variant named "None" - tests that parser's hardcoded
+/// None -> Expr::Option handling is correctly handled by FromRon.
+#[derive(Debug, FromRon, PartialEq)]
+enum HardwareBinding {
+    None,
+    Keyboard,
+    Mouse,
+}
+
+#[test]
+fn test_enum_none_variant() {
+    // "None" is parsed as Expr::Option(None) by the parser, not Expr::Struct
+    let binding: HardwareBinding = ron2::from_str("None").unwrap();
+    assert_eq!(binding, HardwareBinding::None);
+
+    // Other variants still work as Expr::Struct
+    let keyboard: HardwareBinding = ron2::from_str("Keyboard").unwrap();
+    assert_eq!(keyboard, HardwareBinding::Keyboard);
+
+    let mouse: HardwareBinding = ron2::from_str("Mouse").unwrap();
+    assert_eq!(mouse, HardwareBinding::Mouse);
+}
+
+/// Enum with both None and Some variants - mimics Option but is a custom type.
+#[derive(Debug, FromRon, PartialEq)]
+enum MaybeValue {
+    None,
+    Some(i32),
+}
+
+#[test]
+fn test_enum_some_variant() {
+    // "Some(42)" is parsed as Expr::Option(Some(...)) by the parser
+    let val: MaybeValue = ron2::from_str("Some(42)").unwrap();
+    assert_eq!(val, MaybeValue::Some(42));
+
+    // "None" also works
+    let none: MaybeValue = ron2::from_str("None").unwrap();
+    assert_eq!(none, MaybeValue::None);
+}
+
+/// Enum with only Some variant (no None) - tests partial Option-like enums.
+#[derive(Debug, FromRon, PartialEq)]
+enum OnlySome {
+    Some(String),
+    Other,
+}
+
+#[test]
+fn test_enum_only_some_variant() {
+    let val: OnlySome = ron2::from_str(r#"Some("hello")"#).unwrap();
+    assert_eq!(val, OnlySome::Some("hello".to_string()));
+
+    let other: OnlySome = ron2::from_str("Other").unwrap();
+    assert_eq!(other, OnlySome::Other);
+}
+
+/// Enum with renamed variant to "None" - tests that rename rules apply.
+#[derive(Debug, FromRon, PartialEq)]
+enum RenamedNone {
+    #[ron(rename = "None")]
+    Empty,
+    Value(i32),
+}
+
+#[test]
+fn test_enum_renamed_none_variant() {
+    let empty: RenamedNone = ron2::from_str("None").unwrap();
+    assert_eq!(empty, RenamedNone::Empty);
+}
