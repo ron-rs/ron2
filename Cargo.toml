@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ron-rs/ron2"
@@ -18,9 +18,9 @@ readme = "README.md"
 rust-version = "1.90.0"
 
 [workspace.dependencies]
-ron2 = { path = "crates/main", version = "0.2.0" }
-ron2-derive = { path = "crates/derive", version = "0.2.0" }
-ron2-doc = { path = "crates/doc", version = "0.2.0" }
+ron2 = { path = "crates/main", version = "0.2.1" }
+ron2-derive = { path = "crates/derive", version = "0.2.1" }
+ron2-doc = { path = "crates/doc", version = "0.2.1" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2"
 itoa = "1.0"
