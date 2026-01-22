@@ -122,30 +122,40 @@ pub fn from_str<T: FromRon>(s: &str) -> Result<T> {
 
 /// Serialize a value to a RON string with default formatting.
 ///
+/// If the type implements [`schema::RonSchema::type_path()`], the output
+/// will include a `#![type = "..."]` attribute.
+///
 /// # Example
 /// ```
 /// use ron2::{to_string, Value};
 ///
 /// let value = Value::Bool(true);
 /// let ron = ron2::to_string(&value)?;
-/// assert_eq!(ron, "true");
+/// assert_eq!(ron.trim(), "true");
 /// # Ok::<(), ron2::Error>(())
 /// ```
-pub fn to_string<T: ToRon>(value: &T) -> Result<alloc::string::String> {
-    value.to_ron()
+pub fn to_string<T: ToRonDocument>(value: &T) -> Result<alloc::string::String> {
+    value.to_typed_ron()
 }
 
-/// Serialize a value to a RON string with custom formatting.
+/// Serialize a value to a RON string with custom settings.
+///
+/// If the type implements [`schema::RonSchema::type_path()`] and
+/// [`SerializeConfig::include_type_attribute`] is true, the output
+/// will include a `#![type = "..."]` attribute.
 ///
 /// # Example
 /// ```
-/// use ron2::{to_string_with, FormatConfig, Value};
+/// use ron2::{to_string_with, SerializeConfig, Value};
 ///
 /// let value = Value::Bool(true);
-/// let ron = ron2::to_string_with(&value, &FormatConfig::minimal())?;
-/// assert_eq!(ron, "true");
+/// let ron = ron2::to_string_with(&value, &SerializeConfig::default())?;
+/// assert_eq!(ron.trim(), "true");
 /// # Ok::<(), ron2::Error>(())
 /// ```
-pub fn to_string_with<T: ToRon>(value: &T, config: &FormatConfig) -> Result<alloc::string::String> {
-    value.to_ron_with(config)
+pub fn to_string_with<T: ToRonDocument>(
+    value: &T,
+    config: &SerializeConfig,
+) -> Result<alloc::string::String> {
+    value.to_typed_ron_with(config)
 }
