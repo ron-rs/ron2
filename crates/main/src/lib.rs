@@ -122,8 +122,7 @@ pub fn from_str<T: FromRon>(s: &str) -> Result<T> {
 
 /// Serialize a value to a RON string with default formatting.
 ///
-/// If the type implements [`schema::RonSchema::type_path()`], the output
-/// will include a `#![type = "..."]` attribute.
+/// The output includes a `#![type = "..."]` attribute using [`core::any::type_name`].
 ///
 /// # Example
 /// ```
@@ -131,7 +130,8 @@ pub fn from_str<T: FromRon>(s: &str) -> Result<T> {
 ///
 /// let value = Value::Bool(true);
 /// let ron = ron2::to_string(&value)?;
-/// assert_eq!(ron.trim(), "true");
+/// assert!(ron.contains("#![type ="));
+/// assert!(ron.contains("true"));
 /// # Ok::<(), ron2::Error>(())
 /// ```
 pub fn to_string<T: ToRonDocument>(value: &T) -> Result<alloc::string::String> {
@@ -140,16 +140,22 @@ pub fn to_string<T: ToRonDocument>(value: &T) -> Result<alloc::string::String> {
 
 /// Serialize a value to a RON string with custom settings.
 ///
-/// If the type implements [`schema::RonSchema::type_path()`] and
-/// [`SerializeConfig::include_type_attribute`] is true, the output
-/// will include a `#![type = "..."]` attribute.
+/// If [`SerializeConfig::include_type_attribute`] is true (the default), the output
+/// will include a `#![type = "..."]` attribute using [`core::any::type_name`].
 ///
 /// # Example
 /// ```
 /// use ron2::{to_string_with, SerializeConfig, Value};
 ///
 /// let value = Value::Bool(true);
+///
+/// // With type attribute (default)
 /// let ron = ron2::to_string_with(&value, &SerializeConfig::default())?;
+/// assert!(ron.contains("#![type ="));
+/// assert!(ron.contains("true"));
+///
+/// // Without type attribute
+/// let ron = ron2::to_string_with(&value, &SerializeConfig::without_type_attribute())?;
 /// assert_eq!(ron.trim(), "true");
 /// # Ok::<(), ron2::Error>(())
 /// ```

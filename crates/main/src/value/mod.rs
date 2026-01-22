@@ -195,12 +195,6 @@ impl From<()> for Value {
     }
 }
 
-impl crate::schema::RonSchema for Value {
-    fn type_kind() -> crate::schema::TypeKind {
-        crate::schema::TypeKind::TypeRef("ron2::Value".to_string())
-    }
-}
-
 // ============================================================================
 // SerializeRon implementation for Value
 // ============================================================================

@@ -335,17 +335,19 @@ impl SerializeConfig {
 
 /// Extension trait for serializing types with `#![type = "..."]` attribute.
 ///
-/// This trait is automatically implemented for any type that implements both
-/// [`ToRon`] and [`RonSchema`](crate::schema::RonSchema). It provides methods
-/// to serialize values as complete RON documents with type attribution for
-/// LSP support.
+/// This trait is automatically implemented for any type that implements [`ToRon`].
+/// It provides methods to serialize values as complete RON documents with type
+/// attribution for LSP support.
+///
+/// The type attribute uses [`core::any::type_name`] to get the full type path,
+/// which works for all types without requiring additional derive macros.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use ron2::{ToRonDocument, Ron, RonSchema};
+/// use ron2::{ToRonDocument, Ron};
 ///
-/// #[derive(Ron, RonSchema)]
+/// #[derive(Ron)]
 /// struct Config {
 ///     port: u16,
 /// }
@@ -356,11 +358,11 @@ impl SerializeConfig {
 /// let ron = config.to_typed_ron()?;
 /// assert!(ron.starts_with("#![type = \""));
 /// ```
-pub trait ToRonDocument: ToRon + crate::schema::RonSchema {
+pub trait ToRonDocument: ToRon {
     /// Convert this value to a typed RON document.
     ///
-    /// If the type implements `RonSchema::type_path()` and `include_type_attribute`
-    /// is true in the config, the document will include a `#![type = "..."]` attribute.
+    /// If `include_type_attribute` is true in the config, the document will
+    /// include a `#![type = "..."]` attribute using [`core::any::type_name`].
     fn to_typed_document(&self, config: &SerializeConfig) -> Result<Document<'static>> {
         let mut doc = Document {
             source: Cow::Borrowed(""),
@@ -371,9 +373,8 @@ pub trait ToRonDocument: ToRon + crate::schema::RonSchema {
             trailing: Trivia::empty(),
         };
 
-        if config.include_type_attribute
-            && let Some(type_path) = Self::type_path()
-        {
+        if config.include_type_attribute {
+            let type_path = core::any::type_name::<Self>();
             doc.attributes.push(Attribute::synthetic_type(type_path));
         }
 
@@ -382,7 +383,7 @@ pub trait ToRonDocument: ToRon + crate::schema::RonSchema {
 
     /// Convert this value to a typed RON string with default settings.
     ///
-    /// This includes the `#![type = "..."]` attribute if the type has a type path.
+    /// This includes the `#![type = "..."]` attribute.
     fn to_typed_ron(&self) -> Result<String> {
         let config = SerializeConfig::default();
         let doc = self.to_typed_document(&config)?;
@@ -396,8 +397,8 @@ pub trait ToRonDocument: ToRon + crate::schema::RonSchema {
     }
 }
 
-// Blanket implementation for all types implementing both ToRon and RonSchema
-impl<T: ToRon + crate::schema::RonSchema> ToRonDocument for T {}
+// Blanket implementation for all types implementing ToRon
+impl<T: ToRon> ToRonDocument for T {}
 
 #[cfg(test)]
 mod tests {
@@ -710,20 +711,21 @@ mod tests {
     }
 
     #[test]
-    fn test_to_typed_ron_primitives_no_type_path() {
+    fn test_to_typed_ron_includes_type_attribute() {
         use super::ToRonDocument;
 
-        // Primitives don't have type_path, so they shouldn't include type attribute
+        // All types now include type attribute using std::any::type_name
         let result = 42i32.to_typed_ron().unwrap();
-        assert!(!result.contains("#![type"));
+        assert!(result.contains("#![type = \"i32\"]"));
         assert!(result.contains("42"));
 
         let result = "hello".to_typed_ron().unwrap();
-        assert!(!result.contains("#![type"));
+        assert!(result.contains("#![type = \"&str\"]"));
         assert!(result.contains("hello"));
 
         let result = vec![1, 2, 3].to_typed_ron().unwrap();
-        assert!(!result.contains("#![type"));
+        assert!(result.contains("#![type"));
+        assert!(result.contains("Vec"));
     }
 
     #[test]
@@ -733,9 +735,9 @@ mod tests {
         let config = super::SerializeConfig::default();
         let doc = 42i32.to_typed_document(&config).unwrap();
 
-        // Should have a value but no type attribute (primitives have no type_path)
+        // Should have a value and a type attribute
         assert!(doc.value.is_some());
-        assert!(doc.attributes.is_empty());
+        assert_eq!(doc.attributes.len(), 1);
     }
 
     #[test]
