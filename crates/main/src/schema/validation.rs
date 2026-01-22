@@ -302,6 +302,171 @@ pub fn validate_expr_collect_all<R: SchemaResolver>(
 // Internal Validation Implementation
 // =============================================================================
 
+use crate::value::Number;
+
+/// Validate a numeric value against an integer type kind.
+/// Returns an error if:
+/// - The value is a float but an integer type is expected
+/// - The value is negative but an unsigned type is expected
+/// - The value is out of range for the target type
+#[allow(clippy::result_large_err)]
+fn validate_integer_value(number: &Number, kind: &TypeKind) -> ValidationResult<()> {
+    // First, reject floats for integer types
+    if matches!(number, Number::F32(_) | Number::F64(_)) {
+        return Err(ValidationError::type_mismatch(
+            kind_to_type_name(kind),
+            "float",
+        ));
+    }
+
+    // Check signedness and range
+    match kind {
+        TypeKind::I8 => validate_signed_range::<i8>(number, "i8"),
+        TypeKind::I16 => validate_signed_range::<i16>(number, "i16"),
+        TypeKind::I32 => validate_signed_range::<i32>(number, "i32"),
+        TypeKind::I64 => validate_signed_range::<i64>(number, "i64"),
+        #[cfg(feature = "integer128")]
+        TypeKind::I128 => validate_signed_range::<i128>(number, "i128"),
+        TypeKind::U8 => validate_unsigned_range::<u8>(number, "u8"),
+        TypeKind::U16 => validate_unsigned_range::<u16>(number, "u16"),
+        TypeKind::U32 => validate_unsigned_range::<u32>(number, "u32"),
+        TypeKind::U64 => validate_unsigned_range::<u64>(number, "u64"),
+        #[cfg(feature = "integer128")]
+        TypeKind::U128 => validate_unsigned_range::<u128>(number, "u128"),
+        _ => Ok(()), // Not an integer type, shouldn't happen
+    }
+}
+
+/// Get the type name for a `TypeKind` (for error messages).
+fn kind_to_type_name(kind: &TypeKind) -> &'static str {
+    match kind {
+        TypeKind::I8 => "i8",
+        TypeKind::I16 => "i16",
+        TypeKind::I32 => "i32",
+        TypeKind::I64 => "i64",
+        #[cfg(feature = "integer128")]
+        TypeKind::I128 => "i128",
+        TypeKind::U8 => "u8",
+        TypeKind::U16 => "u16",
+        TypeKind::U32 => "u32",
+        TypeKind::U64 => "u64",
+        #[cfg(feature = "integer128")]
+        TypeKind::U128 => "u128",
+        TypeKind::F32 => "f32",
+        TypeKind::F64 => "f64",
+        _ => "integer",
+    }
+}
+
+/// Validate a Number against a signed integer type's range.
+#[allow(clippy::result_large_err)]
+fn validate_signed_range<T>(number: &Number, type_name: &'static str) -> ValidationResult<()>
+where
+    T: TryFrom<i64> + TryFrom<i128>,
+{
+    let value_i128 = number_to_i128(number);
+    // Try to convert to the target type
+    if T::try_from(value_i128).is_err() {
+        return Err(ValidationError::integer_out_of_bounds(
+            value_i128.to_string(),
+            type_name,
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a Number against an unsigned integer type's range.
+#[allow(clippy::result_large_err)]
+fn validate_unsigned_range<T>(number: &Number, type_name: &'static str) -> ValidationResult<()>
+where
+    T: TryFrom<u64> + TryFrom<u128>,
+{
+    // First check if negative
+    if is_negative_number(number) {
+        return Err(ValidationError::type_mismatch(
+            type_name,
+            "negative integer",
+        ));
+    }
+
+    let value_u128 = number_to_u128(number);
+    // Try to convert to the target type
+    if T::try_from(value_u128).is_err() {
+        return Err(ValidationError::integer_out_of_bounds(
+            value_u128.to_string(),
+            type_name,
+        ));
+    }
+    Ok(())
+}
+
+/// Check if a Number is negative.
+fn is_negative_number(number: &Number) -> bool {
+    match number {
+        Number::I8(v) => *v < 0,
+        Number::I16(v) => *v < 0,
+        Number::I32(v) => *v < 0,
+        Number::I64(v) => *v < 0,
+        #[cfg(feature = "integer128")]
+        Number::I128(v) => *v < 0,
+        Number::U8(_) | Number::U16(_) | Number::U32(_) | Number::U64(_) => false,
+        #[cfg(feature = "integer128")]
+        Number::U128(_) => false,
+        Number::F32(v) => v.get() < 0.0,
+        Number::F64(v) => v.get() < 0.0,
+        #[cfg(not(doc))]
+        Number::__NonExhaustive(never) => never.never(),
+    }
+}
+
+/// Convert a Number to i128 for range checking.
+#[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+fn number_to_i128(number: &Number) -> i128 {
+    match number {
+        Number::I8(v) => i128::from(*v),
+        Number::I16(v) => i128::from(*v),
+        Number::I32(v) => i128::from(*v),
+        Number::I64(v) => i128::from(*v),
+        #[cfg(feature = "integer128")]
+        Number::I128(v) => *v,
+        Number::U8(v) => i128::from(*v),
+        Number::U16(v) => i128::from(*v),
+        Number::U32(v) => i128::from(*v),
+        Number::U64(v) => i128::from(*v),
+        #[cfg(feature = "integer128")]
+        Number::U128(v) => *v as i128,
+        // Floats shouldn't reach here, but handle gracefully
+        Number::F32(v) => v.get() as i128,
+        Number::F64(v) => v.get() as i128,
+        #[cfg(not(doc))]
+        Number::__NonExhaustive(never) => never.never(),
+    }
+}
+
+/// Convert a Number to u128 for range checking (only for non-negative values).
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+fn number_to_u128(number: &Number) -> u128 {
+    match number {
+        Number::I8(v) => *v as u128,
+        Number::I16(v) => *v as u128,
+        Number::I32(v) => *v as u128,
+        Number::I64(v) => *v as u128,
+        #[cfg(feature = "integer128")]
+        Number::I128(v) => *v as u128,
+        Number::U8(v) => u128::from(*v),
+        Number::U16(v) => u128::from(*v),
+        Number::U32(v) => u128::from(*v),
+        Number::U64(v) => u128::from(*v),
+        #[cfg(feature = "integer128")]
+        Number::U128(v) => *v,
+        // Floats shouldn't reach here, but handle gracefully
+        Number::F32(v) => v.get() as u128,
+        Number::F64(v) => v.get() as u128,
+        #[cfg(not(doc))]
+        Number::__NonExhaustive(never) => never.never(),
+    }
+}
+
 // Internal functions return ValidationResult<()> which contains a large error type.
 // This is acceptable for internal use since errors are boxed at the public API boundary.
 #[allow(clippy::result_large_err)]
@@ -325,7 +490,7 @@ fn validate_type_internal<R: SchemaResolver>(
         | TypeKind::U32
         | TypeKind::U64
         | TypeKind::U128 => match value {
-            Value::Number(_) => Ok(()),
+            Value::Number(n) => validate_integer_value(n, kind),
             _ => Err(type_mismatch("integer", value)),
         },
         TypeKind::F32 | TypeKind::F64 => match value {
@@ -815,6 +980,190 @@ fn expr_type_mismatch(expected: &str, expr: &Expr<'_>) -> ValidationError {
     )
 }
 
+/// Create a type mismatch error with a span and explicit found type.
+fn expr_type_mismatch_found(expected: &str, found: &str, span: Span) -> ValidationError {
+    ValidationError::with_span(
+        crate::error::ErrorKind::TypeMismatch {
+            expected: expected.to_string(),
+            found: found.to_string(),
+        },
+        span,
+    )
+}
+
+/// Create an integer out of bounds error with a span.
+fn integer_out_of_bounds_error(
+    value: &str,
+    target_type: &'static str,
+    span: Span,
+) -> ValidationError {
+    ValidationError::with_span(
+        crate::error::ErrorKind::IntegerOutOfBounds {
+            value: value.to_string().into(),
+            target_type,
+        },
+        span,
+    )
+}
+
+use crate::ast::NumberKind;
+
+/// Validate a number AST expression against an integer type kind.
+/// Returns an error if:
+/// - The expression is a float but an integer type is expected
+/// - The expression is negative but an unsigned type is expected
+/// - The expression value is out of range for the target type
+#[allow(clippy::result_large_err)]
+fn validate_integer_expr(
+    expr: &crate::ast::NumberExpr<'_>,
+    kind: &TypeKind,
+) -> ValidationResult<()> {
+    // First, reject floats for integer types
+    if matches!(expr.kind, NumberKind::Float | NumberKind::SpecialFloat) {
+        return Err(expr_type_mismatch_found(
+            kind_to_type_name(kind),
+            "float",
+            expr.span,
+        ));
+    }
+
+    // Check if unsigned type but negative value
+    let is_unsigned = matches!(
+        kind,
+        TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::U64 | TypeKind::U128
+    );
+    if is_unsigned && expr.kind == NumberKind::NegativeInteger {
+        return Err(expr_type_mismatch_found(
+            kind_to_type_name(kind),
+            "negative integer",
+            expr.span,
+        ));
+    }
+
+    // Parse the raw value and check range
+    let raw = expr.raw.as_ref();
+    validate_integer_range_from_raw(
+        raw,
+        kind,
+        expr.span,
+        expr.kind == NumberKind::NegativeInteger,
+    )
+}
+
+/// Parse a raw integer string and validate against the target type's range.
+#[allow(clippy::result_large_err)]
+fn validate_integer_range_from_raw(
+    raw: &str,
+    kind: &TypeKind,
+    span: Span,
+    is_negative: bool,
+) -> ValidationResult<()> {
+    // Parse the numeric value (handle prefixes like 0x, 0b, 0o and underscores)
+    let (value_str, radix) = parse_integer_prefix(raw, is_negative);
+
+    // Remove underscores for parsing
+    let clean: String = value_str.chars().filter(|c| *c != '_').collect();
+
+    // For signed types, parse as i128 first
+    // For unsigned types, parse as u128 first
+    match kind {
+        TypeKind::I8 | TypeKind::I16 | TypeKind::I32 | TypeKind::I64 => {
+            let value = if radix == 10 {
+                clean.parse::<i128>()
+            } else {
+                i128::from_str_radix(&clean, radix)
+            };
+            let value = value
+                .map_err(|_| integer_out_of_bounds_error(raw, kind_to_type_name(kind), span))?;
+
+            let in_range = match kind {
+                TypeKind::I8 => i8::try_from(value).is_ok(),
+                TypeKind::I16 => i16::try_from(value).is_ok(),
+                TypeKind::I32 => i32::try_from(value).is_ok(),
+                TypeKind::I64 => i64::try_from(value).is_ok(),
+                _ => true,
+            };
+            if !in_range {
+                return Err(integer_out_of_bounds_error(
+                    raw,
+                    kind_to_type_name(kind),
+                    span,
+                ));
+            }
+        }
+        #[cfg(feature = "integer128")]
+        TypeKind::I128 => {
+            let value = if radix == 10 {
+                clean.parse::<i128>()
+            } else {
+                i128::from_str_radix(&clean, radix)
+            };
+            if value.is_err() {
+                return Err(integer_out_of_bounds_error(raw, "i128", span));
+            }
+        }
+        TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::U64 => {
+            let value = if radix == 10 {
+                clean.parse::<u128>()
+            } else {
+                u128::from_str_radix(&clean, radix)
+            };
+            let value = value
+                .map_err(|_| integer_out_of_bounds_error(raw, kind_to_type_name(kind), span))?;
+
+            let in_range = match kind {
+                TypeKind::U8 => u8::try_from(value).is_ok(),
+                TypeKind::U16 => u16::try_from(value).is_ok(),
+                TypeKind::U32 => u32::try_from(value).is_ok(),
+                TypeKind::U64 => u64::try_from(value).is_ok(),
+                _ => true,
+            };
+            if !in_range {
+                return Err(integer_out_of_bounds_error(
+                    raw,
+                    kind_to_type_name(kind),
+                    span,
+                ));
+            }
+        }
+        #[cfg(feature = "integer128")]
+        TypeKind::U128 => {
+            let value = if radix == 10 {
+                clean.parse::<u128>()
+            } else {
+                u128::from_str_radix(&clean, radix)
+            };
+            if value.is_err() {
+                return Err(integer_out_of_bounds_error(raw, "u128", span));
+            }
+        }
+        _ => {} // Not an integer type
+    }
+    Ok(())
+}
+
+/// Parse an integer string to determine the radix and clean value.
+fn parse_integer_prefix(raw: &str, is_negative: bool) -> (&str, u32) {
+    let s = if is_negative && raw.starts_with('-') {
+        &raw[1..]
+    } else {
+        raw
+    };
+
+    if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        (rest, 16)
+    } else if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
+        (rest, 2)
+    } else if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+        (rest, 8)
+    } else if is_negative {
+        // Keep the negative sign for parsing
+        (raw, 10)
+    } else {
+        (s, 10)
+    }
+}
+
 /// Create a missing field error with a span.
 fn missing_field_error(field: &str, span: Span) -> ValidationError {
     ValidationError::with_span(
@@ -883,10 +1232,11 @@ fn validate_expr_internal<R: SchemaResolver>(
         | TypeKind::U32
         | TypeKind::U64
         | TypeKind::U128 => match expr {
-            Expr::Number(_) => Ok(()),
+            Expr::Number(n) => validate_integer_expr(n, kind),
             _ => Err(expr_type_mismatch("integer", expr)),
         },
         TypeKind::F32 | TypeKind::F64 => match expr {
+            // For floats, we accept both floats and integers (integers can be promoted)
             Expr::Number(_) => Ok(()),
             _ => Err(expr_type_mismatch("float", expr)),
         },
@@ -1441,12 +1791,18 @@ fn validate_expr_collect_internal<R: SchemaResolver>(
         | TypeKind::U16
         | TypeKind::U32
         | TypeKind::U64
-        | TypeKind::U128 => {
-            if !matches!(expr, Expr::Number(_)) {
+        | TypeKind::U128 => match expr {
+            Expr::Number(n) => {
+                if let Err(e) = validate_integer_expr(n, kind) {
+                    errors.push(e);
+                }
+            }
+            _ => {
                 errors.push(expr_type_mismatch("integer", expr));
             }
-        }
+        },
         TypeKind::F32 | TypeKind::F64 => {
+            // For floats, we accept both floats and integers (integers can be promoted)
             if !matches!(expr, Expr::Number(_)) {
                 errors.push(expr_type_mismatch("float", expr));
             }
@@ -2089,6 +2445,285 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("field 'items'"), "Error: {msg}");
         assert!(msg.contains("element 1"), "Error: {msg}");
+    }
+
+    // =========================================================================
+    // Numeric Validation Tests
+    // =========================================================================
+
+    mod numeric_validation {
+        use super::*;
+        use crate::{
+            ast::parse_document,
+            value::{F32, F64},
+        };
+
+        // Value-based tests
+
+        #[test]
+        fn test_float_rejected_for_integer_type() {
+            // Float values should be rejected for integer types
+            let value = Value::Number(Number::F64(F64::new(2.5)));
+            let result = validate_type(&value, &TypeKind::I32);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(msg.contains("i32") && msg.contains("float"), "Error: {msg}");
+        }
+
+        #[test]
+        fn test_negative_rejected_for_unsigned_type() {
+            // Negative values should be rejected for unsigned types
+            let value = Value::Number(Number::I32(-5));
+            let result = validate_type(&value, &TypeKind::U8);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("u8") && msg.contains("negative"),
+                "Error: {msg}"
+            );
+        }
+
+        #[test]
+        fn test_out_of_range_rejected_unsigned() {
+            // 300 is out of range for U8 (max 255)
+            let value = Value::Number(Number::U16(300));
+            let result = validate_type(&value, &TypeKind::U8);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("u8") && msg.contains("out of bounds"),
+                "Error: {msg}"
+            );
+        }
+
+        #[test]
+        fn test_out_of_range_rejected_signed() {
+            // -200 is out of range for I8 (min -128)
+            let value = Value::Number(Number::I16(-200));
+            let result = validate_type(&value, &TypeKind::I8);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("i8") && msg.contains("out of bounds"),
+                "Error: {msg}"
+            );
+        }
+
+        #[test]
+        fn test_edge_case_valid_u8() {
+            // 255 is the max valid value for U8
+            let value = Value::Number(Number::U8(255));
+            let result = validate_type(&value, &TypeKind::U8);
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_edge_case_valid_i8() {
+            // -128 is the min valid value for I8
+            let value = Value::Number(Number::I8(-128));
+            let result = validate_type(&value, &TypeKind::I8);
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_integer_accepted_for_float() {
+            // Integer values should be accepted for float types
+            let value = Value::Number(Number::I32(42));
+            assert!(validate_type(&value, &TypeKind::F32).is_ok());
+            assert!(validate_type(&value, &TypeKind::F64).is_ok());
+        }
+
+        #[test]
+        fn test_float_f32_accepted_for_f32() {
+            let value = Value::Number(Number::F32(F32::new(2.5)));
+            assert!(validate_type(&value, &TypeKind::F32).is_ok());
+        }
+
+        // AST-based tests
+
+        #[test]
+        fn test_ast_float_rejected_for_integer() {
+            let source = "(value: 2.5)";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::I32)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let msg = v.to_string();
+                assert!(msg.contains("i32") && msg.contains("float"), "Error: {msg}");
+                // Span should point to the float value
+                let span = v.span();
+                assert!(!span.is_synthetic());
+                assert_eq!(&source[span.start_offset..span.end_offset], "2.5");
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_negative_rejected_for_unsigned() {
+            let source = "(value: -5)";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::U8)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let msg = v.to_string();
+                assert!(
+                    msg.contains("u8") && msg.contains("negative"),
+                    "Error: {msg}"
+                );
+                // Span should point to the negative value
+                let span = v.span();
+                assert!(!span.is_synthetic());
+                assert_eq!(&source[span.start_offset..span.end_offset], "-5");
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_out_of_range_unsigned() {
+            let source = "(value: 300)";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::U8)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let msg = v.to_string();
+                assert!(
+                    msg.contains("u8") && msg.contains("out of bounds"),
+                    "Error: {msg}"
+                );
+                // Span should point to the value
+                let span = v.span();
+                assert!(!span.is_synthetic());
+                assert_eq!(&source[span.start_offset..span.end_offset], "300");
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_out_of_range_signed() {
+            let source = "(value: -200)";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::I8)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let msg = v.to_string();
+                assert!(
+                    msg.contains("i8") && msg.contains("out of bounds"),
+                    "Error: {msg}"
+                );
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_hex_out_of_range() {
+            let source = "(value: 0x100)"; // 256, out of range for U8
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::U8)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let msg = v.to_string();
+                assert!(
+                    msg.contains("u8") && msg.contains("out of bounds"),
+                    "Error: {msg}"
+                );
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_hex_valid() {
+            let source = "(value: 0xFF)"; // 255, valid for U8
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::U8)],
+            });
+
+            let result = validate_expr(doc.value.as_ref().unwrap(), &schema);
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_ast_binary_out_of_range() {
+            let source = "(value: 0b100000000)"; // 256, out of range for U8
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::U8)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let msg = v.to_string();
+                assert!(
+                    msg.contains("u8") && msg.contains("out of bounds"),
+                    "Error: {msg}"
+                );
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_ast_special_float_rejected_for_integer() {
+            let source = "(value: inf)";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![Field::new("value", TypeKind::I32)],
+            });
+
+            let err = validate_expr(doc.value.as_ref().unwrap(), &schema).unwrap_err();
+
+            if let crate::schema::SchemaError::Validation(v) = &err {
+                let msg = v.to_string();
+                assert!(msg.contains("i32") && msg.contains("float"), "Error: {msg}");
+            } else {
+                panic!("Expected validation error");
+            }
+        }
+
+        #[test]
+        fn test_collect_all_multiple_numeric_errors() {
+            let source = "(a: 2.5, b: -5, c: 300)";
+            let doc = parse_document(source).unwrap();
+            let schema = Schema::new(TypeKind::Struct {
+                fields: vec![
+                    Field::new("a", TypeKind::I32),
+                    Field::new("b", TypeKind::U8),
+                    Field::new("c", TypeKind::U8),
+                ],
+            });
+
+            let errors =
+                validate_expr_collect_all(doc.value.as_ref().unwrap(), &schema, &AcceptAllResolver);
+
+            // Should collect all 3 errors
+            assert_eq!(errors.len(), 3, "Expected 3 errors, got: {errors:?}");
+        }
     }
 
     // =========================================================================
