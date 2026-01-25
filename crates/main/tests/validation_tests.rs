@@ -12,11 +12,11 @@
 use std::collections::HashMap;
 
 use ron2::{
-    Value,
+    PathSegment, Value,
     schema::{
-        Field, PathSegment, Schema, SchemaError, SchemaResolver, TypeKind, ValidationError,
-        ValidationErrorKind, Variant, validate, validate_type, validate_type_with_resolver,
-        validate_with_resolver,
+        Field, Schema, SchemaError, SchemaResolver, TypeKind, ValidationError, ValidationErrorKind,
+        Variant, validate, validate_with_resolver,
+        validation::{validate_type, validate_type_with_resolver},
     },
 };
 

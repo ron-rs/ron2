@@ -39,9 +39,11 @@ use std::collections::{HashMap, HashSet};
 #[cfg(feature = "derive")]
 use std::path::{Path, PathBuf};
 
-use crate::schema::{Schema, SchemaEntry, TypeKind};
 #[cfg(feature = "derive")]
-use crate::schema::{SchemaError, StorageError};
+use crate::schema::SchemaError;
+#[cfg(feature = "derive")]
+use crate::schema::error::StorageError;
+use crate::schema::{Schema, TypeKind, collect::SchemaEntry};
 
 /// Core trait for types that can be represented in the RON schema system.
 ///

@@ -8,7 +8,7 @@ use std::{
     sync::OnceLock,
 };
 
-use ron2::schema::{Field, Schema, TypeKind, Variant, write_schema};
+use ron2::schema::{Field, Schema, SchemaError, TypeKind, Variant, write_schema};
 use tower_lsp::lsp_types::{Position, Url};
 
 // Import from ron-lsp (need to make these pub in lib.rs or use a test helper)
@@ -29,7 +29,7 @@ fn showcase_schemas_dir() -> PathBuf {
         .clone()
 }
 
-fn write_showcase_schemas(dir: &Path) -> ron2::schema::Result<()> {
+fn write_showcase_schemas(dir: &Path) -> Result<(), SchemaError> {
     let game_config = Schema::with_doc(
         "Main game configuration.",
         TypeKind::Struct {

@@ -12,8 +12,8 @@
 use std::{env, ffi::OsStr, fs, path::PathBuf};
 
 use ron2::schema::{
-    Field, SCHEMA_DIR_ENV, Schema, TypeKind, find_schema_in, read_schema, resolve_schema_dir,
-    write_schema,
+    Field, SCHEMA_DIR_ENV, Schema, TypeKind, find_schema_in, read_schema,
+    storage::resolve_schema_dir, write_schema,
 };
 use serial_test::serial;
 

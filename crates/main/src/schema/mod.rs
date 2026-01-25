@@ -6,22 +6,35 @@
 //! - Storage utilities for reading/writing schema files
 //! - Validation of RON values against schemas
 //!
-//! # Serialization and Deserialization
+//! # Quick Start
 //!
-//! The [`ToRon`](crate::ToRon) and [`FromRon`](crate::FromRon) traits provide
-//! serde-independent serialization and deserialization for RON format:
+//! Most users only need these imports:
 //!
 //! ```rust
-//! use ron2::{ToRon, FromRon};
+//! use ron2::schema::{Schema, TypeKind, Field, RonSchema};
+//! ```
 //!
-//! // Serialize (uses compact format without spaces by default)
-//! let values = vec![1, 2, 3];
-//! let ron_string = values.to_ron().unwrap();
-//! assert_eq!(ron_string, "[1,2,3]");
+//! # API Tiers
 //!
-//! // Deserialize
-//! let parsed: Vec<i32> = Vec::from_ron("[1, 2, 3]").unwrap();
-//! assert_eq!(parsed, vec![1, 2, 3]);
+//! This module provides a **minimal public API** at the root level. Advanced
+//! functionality is available through submodules:
+//!
+//! - **Root level**: Core types, traits, and common operations
+//! - **Submodules**: Advanced validation functions, storage utilities, error details
+//!
+//! ## Submodule Access
+//!
+//! For advanced use cases, access the submodules directly:
+//!
+//! ```rust,ignore
+//! // Advanced validation functions
+//! use ron2::schema::validation::{validate_type, validate_with_resolver};
+//!
+//! // Storage internals
+//! use ron2::schema::storage::{type_path_to_file_path, resolve_schema_dir};
+//!
+//! // Schema collection internals
+//! use ron2::schema::collect::{SchemaCatalog, SchemaEntry, collect_schemas};
 //! ```
 //!
 //! # Trait-Based Schema System
@@ -32,13 +45,6 @@
 //! - [`RonList`] - Marker trait for list/sequence-like types
 //! - [`RonMap`] - Marker trait for map/dictionary-like types
 //! - [`RonOptional`] - Marker trait for optional/nullable types
-//!
-//! ## `TypeRef` Canonicalization
-//!
-//! `RonSchema` derives emit `TypeRef` paths in a canonical form for consistent
-//! schema discovery and linking:
-//! - Generic parameters remain unqualified (e.g., `T`).
-//! - Standard collection types are normalized to short names (e.g., `Vec`, `HashMap`).
 //!
 //! ## Implementing Custom Types
 //!
@@ -81,6 +87,7 @@
 //! println!("{}", ron_str);
 //! ```
 
+// Submodules - public for advanced access
 pub mod collect;
 pub mod error;
 pub mod storage;
@@ -88,24 +95,27 @@ pub mod traits;
 pub mod types;
 pub mod validation;
 
-// Re-export types (always available)
-// Re-export functions that require the derive feature
+// =============================================================================
+// Core Types
+// =============================================================================
+
+// =============================================================================
+// Storage (derive feature only)
+// =============================================================================
 #[cfg(feature = "derive")]
 pub use collect::write_schemas;
-pub use collect::{SchemaCatalog, SchemaEntry, collect_schemas};
-pub use error::{
-    PathSegment, Position, Result, SchemaError, Span, StorageError, ValidationError,
-    ValidationErrorKind, ValidationResult,
-};
-pub use storage::{SCHEMA_DIR_ENV, resolve_schema_dir, type_path_to_file_path};
+// =============================================================================
+// Errors
+// =============================================================================
+pub use error::{SchemaError, ValidationError, ValidationErrorKind};
 #[cfg(feature = "derive")]
-pub use storage::{find_schema, find_schema_in, read_schema, write_schema};
+pub use storage::{SCHEMA_DIR_ENV, find_schema, find_schema_in, read_schema, write_schema};
+// =============================================================================
+// Traits
+// =============================================================================
 pub use traits::{RonList, RonMap, RonOptional, RonSchema};
 pub use types::{Field, Schema, TypeKind, Variant, VariantKind};
-#[cfg(feature = "derive")]
-pub use validation::StorageResolver;
-pub use validation::{
-    AcceptAllResolver, SchemaResolver, validate, validate_expr, validate_expr_collect_all,
-    validate_expr_type, validate_expr_type_with_resolver, validate_expr_with_resolver,
-    validate_type, validate_type_with_resolver, validate_with_resolver,
-};
+// =============================================================================
+// Validation
+// =============================================================================
+pub use validation::{SchemaResolver, validate, validate_expr_collect_all, validate_with_resolver};

@@ -5,8 +5,8 @@
 use ron2::{
     RonSchema,
     schema::{
-        RonSchema as RonSchemaTrait, TypeKind, collect_schemas, read_schema,
-        type_path_to_file_path, write_schemas,
+        RonSchema as RonSchemaTrait, TypeKind, collect::collect_schemas, read_schema,
+        storage::type_path_to_file_path, write_schemas,
     },
 };
 

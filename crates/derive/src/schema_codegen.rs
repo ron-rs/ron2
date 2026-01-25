@@ -67,14 +67,14 @@ pub fn impl_ron_schema(
                 Some(concat!(module_path!(), "::", #type_name))
             }
 
-            fn child_schemas() -> &'static [&'static ::ron2::schema::SchemaEntry] {
+            fn child_schemas() -> &'static [&'static ::ron2::schema::collect::SchemaEntry] {
                 #child_schemas_tokens
             }
         }
 
         impl #impl_generics #name #ty_generics #where_clause {
             #[doc(hidden)]
-            pub const __RON_SCHEMA_ENTRY: ::ron2::schema::SchemaEntry = ::ron2::schema::SchemaEntry {
+            pub const __RON_SCHEMA_ENTRY: ::ron2::schema::collect::SchemaEntry = ::ron2::schema::collect::SchemaEntry {
                 type_path: concat!(module_path!(), "::", #type_name),
                 schema: <Self as ::ron2::schema::RonSchema>::schema,
                 children: <Self as ::ron2::schema::RonSchema>::child_schemas,

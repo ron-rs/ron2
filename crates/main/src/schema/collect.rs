@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "derive")]
 use crate::schema::write_schema;
-use crate::schema::{RonSchema, Schema, SchemaError, StorageError};
+use crate::schema::{RonSchema, Schema, SchemaError, error::StorageError};
 
 /// A schema entry for recursive collection.
 #[derive(Clone, Copy, Debug)]

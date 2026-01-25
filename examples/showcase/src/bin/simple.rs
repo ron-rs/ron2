@@ -13,7 +13,7 @@ use example_showcase::GameConfig;
 use ron2::{
     FromRon, ToRon,
     fmt::FormatConfig,
-    schema::{RonSchema, Schema, SchemaResolver, collect_schemas, validate_with_resolver},
+    schema::{RonSchema, Schema, SchemaResolver, collect::collect_schemas, validate_with_resolver},
 };
 
 struct CatalogResolver {
