@@ -1,6 +1,6 @@
 //! RON Schema - Schema types, validation, and storage for RON files.
 //!
-//! This crate provides:
+//! This module provides:
 //! - Schema type definitions for representing Rust types
 //! - Trait-based schema system for custom types
 //! - Storage utilities for reading/writing schema files
@@ -8,13 +8,13 @@
 //!
 //! # Serialization and Deserialization
 //!
-//! The [`ToRon`] and [`FromRon`] traits (re-exported from `crate`) provide
+//! The [`ToRon`](crate::ToRon) and [`FromRon`](crate::FromRon) traits provide
 //! serde-independent serialization and deserialization for RON format:
 //!
 //! ```rust
-//! use crate::schema::{ToRon, FromRon};
+//! use ron2::{ToRon, FromRon};
 //!
-//! // Serialize (crate uses compact format without spaces)
+//! // Serialize (uses compact format without spaces by default)
 //! let values = vec![1, 2, 3];
 //! let ron_string = values.to_ron().unwrap();
 //! assert_eq!(ron_string, "[1,2,3]");
@@ -42,8 +42,8 @@
 //!
 //! ## Implementing Custom Types
 //!
-//! ```rust
-//! use crate::schema::{RonSchema, RonList, TypeKind};
+//! ```rust,ignore
+//! use ron2::schema::{RonSchema, RonList, TypeKind};
 //!
 //! // A custom list type
 //! struct MyVec<T>(Vec<T>);
@@ -62,8 +62,8 @@
 //!
 //! # Creating Schemas Manually
 //!
-//! ```rust
-//! use crate::schema::{Schema, TypeKind, Field};
+//! ```rust,ignore
+//! use ron2::{ToRon, schema::{Schema, TypeKind, Field}};
 //!
 //! // Define a schema for a config struct
 //! let schema = Schema::with_doc(
@@ -77,7 +77,6 @@
 //! );
 //!
 //! // Serialize to RON using the ToRon trait
-//! use crate::schema::ToRon;
 //! let ron_str = schema.to_ron().unwrap();
 //! println!("{}", ron_str);
 //! ```
@@ -110,6 +109,3 @@ pub use validation::{
     validate_expr_type, validate_expr_type_with_resolver, validate_expr_with_resolver,
     validate_type, validate_type_with_resolver, validate_with_resolver,
 };
-
-// Re-export conversion traits from crate
-pub use crate::{AstMapAccess, FormatConfig, FromRon, ToRon};

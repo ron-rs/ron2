@@ -9,9 +9,12 @@
 
 use std::{env, ffi::OsStr, fs};
 
-use ron2::schema::{
-    Field, FromRon, SCHEMA_DIR_ENV, Schema, TypeKind, Variant, find_schema_in, read_schema,
-    validate, write_schema,
+use ron2::{
+    FromRon,
+    schema::{
+        Field, SCHEMA_DIR_ENV, Schema, TypeKind, Variant, find_schema_in, read_schema, validate,
+        write_schema,
+    },
 };
 use serial_test::serial;
 

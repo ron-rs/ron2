@@ -82,6 +82,69 @@ pub trait ToRon {
     fn to_ron_value(&self) -> Result<Value> {
         expr_to_value(&self.to_ast()?)
     }
+
+    /// Convert this value to a typed RON document.
+    ///
+    /// If `include_type_attribute` is true in the config, the document will
+    /// include a `#![type = "..."]` attribute using [`core::any::type_name`].
+    fn to_typed_document(&self, config: &SerializeConfig) -> Result<Document<'static>>
+    where
+        Self: Sized,
+    {
+        let mut doc = Document {
+            source: Cow::Borrowed(""),
+            leading: Trivia::empty(),
+            attributes: Vec::new(),
+            pre_value: Trivia::empty(),
+            value: Some(self.to_ast()?),
+            trailing: Trivia::empty(),
+        };
+
+        if config.include_type_attribute {
+            let type_path = core::any::type_name::<Self>();
+            doc.attributes.push(Attribute::synthetic_type(type_path));
+        }
+
+        Ok(doc)
+    }
+
+    /// Convert this value to a typed RON string with default settings.
+    ///
+    /// This includes the `#![type = "..."]` attribute.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use ron2::ToRon;
+    ///
+    /// #[derive(Ron)]
+    /// struct Config {
+    ///     port: u16,
+    /// }
+    ///
+    /// let config = Config { port: 8080 };
+    ///
+    /// // Serialize with type attribute
+    /// let ron = config.to_typed_ron()?;
+    /// assert!(ron.starts_with("#![type = \""));
+    /// ```
+    fn to_typed_ron(&self) -> Result<String>
+    where
+        Self: Sized,
+    {
+        let config = SerializeConfig::default();
+        let doc = self.to_typed_document(&config)?;
+        Ok(format_document(&doc, &config.format))
+    }
+
+    /// Convert this value to a typed RON string with custom settings.
+    fn to_typed_ron_with(&self, config: &SerializeConfig) -> Result<String>
+    where
+        Self: Sized,
+    {
+        let doc = self.to_typed_document(config)?;
+        Ok(format_document(&doc, &config.format))
+    }
 }
 
 /// Trait for types that can be constructed from RON.
@@ -256,7 +319,7 @@ impl FromRon for Value {
 }
 
 // =============================================================================
-// SerializeConfig and ToRonDocument
+// SerializeConfig
 // =============================================================================
 
 use alloc::borrow::Cow;
@@ -271,7 +334,7 @@ use crate::ast::{Attribute, Document, Trivia, format_document};
 /// # Example
 ///
 /// ```ignore
-/// use ron2::{ToRonDocument, SerializeConfig};
+/// use ron2::{ToRon, SerializeConfig};
 ///
 /// let config = Config { port: 8080 };
 ///
@@ -332,73 +395,6 @@ impl SerializeConfig {
         self
     }
 }
-
-/// Extension trait for serializing types with `#![type = "..."]` attribute.
-///
-/// This trait is automatically implemented for any type that implements [`ToRon`].
-/// It provides methods to serialize values as complete RON documents with type
-/// attribution for LSP support.
-///
-/// The type attribute uses [`core::any::type_name`] to get the full type path,
-/// which works for all types without requiring additional derive macros.
-///
-/// # Example
-///
-/// ```ignore
-/// use ron2::{ToRonDocument, Ron};
-///
-/// #[derive(Ron)]
-/// struct Config {
-///     port: u16,
-/// }
-///
-/// let config = Config { port: 8080 };
-///
-/// // Serialize with type attribute
-/// let ron = config.to_typed_ron()?;
-/// assert!(ron.starts_with("#![type = \""));
-/// ```
-pub trait ToRonDocument: ToRon {
-    /// Convert this value to a typed RON document.
-    ///
-    /// If `include_type_attribute` is true in the config, the document will
-    /// include a `#![type = "..."]` attribute using [`core::any::type_name`].
-    fn to_typed_document(&self, config: &SerializeConfig) -> Result<Document<'static>> {
-        let mut doc = Document {
-            source: Cow::Borrowed(""),
-            leading: Trivia::empty(),
-            attributes: Vec::new(),
-            pre_value: Trivia::empty(),
-            value: Some(self.to_ast()?),
-            trailing: Trivia::empty(),
-        };
-
-        if config.include_type_attribute {
-            let type_path = core::any::type_name::<Self>();
-            doc.attributes.push(Attribute::synthetic_type(type_path));
-        }
-
-        Ok(doc)
-    }
-
-    /// Convert this value to a typed RON string with default settings.
-    ///
-    /// This includes the `#![type = "..."]` attribute.
-    fn to_typed_ron(&self) -> Result<String> {
-        let config = SerializeConfig::default();
-        let doc = self.to_typed_document(&config)?;
-        Ok(format_document(&doc, &config.format))
-    }
-
-    /// Convert this value to a typed RON string with custom settings.
-    fn to_typed_ron_with(&self, config: &SerializeConfig) -> Result<String> {
-        let doc = self.to_typed_document(config)?;
-        Ok(format_document(&doc, &config.format))
-    }
-}
-
-// Blanket implementation for all types implementing ToRon
-impl<T: ToRon> ToRonDocument for T {}
 
 #[cfg(test)]
 mod tests {
@@ -712,15 +708,17 @@ mod tests {
 
     #[test]
     fn test_to_typed_ron_includes_type_attribute() {
-        use super::ToRonDocument;
+        use super::ToRon;
 
         // All types now include type attribute using std::any::type_name
         let result = 42i32.to_typed_ron().unwrap();
         assert!(result.contains("#![type = \"i32\"]"));
         assert!(result.contains("42"));
 
-        let result = "hello".to_typed_ron().unwrap();
-        assert!(result.contains("#![type = \"&str\"]"));
+        let hello = "hello".to_string();
+        let result = hello.to_typed_ron().unwrap();
+        assert!(result.contains("#![type"));
+        assert!(result.contains("String"));
         assert!(result.contains("hello"));
 
         let result = vec![1, 2, 3].to_typed_ron().unwrap();
@@ -730,7 +728,7 @@ mod tests {
 
     #[test]
     fn test_to_typed_document_structure() {
-        use super::ToRonDocument;
+        use super::ToRon;
 
         let config = super::SerializeConfig::default();
         let doc = 42i32.to_typed_document(&config).unwrap();
@@ -742,7 +740,7 @@ mod tests {
 
     #[test]
     fn test_to_typed_ron_with_config() {
-        use super::ToRonDocument;
+        use super::ToRon;
 
         let config =
             super::SerializeConfig::without_type_attribute().format(FormatConfig::minimal());

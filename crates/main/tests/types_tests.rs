@@ -9,8 +9,9 @@
 #![cfg(feature = "derive")]
 
 use ron2::{
+    FromRon, ToRon,
     ast::FormatConfig,
-    schema::{Field, FromRon, Schema, ToRon, TypeKind, Variant, VariantKind},
+    schema::{Field, Schema, TypeKind, Variant, VariantKind},
 };
 
 // ============================================================================

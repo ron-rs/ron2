@@ -42,18 +42,27 @@ mod unescape;
 
 use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
-pub use convert::{
-    expr_into_value, expr_to_value, into_value, synthetic_bool, synthetic_char, synthetic_f32,
-    synthetic_f64, synthetic_integer, synthetic_map, synthetic_named_tuple, synthetic_named_unit,
-    synthetic_option, synthetic_seq, synthetic_string, synthetic_struct, synthetic_tuple,
-    synthetic_unit, to_value, value_to_expr,
+// Re-exports for internal workspace crates (LSP, CLI) - not part of public API
+#[doc(hidden)]
+pub use convert::to_value;
+// Public API exports
+pub use convert::{expr_to_value, value_to_expr};
+// Internal re-exports (crate-visible for implementation details)
+pub(crate) use convert::{
+    into_value, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
+    synthetic_map, synthetic_option, synthetic_seq, synthetic_string, synthetic_tuple,
+    synthetic_unit,
 };
+// Re-exports required by derive macros (implementation detail, not part of public API)
+#[doc(hidden)]
+pub use convert::{synthetic_named_tuple, synthetic_named_unit, synthetic_struct};
 pub use fmt::{
-    CommentMode, CompactTypes, Compaction, FormatConfig, ItemTrivia, RonFormatter, SerializeRon,
-    Spacing, format_document, format_expr, to_ron_string, to_ron_string_with,
+    CommentMode, CompactTypes, Compaction, FormatConfig, Spacing, format_document, format_expr,
 };
+pub(crate) use fmt::{ItemTrivia, RonFormatter, SerializeRon, to_ron_string};
 pub use parse::{parse_document, parse_document_lossy};
 pub use ser::{serialize_document, serialize_document_to};
+#[doc(hidden)]
 pub use unescape::decode_string;
 
 use crate::error::{Error, Span};

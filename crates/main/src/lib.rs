@@ -71,16 +71,13 @@ pub(crate) mod token;
 mod util;
 pub mod value;
 
-// Re-export formatting config types from ast::fmt
 // Re-export derive macros when the derive feature is enabled
 #[cfg(feature = "derive")]
 pub use ron2_derive::{FromRon, Ron, RonSchema, ToRon};
 
 pub use crate::{
-    ast::{CommentMode, CompactTypes, Compaction, FormatConfig, Spacing},
-    convert::{
-        AstMapAccess, FromRon, FromRonFields, SerializeConfig, Spanned, ToRon, ToRonDocument,
-    },
+    ast::FormatConfig,
+    convert::{FromRon, SerializeConfig, Spanned, ToRon},
     error::{Error, ErrorKind, PathSegment, Position, Result, Span},
     value::{Map, NamedContent, Number, StructFields, Value},
 };
@@ -134,7 +131,7 @@ pub fn from_str<T: FromRon>(s: &str) -> Result<T> {
 /// assert!(ron.contains("true"));
 /// # Ok::<(), ron2::Error>(())
 /// ```
-pub fn to_string<T: ToRonDocument>(value: &T) -> Result<alloc::string::String> {
+pub fn to_string<T: ToRon>(value: &T) -> Result<alloc::string::String> {
     value.to_typed_ron()
 }
 
@@ -159,7 +156,7 @@ pub fn to_string<T: ToRonDocument>(value: &T) -> Result<alloc::string::String> {
 /// assert_eq!(ron.trim(), "true");
 /// # Ok::<(), ron2::Error>(())
 /// ```
-pub fn to_string_with<T: ToRonDocument>(
+pub fn to_string_with<T: ToRon>(
     value: &T,
     config: &SerializeConfig,
 ) -> Result<alloc::string::String> {

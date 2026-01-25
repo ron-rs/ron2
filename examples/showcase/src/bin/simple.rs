@@ -11,10 +11,9 @@ use std::{collections::BTreeMap, fs};
 
 use example_showcase::GameConfig;
 use ron2::{
+    FromRon, ToRon,
     ast::FormatConfig,
-    schema::{
-        FromRon, RonSchema, Schema, SchemaResolver, ToRon, collect_schemas, validate_with_resolver,
-    },
+    schema::{RonSchema, Schema, SchemaResolver, collect_schemas, validate_with_resolver},
 };
 
 struct CatalogResolver {

@@ -94,8 +94,8 @@ fn derive_from_ron_fields(
     }
 
     Ok(quote! {
-        impl #impl_generics ::ron2::FromRonFields for #name #ty_generics #where_clause {
-            fn from_fields(access: &mut ::ron2::AstMapAccess<'_>) -> ::ron2::error::Result<Self> {
+        impl #impl_generics ::ron2::convert::FromRonFields for #name #ty_generics #where_clause {
+            fn from_fields(access: &mut ::ron2::convert::AstMapAccess<'_>) -> ::ron2::error::Result<Self> {
                 #(#field_extractions)*
                 Ok(#name { #(#field_names),* })
             }
@@ -239,7 +239,7 @@ fn derive_named_struct_de(
             #unit_case
             // Anonymous struct: (field: val, ...)
             ::ron2::ast::Expr::AnonStruct(s) => {
-                let mut access = ::ron2::AstMapAccess::from_anon(s, Some(stringify!(#name)))?;
+                let mut access = ::ron2::convert::AstMapAccess::from_anon(s, Some(stringify!(#name)))?;
                 #(#field_extractions)*
                 #deny_unknown
                 Ok(#name { #(#field_names),* })
@@ -260,7 +260,7 @@ fn derive_named_struct_de(
                 }
                 match &s.body {
                     Some(::ron2::ast::StructBody::Fields(fields)) => {
-                        let mut access = ::ron2::AstMapAccess::from_fields(
+                        let mut access = ::ron2::convert::AstMapAccess::from_fields(
                             fields,
                             Some(s.name.name.as_ref()),
                             s.span.clone(),
@@ -671,7 +671,7 @@ fn derive_enum_de(
                     #variant_name => {
                         match &s.body {
                             Some(::ron2::ast::StructBody::Fields(fields)) => {
-                                let mut access = ::ron2::AstMapAccess::from_fields(
+                                let mut access = ::ron2::convert::AstMapAccess::from_fields(
                                     fields,
                                     Some(#variant_name),
                                     s.span.clone(),
