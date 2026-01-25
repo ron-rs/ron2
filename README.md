@@ -9,7 +9,7 @@ A RON parser with full AST access, schema-driven LSP completions, and formatting
 
 ```toml
 [dependencies]
-ron2 = "0.1"
+ron2 = "0.3"
 ```
 
 ```rust

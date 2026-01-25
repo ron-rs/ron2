@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "example-error-report"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ariadne",
  "ron2",
@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "ron2"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ahash",
  "bitflags 2.10.0",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "ron2-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "ron2-derive"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "proc-macro2",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "ron2-doc"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ahash",
  "anyhow",
@@ -1089,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "ron2-lsp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ahash",
  "ron2",
