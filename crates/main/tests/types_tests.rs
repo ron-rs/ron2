@@ -10,7 +10,7 @@
 
 use ron2::{
     FromRon, ToRon,
-    ast::FormatConfig,
+    fmt::FormatConfig,
     schema::{Field, Schema, TypeKind, Variant, VariantKind},
 };
 

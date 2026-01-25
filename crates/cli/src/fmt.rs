@@ -9,7 +9,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::Args;
-use ron2::ast::{FormatConfig, format_document, parse_document};
+use ron2::{
+    ast::parse_document,
+    fmt::{FormatConfig, format_document},
+};
 
 /// Format RON files
 #[derive(Args, Debug)]

@@ -257,23 +257,6 @@ impl<'a> ItemTrivia<'a> {
         }
     }
 
-    /// Create trivia for key-value items (all positions).
-    #[inline]
-    #[must_use]
-    pub const fn kv(
-        leading: &'a Trivia<'a>,
-        pre_colon: &'a Trivia<'a>,
-        post_colon: &'a Trivia<'a>,
-        trailing: &'a Trivia<'a>,
-    ) -> Self {
-        Self {
-            leading: Some(leading),
-            pre_colon: Some(pre_colon),
-            post_colon: Some(post_colon),
-            trailing: Some(trailing),
-        }
-    }
-
     /// Check if any trivia position contains a line comment.
     #[inline]
     #[must_use]
@@ -365,7 +348,8 @@ impl SerializeRon for Expr<'_> {
 /// # Example
 ///
 /// ```
-/// use ron2::ast::{parse_document, format_document, FormatConfig};
+/// use ron2::fmt::{format_document, FormatConfig};
+/// use ron2::ast::parse_document;
 ///
 /// let source = "Config(x:1,y:2)";
 /// let doc = parse_document(source).unwrap();
@@ -389,7 +373,8 @@ pub fn format_document(doc: &Document<'_>, config: &FormatConfig) -> String {
 /// # Example
 ///
 /// ```
-/// use ron2::ast::{format_expr, FormatConfig, value_to_expr};
+/// use ron2::fmt::{format_expr, FormatConfig};
+/// use ron2::ast::value_to_expr;
 /// use ron2::Value;
 ///
 /// let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
@@ -432,7 +417,8 @@ pub fn to_ron_string<T: SerializeRon>(value: &T) -> String {
 /// # Example
 ///
 /// ```
-/// use ron2::ast::{to_ron_string_with, FormatConfig};
+/// use ron2::fmt::FormatConfig;
+/// use ron2::ast::to_ron_string_with;
 /// use ron2::Value;
 ///
 /// let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
@@ -1184,13 +1170,6 @@ impl<'a> RonFormatter<'a> {
     #[inline]
     pub fn write_char(&mut self, c: char) {
         self.output.push(c);
-    }
-
-    /// Write formatted data to the output (implements `core::fmt::Write`).
-    #[inline]
-    pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        use core::fmt::Write;
-        let _ = self.output.write_fmt(args);
     }
 
     // =========================================================================

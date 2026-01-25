@@ -2,7 +2,7 @@
 //!
 //! These tests cover boundary conditions, error cases, and unusual inputs.
 
-use ron2::{FormatConfig, Map, NamedContent, Number, ToRon, Value};
+use ron2::{Map, NamedContent, Number, ToRon, Value, fmt::FormatConfig};
 
 // =============================================================================
 // Number Boundaries

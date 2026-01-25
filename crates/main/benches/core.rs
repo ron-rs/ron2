@@ -8,7 +8,7 @@ mod common;
 use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use ron2::{__internal::Lexer, ToRon, ast::FormatConfig};
+use ron2::{__internal::Lexer, ToRon, fmt::FormatConfig};
 
 /// Benchmark AST parsing using `parse_document()`.
 fn bench_parse_ast(c: &mut Criterion) {
@@ -78,12 +78,12 @@ fn bench_format(c: &mut Criterion) {
     let input = common::large_config();
     let doc = ron2::ast::parse_document(&input).unwrap();
     let config = FormatConfig::default();
-    let output_size = ron2::ast::format_document(&doc, &config).len();
+    let output_size = ron2::fmt::format_document(&doc, &config).len();
 
     group.throughput(Throughput::Bytes(output_size as u64));
 
     group.bench_function("format", |b| {
-        b.iter(|| ron2::ast::format_document(&doc, &config));
+        b.iter(|| ron2::fmt::format_document(&doc, &config));
     });
 
     group.finish();
@@ -97,21 +97,21 @@ fn bench_comments(c: &mut Criterion) {
     // With comments
     let with_comments = common::with_comments();
     let doc_with = ron2::ast::parse_document(&with_comments).unwrap();
-    let output_size_with = ron2::ast::format_document(&doc_with, &config).len();
+    let output_size_with = ron2::fmt::format_document(&doc_with, &config).len();
     group.throughput(Throughput::Bytes(output_size_with as u64));
 
     group.bench_function("with", |b| {
-        b.iter(|| ron2::ast::format_document(&doc_with, &config));
+        b.iter(|| ron2::fmt::format_document(&doc_with, &config));
     });
 
     // Without comments (similar size input)
     let without_comments = common::without_comments();
     let doc_without = ron2::ast::parse_document(&without_comments).unwrap();
-    let output_size_without = ron2::ast::format_document(&doc_without, &config).len();
+    let output_size_without = ron2::fmt::format_document(&doc_without, &config).len();
     group.throughput(Throughput::Bytes(output_size_without as u64));
 
     group.bench_function("without", |b| {
-        b.iter(|| ron2::ast::format_document(&doc_without, &config));
+        b.iter(|| ron2::fmt::format_document(&doc_without, &config));
     });
 
     group.finish();

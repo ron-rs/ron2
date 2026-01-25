@@ -2,7 +2,7 @@
 //!
 //! These tests verify that parsing and serialization are consistent.
 
-use ron2::{FormatConfig, Map, NamedContent, Number, ToRon, Value};
+use ron2::{Map, NamedContent, Number, ToRon, Value, fmt::FormatConfig};
 
 /// Helper: parse, serialize, parse again, and verify values match.
 fn roundtrip(input: &str) -> Value {

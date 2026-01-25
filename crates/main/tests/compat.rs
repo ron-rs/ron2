@@ -5,7 +5,7 @@
 
 #![cfg(feature = "derive")]
 
-use ron2::{FromRon, ToRon, Value, ast::FormatConfig};
+use ron2::{FromRon, ToRon, Value, fmt::FormatConfig};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

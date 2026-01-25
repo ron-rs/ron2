@@ -65,6 +65,7 @@ pub mod ast;
 pub(crate) mod chars;
 pub mod convert;
 pub mod error;
+pub mod fmt;
 pub(crate) mod lexer;
 pub mod schema;
 pub(crate) mod token;
@@ -76,7 +77,6 @@ pub mod value;
 pub use ron2_derive::{FromRon, Ron, RonSchema, ToRon};
 
 pub use crate::{
-    ast::FormatConfig,
     convert::{FromRon, SerializeConfig, Spanned, ToRon},
     error::{Error, ErrorKind, PathSegment, Position, Result, Span},
     value::{Map, NamedContent, Number, StructFields, Value},
@@ -92,15 +92,15 @@ pub mod __internal {
 ///
 /// # Example
 /// ```
-/// use ron2::FormatConfig;
+/// use ron2::fmt::FormatConfig;
 ///
 /// let source = "(x:1,y:2)";
 /// let formatted = ron2::format(source, &FormatConfig::default())?;
 /// # Ok::<(), ron2::Error>(())
 /// ```
-pub fn format(source: &str, config: &FormatConfig) -> Result<alloc::string::String> {
+pub fn format(source: &str, config: &fmt::FormatConfig) -> Result<alloc::string::String> {
     let doc = ast::parse_document(source)?;
-    Ok(ast::format_document(&doc, config))
+    Ok(fmt::format_document(&doc, config))
 }
 
 /// Parse a RON string into a type that implements `FromRon`.

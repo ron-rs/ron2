@@ -34,8 +34,9 @@ pub use spanned::Spanned;
 
 use crate::{
     Value,
-    ast::{Expr, FormatConfig, expr_to_value, format_expr, parse_document, value_to_expr},
+    ast::{Expr, expr_to_value, format_expr, parse_document, value_to_expr},
     error::{Error, ErrorKind, Result},
+    fmt::FormatConfig,
 };
 
 /// Trait for types that can be converted to RON.
@@ -68,7 +69,7 @@ pub trait ToRon {
     /// # Example
     ///
     /// ```
-    /// use ron2::{ToRon, ast::FormatConfig};
+    /// use ron2::{ToRon, fmt::FormatConfig};
     ///
     /// let value = vec![1, 2, 3];
     /// let minimal = value.to_ron_with(&FormatConfig::minimal()).unwrap();
@@ -324,7 +325,10 @@ impl FromRon for Value {
 
 use alloc::borrow::Cow;
 
-use crate::ast::{Attribute, Document, Trivia, format_document};
+use crate::{
+    ast::{Attribute, Document, Trivia},
+    fmt::format_document,
+};
 
 /// Configuration for serializing typed RON documents.
 ///
@@ -401,7 +405,6 @@ mod tests {
     use alloc::{collections::BTreeMap, vec, vec::Vec};
 
     use super::*;
-    use crate::ast::FormatConfig;
 
     /// Helper to get minimal (compact) output
     fn minimal(v: &impl ToRon) -> String {

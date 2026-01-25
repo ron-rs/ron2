@@ -4,7 +4,7 @@
 
 use ron2::{
     FromRon, ToRon,
-    ast::FormatConfig,
+    fmt::FormatConfig,
     schema::{RonSchema, TypeKind, VariantKind},
 };
 use ron2_derive::{Ron, RonSchema};

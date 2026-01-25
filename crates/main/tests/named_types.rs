@@ -9,7 +9,7 @@
 //! - Struct fields use PARENTHESES: `Point(x: 1, y: 2)`
 //! - Curly braces are for MAPS only: `{ "key": value }`
 
-use ron2::{FormatConfig, NamedContent, Number, ToRon, Value};
+use ron2::{NamedContent, Number, ToRon, Value, fmt::FormatConfig};
 
 // =============================================================================
 // Unit Named Types - Edge Cases
