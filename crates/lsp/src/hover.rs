@@ -1,13 +1,16 @@
 //! Hover provider for the RON Language Server.
 //!
-//! Shows documentation from the schema when hovering over
-//! field names or enum variants.
+//! Shows schema documentation for the field name, enum variant or struct name
+//! under the cursor, resolved through the cursor's AST path.
 
 use ron2::schema::{Field, Schema, TypeKind, Variant, VariantKind};
 use tower_lsp::lsp_types::*;
 
 use crate::{
-    document::Document, lsp_utils::find_word_range_from_ast, schema_resolver::SchemaResolver,
+    cursor::{CursorContext, Ident},
+    document::Document,
+    schema_nav::{DynResolver, Resolved, Target, follow, resolve, struct_fields},
+    schema_resolver::SchemaResolver,
     schema_utils::VariantParts,
 };
 
@@ -17,196 +20,82 @@ pub fn provide_hover(
     position: Position,
     resolver: &SchemaResolver,
 ) -> Option<Hover> {
-    let word = doc.word_at_position(position.line, position.character)?;
     let schema = resolver.resolve_schema(doc)?;
-
-    // Try to find documentation for this word in the schema
-    let info = find_hover_info(word, &schema, resolver)?;
-
-    // Try to get a precise range from AST
-    let range = find_word_range_from_ast(doc, word);
+    let context = doc.context_at_position(position.line, position.character);
+    let (info, ident) = hover_info(&schema, context, resolver)?;
 
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value: info,
         }),
-        range,
+        range: Some(doc.span_to_range(&ident.span)),
     })
 }
 
-/// Find hover information for a word in the schema.
-fn find_hover_info(word: &str, schema: &Schema, resolver: &SchemaResolver) -> Option<String> {
-    // First check if the word matches the root type
-    if let Some(info) = hover_for_type_kind(word, &schema.kind, schema.doc.as_deref(), resolver) {
-        return Some(info);
-    }
-
-    // Search within the schema for matching fields or variants
-    search_in_type_kind(word, &schema.kind, resolver)
-}
-
-/// Generate hover info if the word matches something at this type level.
-fn hover_for_type_kind(
-    word: &str,
-    kind: &TypeKind,
-    doc: Option<&str>,
-    resolver: &SchemaResolver,
-) -> Option<String> {
-    // Resolve TypeRef if present
-    if let TypeKind::TypeRef(type_path) = kind {
-        if let Some(ref_schema) = resolver.load_schema_by_type(type_path) {
-            return hover_for_type_kind(
-                word,
-                &ref_schema.kind,
-                ref_schema.doc.as_deref(),
-                resolver,
-            );
+/// Hover text for the identifier in `context`, and that identifier.
+fn hover_info(
+    schema: &Schema,
+    context: CursorContext,
+    resolver: &DynResolver,
+) -> Option<(String, Ident)> {
+    let root = Target::root(schema);
+    match context {
+        CursorContext::FieldName {
+            path,
+            ident: Some(ident),
+            ..
+        } => {
+            let target = follow(root, &path, resolver)?;
+            let field = struct_fields(&target, resolver)?
+                .into_iter()
+                .find(|f| f.name == ident.name)?;
+            Some((format_field_hover(&field), ident))
         }
-        // TypeRef couldn't be resolved - check if word matches the type name
-        let type_name = type_path.rsplit("::").next().unwrap_or(type_path);
-        if type_name == word {
-            return doc.map(|d| format!("**{}**\n\n{}", type_name, d));
-        }
-        return None;
-    }
-
-    // Check if word matches a struct field
-    if let Some(fields) = kind.struct_fields() {
-        for field in fields {
-            if field.name == word {
-                return Some(format_field_hover(field));
-            }
-        }
-        return None;
-    }
-
-    // Check if word matches an enum variant
-    if let Some(variants) = kind.enum_variants() {
-        for variant in variants {
-            if variant.name == word {
-                return Some(format_variant_hover(variant));
-            }
-        }
-        return None;
-    }
-
-    None
-}
-
-/// Recursively search for hover info in nested types.
-fn search_in_type_kind(word: &str, kind: &TypeKind, resolver: &SchemaResolver) -> Option<String> {
-    // Resolve TypeRef if present
-    if let TypeKind::TypeRef(type_path) = kind {
-        if let Some(ref_schema) = resolver.load_schema_by_type(type_path) {
-            return search_in_type_kind(word, &ref_schema.kind, resolver);
-        }
-        return None;
-    }
-
-    // Check struct fields
-    if let Some(fields) = kind.struct_fields() {
-        for field in fields {
-            if field.name == word {
-                return Some(format_field_hover(field));
-            }
-            if let Some(info) = search_in_type_kind(word, &field.ty, resolver) {
-                return Some(info);
-            }
-        }
-        return None;
-    }
-
-    // Check enum variants
-    if let Some(variants) = kind.enum_variants() {
-        for variant in variants {
-            if variant.name == word {
-                return Some(format_variant_hover(variant));
-            }
-            if let Some(info) = search_in_variant(word, variant, resolver) {
-                return Some(info);
-            }
-        }
-        return None;
-    }
-
-    // Recurse into container types
-    if let Some(inner) = kind.inner_type() {
-        return search_in_type_kind(word, inner, resolver);
-    }
-
-    if let Some((key, value)) = kind.map_types() {
-        return search_in_type_kind(word, key, resolver)
-            .or_else(|| search_in_type_kind(word, value, resolver));
-    }
-
-    if let Some(types) = kind.tuple_types() {
-        for ty in types {
-            if let Some(info) = search_in_type_kind(word, ty, resolver) {
-                return Some(info);
-            }
-        }
-    }
-
-    None
-}
-
-/// Search for hover info within an enum variant.
-fn search_in_variant(word: &str, variant: &Variant, resolver: &SchemaResolver) -> Option<String> {
-    match &variant.kind {
-        VariantKind::Unit => None,
-        VariantKind::Tuple(types) => {
-            for ty in types {
-                if let Some(info) = search_in_type_kind(word, ty, resolver) {
-                    return Some(info);
+        CursorContext::Value {
+            path,
+            ident: Some(ident),
+        } => {
+            let Target::Type { kind, doc } = follow(root, &path, resolver)? else {
+                return None;
+            };
+            let Resolved { kind, doc } = resolve(&kind, doc, true, resolver)?;
+            let info = match kind {
+                TypeKind::Enum { variants } => {
+                    format_variant_hover(variants.iter().find(|v| v.name == ident.name)?)
                 }
-            }
-            None
+                TypeKind::Struct { .. } => match doc {
+                    Some(doc) => format!("**{}**\n\n{}", ident.name, doc),
+                    None => format!("**{}**", ident.name),
+                },
+                _ => return None,
+            };
+            Some((info, ident))
         }
-        VariantKind::Struct(fields) => {
-            for field in fields {
-                if field.name == word {
-                    return Some(format_field_hover(field));
-                }
-                if let Some(info) = search_in_type_kind(word, &field.ty, resolver) {
-                    return Some(info);
-                }
-            }
-            None
-        }
+        _ => None,
     }
 }
 
 /// Format hover information for a field.
 fn format_field_hover(field: &Field) -> String {
-    let mut parts = Vec::new();
-
-    // Field name and type
-    let type_str = field.ty.to_string();
     let optional = if field.optional { " (optional)" } else { "" };
-    parts.push(format!("**{}**: `{}`{}", field.name, type_str, optional));
-
-    // Documentation
-    if let Some(ref doc) = field.doc {
-        parts.push(String::new()); // Empty line
-        parts.push(doc.clone());
+    let mut out = format!("**{}**: `{}`{}", field.name, field.ty, optional);
+    if let Some(doc) = &field.doc {
+        out.push_str("\n\n");
+        out.push_str(doc);
     }
-
-    parts.join("\n")
+    out
 }
 
 /// Format hover information for a variant.
 fn format_variant_hover(variant: &Variant) -> String {
-    let parts = VariantParts::from_variant(variant);
-    let mut output = vec![parts.markdown_signature()];
+    let mut output = vec![VariantParts::from_variant(variant).markdown_signature()];
 
-    // Documentation
-    if let Some(ref doc) = variant.doc {
-        output.push(String::new()); // Empty line
+    if let Some(doc) = &variant.doc {
+        output.push(String::new());
         output.push(doc.clone());
     }
 
-    // For struct variants, also show field docs
     if let VariantKind::Struct(fields) = &variant.kind {
         let field_docs: Vec<String> = fields
             .iter()
@@ -225,9 +114,23 @@ fn format_variant_hover(variant: &Variant) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ron2::schema::{Field, TypeKind};
+    use ron2::{ast::parse_document_lossy, schema::Field};
 
     use super::*;
+    use crate::{cursor::context_at_offset, schema_nav::tests::resolver};
+
+    fn type_ref(path: &str) -> TypeKind {
+        TypeKind::TypeRef(path.to_string())
+    }
+
+    /// Hover at the `|` marker in `source`.
+    fn hover_at(source: &str, root: &str, resolver: &DynResolver) -> Option<String> {
+        let offset = source.find('|').expect("cursor marker");
+        let source = source.replacen('|', "", 1);
+        let (doc, _) = parse_document_lossy(&source);
+        let schema = Schema::new(type_ref(root));
+        hover_info(&schema, context_at_offset(&doc, offset), resolver).map(|(info, _)| info)
+    }
 
     #[test]
     fn test_format_field_hover() {
@@ -245,5 +148,52 @@ mod tests {
         let hover = format_field_hover(&field);
 
         assert!(hover.contains("(optional)"));
+    }
+
+    fn tree_resolver() -> Box<DynResolver> {
+        Box::new(resolver(&[(
+            "t::Tree",
+            TypeKind::Struct {
+                fields: vec![
+                    Field::new("value", TypeKind::I32),
+                    Field::new("children", TypeKind::List(Box::new(type_ref("t::Tree")))),
+                ],
+            },
+        )]))
+    }
+
+    #[test]
+    fn test_hover_on_self_referential_schema_terminates() {
+        let r = tree_resolver();
+        // A word that is not in the schema used to recurse through the TypeRef forever.
+        assert_eq!(hover_at("(unknown|: 1)", "t::Tree", &*r), None);
+        assert_eq!(hover_at("(value: Unkn|own)", "t::Tree", &*r), None);
+        let nested = hover_at("(children: [(val|ue: 1)])", "t::Tree", &*r).expect("hover");
+        assert!(nested.contains("**value**: `i32`"), "{nested}");
+    }
+
+    #[test]
+    fn test_hover_uses_field_at_cursor_not_first_match() {
+        let r = resolver(&[
+            (
+                "t::Root",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("name", TypeKind::String).with_doc("Root name"),
+                        Field::new("child", type_ref("t::Child")),
+                    ],
+                },
+            ),
+            (
+                "t::Child",
+                TypeKind::Struct {
+                    fields: vec![Field::new("name", TypeKind::U8).with_doc("Child name")],
+                },
+            ),
+        ]);
+        let info = hover_at("(name: \"a\", child: (na|me: 1))", "t::Root", &r).expect("hover");
+        assert!(info.contains("Child name"), "{info}");
+        let info = hover_at("(na|me: \"a\", child: (name: 1))", "t::Root", &r).expect("hover");
+        assert!(info.contains("Root name"), "{info}");
     }
 }

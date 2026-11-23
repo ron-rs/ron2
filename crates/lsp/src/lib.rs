@@ -4,14 +4,15 @@
 //! Provides auto-completion, diagnostics, and hover documentation based on schemas.
 
 mod completion;
+mod cursor;
 pub mod diagnostics;
 mod document;
 pub mod hover;
-mod lsp_utils;
+mod schema_nav;
 mod schema_resolver;
 mod schema_utils;
 
-// Re-export public API
 pub use completion::provide_completions;
-pub use document::{CompletionContext, Document};
+pub use cursor::{CursorContext, Ident, PathStep};
+pub use document::Document;
 pub use schema_resolver::SchemaResolver;

@@ -11,9 +11,6 @@ use std::{
 use ron2::schema::{Field, Schema, SchemaError, TypeKind, Variant, write_schema};
 use tower_lsp::lsp_types::{Position, Url};
 
-// Import from ron-lsp (need to make these pub in lib.rs or use a test helper)
-// For now, we'll test through the public API
-
 /// Get the path to the showcase schemas directory.
 fn showcase_schemas_dir() -> PathBuf {
     static SCHEMA_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -618,9 +615,8 @@ mod completion_integration {
 
         // After the colon, context should be Value
         let context = doc.context_at_position(3, 11);
-        assert_eq!(
-            context,
-            ron2_lsp::CompletionContext::Value,
+        assert!(
+            matches!(context, ron2_lsp::CursorContext::Value { .. }),
             "After colon should be Value context"
         );
     }
@@ -637,9 +633,8 @@ mod completion_integration {
 
         // After comma and newline, should be FieldName context
         let context = doc.context_at_position(4, 4);
-        assert_eq!(
-            context,
-            ron2_lsp::CompletionContext::FieldName,
+        assert!(
+            matches!(context, ron2_lsp::CursorContext::FieldName { .. }),
             "After comma should be FieldName context"
         );
     }
@@ -653,9 +648,8 @@ mod completion_integration {
 
         // At empty root
         let context = doc.context_at_position(2, 0);
-        assert_eq!(
-            context,
-            ron2_lsp::CompletionContext::Root,
+        assert!(
+            matches!(context, ron2_lsp::CursorContext::Value { ref path, ident: None } if path.is_empty()),
             "Empty document should be Root context"
         );
     }
@@ -697,9 +691,8 @@ mod completion_integration {
 
         // After "title:" - value context should be detected
         let context = doc.context_at_position(3, 11);
-        assert_eq!(
-            context,
-            ron2_lsp::CompletionContext::Value,
+        assert!(
+            matches!(context, ron2_lsp::CursorContext::Value { .. }),
             "After colon should be Value context"
         );
 
@@ -862,9 +855,8 @@ graphics:
 
         // Position right after the colon on "graphics:" line
         let context = doc.context_at_position(4, 13);
-        assert_eq!(
-            context,
-            ron2_lsp::CompletionContext::Value,
+        assert!(
+            matches!(context, ron2_lsp::CursorContext::Value { .. }),
             "Context after colon should be Value"
         );
 
@@ -1097,5 +1089,124 @@ mod diagnostic_integration {
         assert_eq!(diag.message, "expected integer, found String");
 
         assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+    }
+}
+
+mod nested_context {
+    use ron2_lsp::{Document, SchemaResolver};
+
+    use super::*;
+
+    fn make_resolver() -> SchemaResolver {
+        let resolver = SchemaResolver::new();
+        resolver.set_schema_dirs(vec![showcase_schemas_dir()]);
+        resolver
+    }
+
+    /// Build a document from `content`, returning the position of the `|` marker.
+    fn doc_with_cursor(content: &str) -> (Document, Position) {
+        let offset = content.find('|').expect("cursor marker");
+        let before = &content[..offset];
+        let line = before.matches('\n').count() as u32;
+        let col = before
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .encode_utf16()
+            .count() as u32;
+        let doc = Document::new(
+            Url::parse("file:///test.ron").unwrap(),
+            content.replacen('|', "", 1),
+            1,
+        );
+        (doc, Position::new(line, col))
+    }
+
+    /// Completion labels at the `|` marker.
+    fn labels_at(content: &str) -> Vec<String> {
+        let (doc, position) = doc_with_cursor(content);
+        ron2_lsp::provide_completions(&doc, position, &make_resolver())
+            .into_iter()
+            .map(|c| c.label)
+            .collect()
+    }
+
+    const HEADER: &str = "#![type = \"ron_showcase::GameConfig\"]\n";
+
+    #[test]
+    fn empty_nested_struct_offers_its_fields() {
+        let labels = labels_at(&format!("{HEADER}(\n    window: ( | ),\n)"));
+        assert_eq!(labels, ["width", "height", "fullscreen"]);
+    }
+
+    #[test]
+    fn nested_struct_excludes_its_own_used_fields() {
+        let labels = labels_at(&format!(
+            "{HEADER}(\n    title: \"t\",\n    window: (width: 1, | ),\n)"
+        ));
+        assert_eq!(labels, ["height", "fullscreen"]);
+    }
+
+    #[test]
+    fn partial_field_name_in_nested_parens_offers_fields() {
+        let labels = labels_at(&format!("{HEADER}(window: (hei|))"));
+        assert!(labels.contains(&"height".to_string()), "{labels:?}");
+    }
+
+    #[test]
+    fn nested_bool_value_offers_true_false() {
+        let labels = labels_at(&format!("{HEADER}(window: (fullscreen: | ))"));
+        assert_eq!(labels, ["true", "false"]);
+    }
+
+    #[test]
+    fn struct_variant_body_offers_variant_fields() {
+        let labels = labels_at(&format!("{HEADER}(player: (ship: Fighter( | )))"));
+        assert_eq!(labels, ["weapon_slots", "shield_strength"]);
+        let labels = labels_at(&format!(
+            "{HEADER}(player: (ship: Fighter(weapon_slots: 1, | )))"
+        ));
+        assert_eq!(labels, ["shield_strength"]);
+    }
+
+    #[test]
+    fn enum_field_inside_nested_struct_offers_variants() {
+        let labels = labels_at(&format!("{HEADER}(player: (name: \"p\", ship: | ))"));
+        assert_eq!(labels, ["Scout", "Fighter", "Cruiser"]);
+    }
+
+    #[test]
+    fn quote_in_comment_does_not_break_completions() {
+        let labels = labels_at(&format!(
+            "{HEADER}// say \"hi\n(\n    title: \"t\",\n    |\n)"
+        ));
+        assert!(labels.contains(&"version".to_string()), "{labels:?}");
+        assert!(!labels.contains(&"title".to_string()), "{labels:?}");
+    }
+
+    #[test]
+    fn no_completions_inside_strings_or_comments() {
+        assert!(labels_at(&format!("{HEADER}(title: \"ab|c\")")).is_empty());
+        assert!(labels_at(&format!("{HEADER}(title: \"ab|")).is_empty());
+        assert!(labels_at(&format!("{HEADER}(\n    // wi|\n)")).is_empty());
+        assert!(labels_at(&format!("{HEADER}(/* wi| */)")).is_empty());
+    }
+
+    #[test]
+    fn hover_resolves_nested_field_and_range() {
+        let (doc, position) = doc_with_cursor(&format!(
+            "{HEADER}(\n    title: \"t\",\n    window: (wid|th: 1),\n)"
+        ));
+        let hover = ron2_lsp::hover::provide_hover(&doc, position, &make_resolver())
+            .expect("hover on nested field");
+        let range = hover.range.expect("range");
+        assert_eq!(range.start, Position::new(3, 13));
+        assert_eq!(range.end, Position::new(3, 18));
+    }
+
+    #[test]
+    fn hover_on_unknown_word_is_none() {
+        let (doc, position) = doc_with_cursor(&format!("{HEADER}(nosu|chfield: 1)"));
+        assert!(ron2_lsp::hover::provide_hover(&doc, position, &make_resolver()).is_none());
     }
 }
