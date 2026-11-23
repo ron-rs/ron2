@@ -30,13 +30,6 @@ pub struct Config {
     pub schema_dirs: Vec<String>,
 }
 
-/// Wrapper for configuration that may be nested under "ron" key.
-#[derive(Debug, Default, Deserialize)]
-pub struct ConfigWrapper {
-    #[serde(default)]
-    pub ron: Config,
-}
-
 /// The RON Language Server.
 pub struct RonLanguageServer {
     /// LSP client for sending notifications.
@@ -62,92 +55,41 @@ impl RonLanguageServer {
 
     /// Validate a document and publish diagnostics.
     async fn validate_document(&self, uri: &Url) {
-        let documents = self.documents.read().await;
-        if let Some(doc) = documents.get(uri) {
-            let diagnostics = diagnostics::validate_document(doc, &self.schema_resolver);
+        // Release the documents lock before awaiting the client.
+        let result = self.documents.read().await.get(uri).map(|doc| {
+            (
+                diagnostics::validate_document(doc, &self.schema_resolver),
+                doc.version,
+            )
+        });
+        if let Some((diagnostics, version)) = result {
             self.client
-                .publish_diagnostics(uri.clone(), diagnostics, Some(doc.version))
+                .publish_diagnostics(uri.clone(), diagnostics, Some(version))
                 .await;
         }
     }
 
-    /// Update configuration from JSON value.
+    /// Apply settings from `initializationOptions` or `workspace/didChangeConfiguration`.
     async fn update_config(&self, value: serde_json::Value) {
-        // Try to parse as ConfigWrapper (settings nested under "ron" key)
-        let config = if let Ok(wrapper) = serde_json::from_value::<ConfigWrapper>(value.clone()) {
-            wrapper.ron
-        } else if let Ok(config) = serde_json::from_value::<Config>(value) {
-            // Or try to parse directly as Config
-            config
-        } else {
+        let Some(config) = parse_config(value) else {
             return;
         };
+        let roots = self.workspace_roots.read().await.clone();
+        let (dirs, unresolved) = resolve_schema_dirs(&config.schema_dirs, &roots);
 
-        // Resolve schema directories relative to workspace roots
-        let workspace_roots = self.workspace_roots.read().await;
-        let mut resolved_dirs: Vec<PathBuf> = Vec::new();
-
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!(
-                    "Processing schema_dirs config: {:?} with workspace roots: {:?}",
-                    config.schema_dirs, *workspace_roots
-                ),
-            )
-            .await;
-
-        if workspace_roots.is_empty()
-            && config
-                .schema_dirs
-                .iter()
-                .any(|d| !PathBuf::from(d).is_absolute())
-        {
+        for dir in unresolved {
             self.client
                 .log_message(
                     MessageType::WARNING,
-                    "No workspace root set - relative schema_dirs paths cannot be resolved. Use absolute paths or open a workspace folder.",
+                    format!("Schema dir {dir:?} not found in workspace roots {roots:?}"),
                 )
                 .await;
         }
+        self.client
+            .log_message(MessageType::INFO, format!("Schema directories: {dirs:?}"))
+            .await;
 
-        for dir in &config.schema_dirs {
-            let path = PathBuf::from(dir);
-            if path.is_absolute() {
-                self.client
-                    .log_message(
-                        MessageType::INFO,
-                        format!("Adding absolute schema dir: {:?}", path),
-                    )
-                    .await;
-                resolved_dirs.push(path);
-            } else {
-                // Resolve relative paths against each workspace root
-                for root in workspace_roots.iter() {
-                    let resolved = root.join(&path);
-                    if resolved.exists() {
-                        self.client
-                            .log_message(
-                                MessageType::INFO,
-                                format!("Adding resolved schema dir: {:?}", resolved),
-                            )
-                            .await;
-                        resolved_dirs.push(resolved);
-                    } else {
-                        self.client
-                            .log_message(
-                                MessageType::WARNING,
-                                format!("Schema dir not found: {:?} (tried {:?})", dir, resolved),
-                            )
-                            .await;
-                    }
-                }
-            }
-        }
-
-        self.schema_resolver.set_schema_dirs(resolved_dirs);
-
-        // Re-validate all open documents
+        self.schema_resolver.set_schema_dirs(dirs);
         self.revalidate_all_documents().await;
     }
 
@@ -215,20 +157,15 @@ impl LanguageServer for RonLanguageServer {
     }
 
     async fn initialized(&self, _params: InitializedParams) {
+        let roots = self.workspace_roots.read().await.clone();
         self.client
-            .log_message(MessageType::INFO, "RON Language Server initialized")
-            .await;
-
-        // Log workspace roots for debugging
-        let roots = self.workspace_roots.read().await;
-        self.client
-            .log_message(MessageType::INFO, format!("Workspace roots: {:?}", *roots))
-            .await;
-
-        // Log configured schema dirs
-        let dirs = self.schema_resolver.schema_dirs();
-        self.client
-            .log_message(MessageType::INFO, format!("Schema directories: {:?}", dirs))
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "RON Language Server initialized (workspace roots: {roots:?}, schema directories: {:?})",
+                    self.schema_resolver.schema_dirs()
+                ),
+            )
             .await;
     }
 
@@ -302,6 +239,42 @@ impl LanguageServer for RonLanguageServer {
     }
 }
 
+/// Read [`Config`] from settings, which may be nested under a `ron` key.
+fn parse_config(value: serde_json::Value) -> Option<Config> {
+    let settings = match value.get("ron") {
+        Some(nested) => nested.clone(),
+        None => value,
+    };
+    serde_json::from_value(settings).ok()
+}
+
+/// Resolve configured schema directories against the workspace roots.
+///
+/// Absolute paths are kept as-is; relative paths are kept for every root they
+/// exist under. Returns the resolved directories and the relative paths that
+/// matched no root.
+fn resolve_schema_dirs(dirs: &[String], roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<String>) {
+    let mut resolved = Vec::new();
+    let mut unresolved = Vec::new();
+    for dir in dirs {
+        let path = PathBuf::from(dir);
+        if path.is_absolute() {
+            resolved.push(path);
+            continue;
+        }
+        let found: Vec<PathBuf> = roots
+            .iter()
+            .map(|root| root.join(&path))
+            .filter(|p| p.exists())
+            .collect();
+        if found.is_empty() {
+            unresolved.push(dir.clone());
+        }
+        resolved.extend(found);
+    }
+    (resolved, unresolved)
+}
+
 #[tokio::main]
 async fn main() {
     let stdin = tokio::io::stdin();
@@ -309,4 +282,34 @@ async fn main() {
 
     let (service, socket) = LspService::new(RonLanguageServer::new);
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_config_accepts_nested_and_flat_settings() {
+        let nested = parse_config(serde_json::json!({"ron": {"schemaDirs": ["a"]}}));
+        assert_eq!(nested.map(|c| c.schema_dirs), Some(vec!["a".to_string()]));
+        // A flat object used to parse as an empty nested config and drop the dirs.
+        let flat = parse_config(serde_json::json!({"schemaDirs": ["b"]}));
+        assert_eq!(flat.map(|c| c.schema_dirs), Some(vec!["b".to_string()]));
+    }
+
+    #[test]
+    fn resolve_schema_dirs_reports_missing_relative_dirs() {
+        let root = std::env::temp_dir();
+        let absolute = root.join("abs").to_string_lossy().into_owned();
+        let (dirs, unresolved) = resolve_schema_dirs(
+            &[
+                absolute.clone(),
+                ".".to_string(),
+                "does-not-exist-ron2".to_string(),
+            ],
+            std::slice::from_ref(&root),
+        );
+        assert_eq!(dirs, [PathBuf::from(absolute), root.join(".")]);
+        assert_eq!(unresolved, ["does-not-exist-ron2"]);
+    }
 }
