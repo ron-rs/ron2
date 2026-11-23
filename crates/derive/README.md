@@ -18,8 +18,8 @@ Or for standalone use:
 
 ```toml
 [dependencies]
-ron2-derive = "0.3"
-ron2 = { version = "0.3", default-features = false }
+ron2-derive = "0.4"
+ron2 = { version = "0.4", default-features = false }
 ```
 
 ## Derive Macros
