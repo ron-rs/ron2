@@ -243,24 +243,33 @@ fn source_slice<'s>(source: &'s str, span: &Span) -> Option<&'s str> {
 }
 
 /// The original text of `trivia`, if its span still describes `source` exactly: the same
-/// comments, with only whitespace around them.
+/// comments, with only whitespace around them, and the same first run of whitespace (the
+/// only whitespace the AST stores).
 fn trivia_source<'s>(source: &'s str, trivia: &Trivia<'_>) -> Option<&'s str> {
     let span = trivia.span.as_ref()?;
     let text = source_slice(source, span)?;
-    let is_blank = |range: core::ops::Range<usize>| {
-        source
-            .get(range)
-            .is_some_and(|gap| gap.chars().all(char::is_whitespace))
+    let mut first_whitespace = None;
+    let mut gap = |range: core::ops::Range<usize>| {
+        let gap = source.get(range)?;
+        if !gap.chars().all(char::is_whitespace) {
+            return None;
+        }
+        if first_whitespace.is_none() && !gap.is_empty() {
+            first_whitespace = Some(gap);
+        }
+        Some(())
     };
     let mut pos = span.start_offset;
     for comment in &trivia.comments {
         let (start, end) = (comment.span.start_offset, comment.span.end_offset);
-        if !is_blank(pos..start) || source.get(start..end) != Some(comment.text.as_ref()) {
+        gap(pos..start)?;
+        if source.get(start..end) != Some(comment.text.as_ref()) {
             return None;
         }
         pos = end;
     }
-    is_blank(pos..span.end_offset).then_some(text)
+    gap(pos..span.end_offset)?;
+    (first_whitespace.unwrap_or("") == trivia.whitespace).then_some(text)
 }
 
 /// Whether `a` and `b` consist of the same tokens, ignoring whitespace and comments.
@@ -591,6 +600,16 @@ Config(
         let output = serialize_document(&doc).unwrap();
         assert!(!output.contains("one"), "{output:?}");
         assert!(parse_document(&output).is_ok(), "{output:?}");
+    }
+
+    #[test]
+    fn edited_whitespace_is_serialized() {
+        let mut doc = parse_document("[1,   2]").unwrap();
+        let Some(Expr::Seq(seq)) = &mut doc.value else {
+            panic!("expected seq");
+        };
+        seq.items[1].leading.whitespace = " ".into();
+        assert_eq!(serialize_document(&doc).unwrap(), "[1, 2]");
     }
 
     #[test]

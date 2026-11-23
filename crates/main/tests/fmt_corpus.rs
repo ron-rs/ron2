@@ -57,6 +57,16 @@ const CORPUS: &[&str] = &[
     "(\n port: 8080, // the port\n host: \"h\",\n)",
     "#![type = \"Foo\"]\n// doc\nConfig(\n    // Server port\n    port: 8080,\n    tags: [\"web\", \"api\"], /* trailing block */\n    nested: Inner(a: Some([1, 2]), b: {1: (x: 1)}),\n)",
     "[\r\n 1, // c\r\n /* d\r\n */ 2\r\n]",
+    // Forced compaction nested inside length-based compaction.
+    "(a: (b: [1 // c\n, 2]))",
+    "[[1 // c\n, 2]]",
+    "(a: {1: (x: [1, // c\n 2])}, b: T(1 // d\n, 2))",
+    "(a: [ //\n 1])",
+    // Comment placement.
+    "[1, // trailing spaces   \n 2]",
+    "[1, /* a */ 2]",
+    "(a: [0, 1, 2] /* a fairly long comment */, b: 1)",
+    "{r\"k\n\": [1, 2, 3]}",
     // Width.
     "(a: \"ünïcödé strings that are fairly long to push the line over the limit\", b: [1, 2])",
     "E(Variant(1), Other(x: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]))",
@@ -70,6 +80,7 @@ const NEEDS_TRAILING_TRIVIA_FIX: &[&str] = &[
     "(\n port: 8080, // the port\n host: \"h\", // the host\n)",
     "Point(\n x: 1,\n // dangling\n)",
     "Some([\n 1,\n 2, // two\n])",
+    "[[1 // c\n]]",
 ];
 
 fn configs() -> Vec<(&'static str, FormatConfig)> {
@@ -94,6 +105,41 @@ fn configs() -> Vec<(&'static str, FormatConfig)> {
         (
             "auto depth 0",
             FormatConfig::default().compact_from_depth(0),
+        ),
+        (
+            "auto depth 2",
+            FormatConfig::default().compact_from_depth(2),
+        ),
+        (
+            "auto depth 3",
+            FormatConfig::default().compact_from_depth(3),
+        ),
+        (
+            "preserve depth 2",
+            FormatConfig::default()
+                .comments(CommentMode::Preserve)
+                .compact_from_depth(2),
+        ),
+        (
+            "arrays",
+            FormatConfig::default().compact_types(CompactTypes {
+                arrays: true,
+                ..CompactTypes::default()
+            }),
+        ),
+        (
+            "maps",
+            FormatConfig::default().compact_types(CompactTypes {
+                maps: true,
+                ..CompactTypes::default()
+            }),
+        ),
+        (
+            "structs",
+            FormatConfig::default().compact_types(CompactTypes {
+                structs: true,
+                ..CompactTypes::default()
+            }),
         ),
         (
             "all types",
@@ -216,6 +262,35 @@ fn nested_struct(depth: usize) -> Expr<'static> {
         });
     }
     expr
+}
+
+#[test]
+fn blocked_compaction_formats_in_linear_time() {
+    // 100 levels of 2000 items with a line comment at the bottom. Measuring each level
+    // until the blocking comment used to cost O(size × depth).
+    let mut source = String::new();
+    for _ in 0..100 {
+        source.push('[');
+        for i in 0..2000 {
+            source.push_str(&format!("{i}, "));
+        }
+    }
+    source.push_str("1 // c\n");
+    source.push_str(&"]".repeat(100));
+    let doc = parse_document(&source).unwrap();
+
+    for config in [
+        FormatConfig::default()
+            .comments(CommentMode::Preserve)
+            .compact_from_depth(0),
+        FormatConfig::default().char_limit(usize::MAX),
+    ] {
+        let start = Instant::now();
+        let formatted = format_document(&doc, &config);
+        let elapsed = start.elapsed();
+        assert!(formatted.contains("1, // c\n"));
+        assert!(elapsed < Duration::from_secs(3), "took {elapsed:?}");
+    }
 }
 
 #[test]

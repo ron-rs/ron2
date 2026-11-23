@@ -24,11 +24,17 @@
 //! assert_eq!(minimal, "Config(x:1,y:2)");
 //! ```
 
-use alloc::string::{String, ToString};
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+};
 
-use crate::ast::{
-    Comment, CommentKind, Document, Expr, MapEntry, OptionExpr, SeqItem, StructBody, StructExpr,
-    StructField, Trivia, TupleElement,
+use crate::{
+    ast::{
+        Comment, CommentKind, Document, Expr, MapEntry, OptionExpr, SeqItem, StructBody,
+        StructExpr, StructField, Trivia, TupleElement,
+    },
+    error::Span,
 };
 
 /// Controls how RON output is formatted.
@@ -442,24 +448,28 @@ impl<'x, 'a> Items<'x, 'a> {
         match self {
             Items::Seq(items) => items.get(index).map(|item| Item {
                 leading: &item.leading,
+                start: item.expr.span(),
                 key: None,
                 value: &item.expr,
                 trailing: &item.trailing,
             }),
             Items::Tuple(items) => items.get(index).map(|element| Item {
                 leading: &element.leading,
+                start: element.expr.span(),
                 key: None,
                 value: &element.expr,
                 trailing: &element.trailing,
             }),
             Items::Map(items) => items.get(index).map(|entry| Item {
                 leading: &entry.leading,
+                start: entry.key.span(),
                 key: Some((Key::Expr(&entry.key), &entry.pre_colon, &entry.post_colon)),
                 value: &entry.value,
                 trailing: &entry.trailing,
             }),
             Items::Fields(items) => items.get(index).map(|field| Item {
                 leading: &field.leading,
+                start: &field.name.span,
                 key: Some((
                     Key::Ident(&field.name.name),
                     &field.pre_colon,
@@ -486,6 +496,8 @@ enum Key<'x, 'a> {
 #[derive(Clone, Copy)]
 struct Item<'x, 'a> {
     leading: &'x Trivia<'a>,
+    /// Span of the item's first token.
+    start: &'x Span,
     /// The key with the trivia before and after its colon.
     key: Option<(Key<'x, 'a>, &'x Trivia<'a>, &'x Trivia<'a>)>,
     value: &'x Expr<'a>,
@@ -496,15 +508,29 @@ struct Item<'x, 'a> {
 // Single-line output
 // ============================================================================
 
-/// The expression cannot be written on one line: a comment forbids it or it is too wide.
+/// The expression cannot be written on one line because of a comment.
 struct NotFlat;
+
+/// Single-line widths of collections, keyed by the collection's address and whether
+/// line comments may be converted inside it. `None`: a comment forbids a single line.
+type Widths = BTreeMap<(usize, bool), Option<usize>>;
 
 /// Destination of single-line output: the real output or a width probe.
 ///
 /// Measuring and writing share one code path, so a measured width is exactly what gets
 /// written.
-trait Sink {
+trait Sink: Sized {
     fn put(&mut self, s: &str) -> Result<(), NotFlat>;
+
+    /// Writes a nested collection.
+    fn collection(
+        &mut self,
+        flat: Flat<'_>,
+        c: &Collection<'_, '_>,
+        depth: usize,
+    ) -> Result<(), NotFlat> {
+        flat.collection(self, c, depth)
+    }
 }
 
 impl Sink for String {
@@ -514,17 +540,28 @@ impl Sink for String {
     }
 }
 
-/// Counts characters and gives up as soon as the budget is exceeded, so a measurement
-/// costs O(budget) rather than O(subtree). This keeps formatting near-linear in the
-/// input size regardless of nesting depth.
-struct Measure {
-    remaining: usize,
+/// Counts characters. Nested collections are measured through the memo, so each
+/// collection is measured at most twice (with and without comment conversion) and
+/// formatting stays linear in the input size regardless of nesting depth.
+struct Measure<'m> {
+    width: usize,
+    widths: &'m mut Widths,
 }
 
-impl Sink for Measure {
+impl Sink for Measure<'_> {
     fn put(&mut self, s: &str) -> Result<(), NotFlat> {
-        let width = s.chars().take(self.remaining.saturating_add(1)).count();
-        self.remaining = self.remaining.checked_sub(width).ok_or(NotFlat)?;
+        self.width = self.width.saturating_add(s.chars().count());
+        Ok(())
+    }
+
+    fn collection(
+        &mut self,
+        flat: Flat<'_>,
+        c: &Collection<'_, '_>,
+        depth: usize,
+    ) -> Result<(), NotFlat> {
+        let width = flat.measure(self.widths, c, depth).ok_or(NotFlat)?;
+        self.width = self.width.saturating_add(width);
         Ok(())
     }
 }
@@ -533,12 +570,38 @@ impl Sink for Measure {
 #[derive(Clone, Copy)]
 struct Flat<'c> {
     config: &'c FormatConfig,
-    /// A depth or type rule asked for compaction, which allows converting line comments.
+    /// A depth or type rule compacts this collection or an enclosing one, which allows
+    /// converting line comments.
     hard: bool,
 }
 
 impl Flat<'_> {
-    fn expr<S: Sink>(self, out: &mut S, expr: &Expr<'_>) -> Result<(), NotFlat> {
+    /// The context for collection `c` at `depth`: its own depth and type rules apply in
+    /// addition to those of the enclosing collections.
+    fn enter(self, c: &Collection<'_, '_>, depth: usize) -> Self {
+        Self {
+            hard: self.hard || self.config.wants_compact(c.kind, depth),
+            ..self
+        }
+    }
+
+    /// Single-line width of `c`, or `None` if a comment forbids a single line.
+    fn measure(self, widths: &mut Widths, c: &Collection<'_, '_>, depth: usize) -> Option<usize> {
+        let flat = self.enter(c, depth);
+        let key = (core::ptr::from_ref(c.leading).addr(), flat.hard);
+        if let Some(&width) = widths.get(&key) {
+            return width;
+        }
+        let mut measure = Measure { width: 0, widths };
+        let width = flat
+            .collection(&mut measure, c, depth)
+            .ok()
+            .map(|()| measure.width);
+        widths.insert(key, width);
+        width
+    }
+
+    fn expr<S: Sink>(self, out: &mut S, expr: &Expr<'_>, depth: usize) -> Result<(), NotFlat> {
         match Shape::of(expr) {
             Shape::Scalar(text) => out.put(text),
             Shape::Option(opt) => match &opt.value {
@@ -546,7 +609,7 @@ impl Flat<'_> {
                 Some(inner) => {
                     out.put("Some(")?;
                     self.comments_before(out, &inner.leading)?;
-                    self.expr(out, &inner.expr)?;
+                    self.expr(out, &inner.expr, depth)?;
                     self.comments_after(out, &inner.trailing)?;
                     out.put(")")
                 }
@@ -558,18 +621,24 @@ impl Flat<'_> {
                     out.put(" ")?;
                 }
                 match &s.body {
-                    Some(body) => self.collection(out, &Collection::of_body(body)),
+                    Some(body) => out.collection(self, &Collection::of_body(body), depth),
                     None => Ok(()),
                 }
             }
-            Shape::Collection(collection) => self.collection(out, &collection),
+            Shape::Collection(collection) => out.collection(self, &collection, depth),
         }
     }
 
-    fn collection<S: Sink>(self, out: &mut S, c: &Collection<'_, '_>) -> Result<(), NotFlat> {
+    fn collection<S: Sink>(
+        self,
+        out: &mut S,
+        c: &Collection<'_, '_>,
+        depth: usize,
+    ) -> Result<(), NotFlat> {
+        let flat = self.enter(c, depth);
         out.put(c.open)?;
-        self.comments_before(out, c.leading)?;
-        let separator = match self.config.spacing {
+        flat.comments_before(out, c.leading)?;
+        let separator = match flat.config.spacing {
             Spacing::None => ",",
             Spacing::Normal => ", ",
         };
@@ -577,27 +646,27 @@ impl Flat<'_> {
             if i > 0 {
                 out.put(separator)?;
             }
-            self.item(out, item)?;
+            flat.item(out, item, depth)?;
         }
         if c.items.is_empty() {
-            for (i, comment) in self.config.visible(c.trailing).iter().enumerate() {
+            for (i, comment) in flat.config.visible(c.trailing).iter().enumerate() {
                 if i > 0 {
                     out.put(" ")?;
                 }
-                self.comment(out, comment)?;
+                flat.comment(out, comment)?;
             }
         } else {
-            self.comments_after(out, c.trailing)?;
+            flat.comments_after(out, c.trailing)?;
         }
         out.put(c.close)
     }
 
-    fn item<S: Sink>(self, out: &mut S, item: Item<'_, '_>) -> Result<(), NotFlat> {
+    fn item<S: Sink>(self, out: &mut S, item: Item<'_, '_>, depth: usize) -> Result<(), NotFlat> {
         self.comments_before(out, item.leading)?;
         if let Some((key, pre_colon, post_colon)) = item.key {
             match key {
                 Key::Ident(name) => out.put(name)?,
-                Key::Expr(expr) => self.expr(out, expr)?,
+                Key::Expr(expr) => self.expr(out, expr, depth + 1)?,
             }
             self.comments_after(out, pre_colon)?;
             out.put(":")?;
@@ -607,7 +676,7 @@ impl Flat<'_> {
                 out.put(" ")?;
             }
         }
-        self.expr(out, item.value)?;
+        self.expr(out, item.value, depth + 1)?;
         self.comments_after(out, item.trailing)
     }
 
@@ -646,6 +715,9 @@ impl Flat<'_> {
                 if text.contains("/*") || text.contains("*/") {
                     return Err(NotFlat);
                 }
+                if text.is_empty() {
+                    return out.put("/* */");
+                }
                 out.put("/* ")?;
                 out.put(text)?;
                 out.put(" */")
@@ -674,6 +746,7 @@ struct Formatter<'c> {
     pending_space: bool,
     /// The current line is finished (it ends in a comment); the next token starts a new line.
     pending_newline: bool,
+    widths: Widths,
 }
 
 impl<'c> Formatter<'c> {
@@ -685,6 +758,7 @@ impl<'c> Formatter<'c> {
             line_start: 0,
             pending_space: false,
             pending_newline: false,
+            widths: Widths::new(),
         }
     }
 
@@ -726,10 +800,12 @@ impl<'c> Formatter<'c> {
         self.out.push_str(text);
     }
 
-    /// Current column in characters.
+    /// Current column in characters. Searches for the last newline rather than using
+    /// `line_start`, because multi-line raw strings and block comments contain newlines.
     fn column(&self) -> usize {
+        let line_start = self.out.rfind('\n').map_or(0, |newline| newline + 1);
         self.out
-            .get(self.line_start..)
+            .get(line_start..)
             .map_or(0, |line| line.chars().count())
     }
 
@@ -740,7 +816,7 @@ impl<'c> Formatter<'c> {
     fn comment(&mut self, comment: &Comment<'_>) {
         match comment.kind {
             CommentKind::Line => {
-                self.token(comment.text.trim_end_matches(['\n', '\r']));
+                self.token(comment.text.trim_end());
                 self.pending_newline = true;
             }
             CommentKind::Block => self.token(&comment.text),
@@ -763,8 +839,13 @@ impl<'c> Formatter<'c> {
     /// Comments following a token: those that started on the token's line stay at the
     /// end of that line, the others get their own lines.
     fn comments_after_token(&mut self, trivia: &Trivia<'_>) {
+        self.comments_after_token_until(trivia, usize::MAX);
+    }
+
+    /// Like [`Self::comments_after_token`], for the first `count` comments only.
+    fn comments_after_token_until(&mut self, trivia: &Trivia<'_>, count: usize) {
         let same_line = same_line_count(trivia);
-        for (i, comment) in self.config.visible(trivia).iter().enumerate() {
+        for (i, comment) in self.config.visible(trivia).iter().take(count).enumerate() {
             if i < same_line {
                 self.comment_inline(comment);
             } else {
@@ -853,7 +934,7 @@ impl<'c> Formatter<'c> {
                 self.comment(comment);
                 self.pending_space = true;
             }
-            self.expr(&inner.expr, depth, suffix + 1);
+            self.expr(&inner.expr, depth, suffix + 1 + inline_width(trailing));
             for comment in trailing {
                 self.comment_inline(comment);
             }
@@ -863,29 +944,24 @@ impl<'c> Formatter<'c> {
 
     fn collection(&mut self, c: &Collection<'_, '_>, depth: usize, suffix: usize) {
         self.prepare();
-        let hard = self.config.wants_compact(c.kind, depth);
+        // Enclosing collections are multiline, so only this collection's rules apply.
         let flat = Flat {
             config: self.config,
-            hard,
+            hard: false,
         };
         let limit = self.config.compaction.char_limit;
-        let compact = if hard {
-            flat.collection(
-                &mut Measure {
-                    remaining: usize::MAX,
-                },
-                c,
-            )
-            .is_ok()
+        let compact = if self.config.wants_compact(c.kind, depth) {
+            flat.measure(&mut self.widths, c, depth).is_some()
         } else if (depth == 0 && self.config.is_pretty() && !c.items.is_empty()) || limit == 0 {
             false
         } else {
             let remaining = limit.saturating_sub(self.column() + suffix);
-            flat.collection(&mut Measure { remaining }, c).is_ok()
+            flat.measure(&mut self.widths, c, depth)
+                .is_some_and(|width| width <= remaining)
         };
 
         if compact {
-            let written = flat.collection(&mut self.out, c);
+            let written = flat.collection(&mut self.out, c, depth);
             debug_assert!(written.is_ok(), "measured collection must be writable");
         } else {
             self.multiline(c, depth);
@@ -904,8 +980,16 @@ impl<'c> Formatter<'c> {
         self.indent += 1;
         self.comments_after_token(c.leading);
         for item in c.items.iter() {
-            self.comments_after_token(item.leading);
+            // Block comments on the item's own line stay in front of it; the others follow
+            // the previous token.
+            let leading = self.config.visible(item.leading);
+            let attached = attached_count(leading, item.start);
+            self.comments_after_token_until(item.leading, leading.len() - attached);
             self.ensure_line_start();
+            for comment in &leading[leading.len() - attached..] {
+                self.comment(comment);
+                self.pending_space = true;
+            }
             self.item(item, depth);
         }
         self.comments_after_token(c.trailing);
@@ -915,6 +999,14 @@ impl<'c> Formatter<'c> {
     }
 
     fn item(&mut self, item: Item<'_, '_>, depth: usize) {
+        // Block comments before the comma stay there; a line comment has to move after it.
+        let trailing = self.config.visible(item.trailing);
+        let split = trailing
+            .iter()
+            .position(|c| c.kind == CommentKind::Line)
+            .unwrap_or(trailing.len());
+        let (before_comma, after_comma) = trailing.split_at(split);
+
         if let Some((key, pre_colon, post_colon)) = item.key {
             match key {
                 Key::Ident(name) => self.token(name),
@@ -930,15 +1022,7 @@ impl<'c> Formatter<'c> {
             }
             self.pending_space = self.config.spacing == Spacing::Normal || !post_colon.is_empty();
         }
-        self.expr(item.value, depth + 1, 1);
-
-        // Block comments before the comma stay there; a line comment has to move after it.
-        let trailing = self.config.visible(item.trailing);
-        let split = trailing
-            .iter()
-            .position(|c| c.kind == CommentKind::Line)
-            .unwrap_or(trailing.len());
-        let (before_comma, after_comma) = trailing.split_at(split);
+        self.expr(item.value, depth + 1, inline_width(before_comma) + 1);
         for comment in before_comma {
             self.comment_inline(comment);
         }
@@ -951,6 +1035,28 @@ impl<'c> Formatter<'c> {
             }
         }
     }
+}
+
+/// Width of `comments` written inline after a token: ` /* a */ /* b */`.
+fn inline_width(comments: &[Comment<'_>]) -> usize {
+    comments.iter().map(|c| 1 + c.text.chars().count()).sum()
+}
+
+/// Number of block comments at the end of `comments` that end on the line where the
+/// item starts, e.g. `/* a */` in `1, /* a */ 2`.
+fn attached_count(comments: &[Comment<'_>], item_start: &Span) -> usize {
+    if item_start.is_synthetic() {
+        return 0;
+    }
+    comments
+        .iter()
+        .rev()
+        .take_while(|c| {
+            c.kind == CommentKind::Block
+                && !c.span.is_synthetic()
+                && c.span.end.line == item_start.start.line
+        })
+        .count()
 }
 
 fn has_line_comment(comments: &[Comment<'_>]) -> bool {
@@ -2075,5 +2181,93 @@ mod tests {
             let document = format_document(&doc, &config);
             assert_eq!(document.trim_end(), format_expr(value, &config));
         }
+    }
+
+    // =========================================================================
+    // Review fixes
+    // =========================================================================
+
+    /// Formats twice and checks that the second pass changes nothing.
+    fn format_stable(source: &str, config: &FormatConfig) -> String {
+        let once = format_with(source, config);
+        assert_eq!(
+            format_with(&once, config),
+            once,
+            "not idempotent: {source:?}"
+        );
+        once
+    }
+
+    #[test]
+    fn forced_compaction_inside_length_compaction() {
+        let arrays = FormatConfig::new().compact_types(CompactTypes {
+            arrays: true,
+            ..CompactTypes::default()
+        });
+        let depth_2 = FormatConfig::new().compact_from_depth(2);
+        for config in [arrays, depth_2] {
+            assert_eq!(
+                format_stable("(a: (b: [1 // c\n, 2]))", &config),
+                "(\n    a: (b: [1 /* c */, 2]),\n)\n"
+            );
+        }
+        let no_indent = FormatConfig::new().indent("").compact_from_depth(1);
+        assert_eq!(format_stable("[[1 // c\n]]", &no_indent), "[[1 /* c */]]");
+    }
+
+    #[test]
+    fn line_comment_trailing_whitespace_is_trimmed() {
+        assert_eq!(
+            format("[1, // trailing spaces   \n 2]"),
+            "[\n    1, // trailing spaces\n    2,\n]\n"
+        );
+    }
+
+    #[test]
+    fn empty_line_comment_converts_to_valid_block() {
+        let config = FormatConfig::new().compact_from_depth(1);
+        assert_eq!(
+            format_stable("(a: [ //\n 1])", &config),
+            "(\n    a: [/* */ 1],\n)\n"
+        );
+    }
+
+    #[test]
+    fn char_limit_counts_block_comment_before_comma() {
+        // `    a: [0, 1, 2] /* a fairly long comment */,` is 45 characters.
+        let source = "(a: [0, 1, 2] /* a fairly long comment */, b: 1)";
+        let config = FormatConfig::new().char_limit(44);
+        assert!(format_stable(source, &config).contains("a: [\n"));
+        let config = FormatConfig::new().char_limit(45);
+        assert!(
+            format_stable(source, &config)
+                .contains("    a: [0, 1, 2] /* a fairly long comment */,\n")
+        );
+    }
+
+    #[test]
+    fn column_restarts_after_multiline_raw_string() {
+        // The key ends on a new line: `": [1, 2, 3],` is 13 characters.
+        let source = "{r\"k\n\": [1, 2, 3]}";
+        let config = FormatConfig::new().char_limit(13);
+        assert_eq!(
+            format_stable(source, &config),
+            "{\n    r\"k\n\": [1, 2, 3],\n}\n"
+        );
+    }
+
+    #[test]
+    fn block_comment_stays_with_following_item() {
+        assert_eq!(
+            format_stable("[1, /* a */ 2]", &FormatConfig::new()),
+            "[\n    1,\n    /* a */ 2,\n]\n"
+        );
+        assert_eq!(
+            format_stable(
+                "[\n    /* own line */\n    1, // end\n    2,\n]",
+                &FormatConfig::new()
+            ),
+            "[\n    /* own line */\n    1, // end\n    2,\n]\n"
+        );
     }
 }
