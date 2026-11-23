@@ -1045,7 +1045,6 @@ name = "ron2"
 version = "0.3.0"
 dependencies = [
  "ahash",
- "bitflags 2.10.0",
  "criterion",
  "dirs",
  "indexmap",

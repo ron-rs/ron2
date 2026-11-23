@@ -24,7 +24,6 @@ xdg = ["dep:dirs"]
 
 [dependencies]
 ahash.workspace = true
-bitflags = { version = "2.10", default-features = false }
 dirs = { version = "6.0.0", optional = true }
 indexmap = { version = "2.13", default-features = false, features = ["std"] }
 itoa.workspace = true
