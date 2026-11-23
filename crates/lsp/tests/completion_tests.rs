@@ -368,6 +368,39 @@ mod hover_integration {
             content
         );
     }
+
+    /// Regression: hover searched recursive schemas without a visited set and
+    /// overflowed the stack when the identifier was not found.
+    #[test]
+    fn hover_on_recursive_schema_terminates() {
+        let dir = std::env::temp_dir().join(format!("ron2-lsp-rec-{}", std::process::id()));
+        let node = Schema::new(TypeKind::Struct {
+            fields: vec![
+                Field::new("name", TypeKind::String).with_doc("Node name."),
+                Field::new(
+                    "children",
+                    TypeKind::List(Box::new(TypeKind::TypeRef("rec::Node".into()))),
+                ),
+                Field::optional("link", TypeKind::TypeRef("rec::Loop".into())),
+            ],
+        });
+        write_schema("rec::Node", &node, Some(&dir)).unwrap();
+        let looping = Schema::new(TypeKind::TypeRef("rec::Loop".into()));
+        write_schema("rec::Loop", &looping, Some(&dir)).unwrap();
+
+        let resolver = SchemaResolver::new();
+        resolver.set_schema_dirs(vec![dir.clone()]);
+        let content = "#![type = \"rec::Node\"]\n\n(\n    nme: \"a\",\n    children: [(name: \"b\", children: [], link: X)],\n    link: Y,\n)";
+        let doc = make_doc(content);
+
+        // Unknown field, a field two levels down, and values behind a TypeRef cycle.
+        assert!(ron2_lsp::hover::provide_hover(&doc, Position::new(3, 5), &resolver).is_none());
+        let nested = ron2_lsp::hover::provide_hover(&doc, Position::new(4, 17), &resolver);
+        assert!(nested.is_some(), "hover on nested `name`");
+        assert!(ron2_lsp::hover::provide_hover(&doc, Position::new(4, 47), &resolver).is_none());
+        assert!(ron2_lsp::hover::provide_hover(&doc, Position::new(5, 10), &resolver).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 mod completion_integration {
