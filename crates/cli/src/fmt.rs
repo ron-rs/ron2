@@ -26,7 +26,7 @@ pub struct FmtArgs {
     #[arg(short, long, default_value = "4", value_name = "N")]
     pub indent: usize,
 
-    /// Character limit for compact formatting
+    /// Maximum line width; collections that fit stay on one line (0 disables)
     #[arg(short, long, default_value = "80", value_name = "N")]
     pub width: usize,
 

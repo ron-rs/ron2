@@ -18,6 +18,19 @@
 //! assert_eq!(source, output); // Perfect round-trip
 //! ```
 //!
+//! # Formatting
+//!
+//! The [`fmt`] module reformats documents while keeping comments:
+//!
+//! ```
+//! use ron2::ast::parse_document;
+//! use ron2::fmt::{FormatConfig, format_document};
+//!
+//! let doc = parse_document("Point(x:1,y:2) // origin").unwrap();
+//! let formatted = format_document(&doc, &FormatConfig::default());
+//! assert_eq!(formatted, "Point(\n    x: 1,\n    y: 2,\n) // origin\n");
+//! ```
+//!
 //! # Value Example (semantic only)
 //!
 //! ```
@@ -85,21 +98,6 @@ pub use crate::{
 #[doc(hidden)]
 pub mod __internal {
     pub use crate::lexer::Lexer;
-}
-
-/// Format RON source with the given configuration.
-///
-/// # Example
-/// ```
-/// use ron2::fmt::FormatConfig;
-///
-/// let source = "(x:1,y:2)";
-/// let formatted = ron2::format(source, &FormatConfig::default())?;
-/// # Ok::<(), ron2::Error>(())
-/// ```
-pub fn format(source: &str, config: &fmt::FormatConfig) -> Result<alloc::string::String> {
-    let doc = ast::parse_document(source)?;
-    Ok(fmt::format_document(&doc, config))
 }
 
 /// Parse a RON string into a type that implements `FromRon`.

@@ -35,33 +35,25 @@
 //! ```
 
 mod convert;
-mod fmt;
 mod parse;
 mod ser;
 mod unescape;
 
 use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
+use core::fmt;
 
-// Re-exports for internal workspace crates (LSP, CLI) - not part of public API
-#[doc(hidden)]
-pub use convert::to_value;
-// Public API exports
 pub use convert::{expr_to_value, value_to_expr};
-// Internal re-exports (crate-visible for implementation details)
 pub(crate) use convert::{
     into_value, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
     synthetic_map, synthetic_option, synthetic_seq, synthetic_string, synthetic_tuple,
     synthetic_unit,
 };
-// Re-exports required by derive macros (implementation detail, not part of public API)
+/// Not public API: used by `ron2-derive` generated code and the `ron2-lsp` crate.
 #[doc(hidden)]
-pub use convert::{synthetic_named_tuple, synthetic_named_unit, synthetic_struct};
-pub use fmt::{
-    CommentMode, CompactTypes, Compaction, FormatConfig, Spacing, format_document, format_expr,
-};
-pub(crate) use fmt::{ItemTrivia, RonFormatter, SerializeRon, to_ron_string};
+pub use convert::{synthetic_named_tuple, synthetic_named_unit, synthetic_struct, to_value};
 pub use parse::{parse_document, parse_document_lossy};
 pub use ser::{serialize_document, serialize_document_to};
+/// Not public API: used by the `ron2-lsp` crate.
 #[doc(hidden)]
 pub use unescape::decode_string;
 
@@ -288,6 +280,29 @@ impl Attribute<'_> {
     }
 }
 
+/// Writes the attribute in canonical form: `#![name]`, `#![name = value]` or
+/// `#![name(a, b)]`.
+impl fmt::Display for Attribute<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#![{}", self.name)?;
+        match &self.content {
+            AttributeContent::None => {}
+            AttributeContent::Value(value) => write!(f, " = {value}")?,
+            AttributeContent::Args(args) => {
+                f.write_str("(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    f.write_str(arg)?;
+                }
+                f.write_str(")")?;
+            }
+        }
+        f.write_str("]")
+    }
+}
+
 /// The content of an attribute after the name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttributeContent<'a> {
@@ -346,7 +361,7 @@ pub enum Expr<'a> {
     Tuple(TupleExpr<'a>),
     /// Anonymous struct: `(field: value, ...)`.
     AnonStruct(AnonStructExpr<'a>),
-    /// Named struct: `Name(...)` or `Name { ... }`.
+    /// Named struct or enum variant: `Name`, `Name(a, b)` or `Name(x: 1)`.
     Struct(StructExpr<'a>),
     /// Placeholder expression produced during lossy parsing.
     Error(ErrorExpr),
@@ -802,20 +817,20 @@ impl_into_owned!(TupleElement {
 // Struct expression
 // ============================================================================
 
-/// Struct expression: `Name(...)`, `Name { ... }`, or `Name`.
+/// Struct expression: `Name`, `Name(a, b)` or `Name(x: 1)`.
 ///
 /// This covers:
 /// - Named tuple structs: `Point(1, 2)`
-/// - Named structs with fields: `Config { x: 1, y: 2 }`
-/// - Unit structs: `None` (when not the built-in None)
-/// - Enum variants: `Variant(...)` or `Variant { ... }`
+/// - Named structs with fields: `Config(x: 1, y: 2)`
+/// - Unit structs: `Unit`
+/// - Enum variants: `Variant`, `Variant(a)` or `Variant(x: 1)`
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructExpr<'a> {
     /// The span of the entire struct expression.
     pub span: Span,
     /// The struct/enum name.
     pub name: Ident<'a>,
-    /// Trivia between name and body (e.g., space in `Point { ... }`).
+    /// Trivia between name and body (e.g. `Point /* c */ (x: 1)`).
     pub pre_body: Trivia<'a>,
     /// The body of the struct, if any.
     pub body: Option<StructBody<'a>>,
@@ -848,7 +863,7 @@ impl_into_owned!(Ident {
 pub enum StructBody<'a> {
     /// Tuple-style body: `(a, b, c)`.
     Tuple(TupleBody<'a>),
-    /// Named fields body: `{ x: 1, y: 2 }`.
+    /// Named fields body: `(x: 1, y: 2)`.
     Fields(FieldsBody<'a>),
 }
 
@@ -886,18 +901,18 @@ impl_into_owned!(TupleBody {
     close_paren: copy,
 });
 
-/// Named fields struct body: `{ x: 1, y: 2 }`.
+/// Named fields struct body: `(x: 1, y: 2)`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldsBody<'a> {
-    /// Span of the opening brace `{`.
+    /// Span of the opening parenthesis `(` (named `open_brace` for historical reasons).
     pub open_brace: Span,
-    /// Leading trivia after the opening brace.
+    /// Leading trivia after the opening parenthesis.
     pub leading: Trivia<'a>,
     /// The struct fields.
     pub fields: Vec<StructField<'a>>,
-    /// Trailing trivia before the closing brace.
+    /// Trailing trivia before the closing parenthesis.
     pub trailing: Trivia<'a>,
-    /// Span of the closing brace `}`.
+    /// Span of the closing parenthesis `)`.
     pub close_brace: Span,
 }
 

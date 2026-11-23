@@ -38,9 +38,9 @@ pub use spanned::Spanned;
 
 use crate::{
     Value,
-    ast::{Expr, expr_to_value, format_expr, parse_document, value_to_expr},
+    ast::{Expr, expr_to_value, parse_document, value_to_expr},
     error::{Error, ErrorKind, Result},
-    fmt::FormatConfig,
+    fmt::{FormatConfig, format_expr},
 };
 
 /// Trait for types that can be converted to RON.
