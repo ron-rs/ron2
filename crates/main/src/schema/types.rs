@@ -242,6 +242,13 @@ pub struct Field {
         ron(default, skip_serializing_if = "std::ops::Not::not")
     )]
     pub flattened: bool,
+    /// Whether an `Option` field must be written as `Some(..)` or `None`
+    /// (`#[ron(explicit)]`), rather than also accepting a bare value.
+    #[cfg_attr(
+        feature = "derive",
+        ron(default, skip_serializing_if = "std::ops::Not::not")
+    )]
+    pub explicit: bool,
 }
 
 /// A variant in an enum.
@@ -318,6 +325,7 @@ impl Field {
             doc: None,
             optional: false,
             flattened: false,
+            explicit: false,
         }
     }
 
@@ -351,6 +359,13 @@ impl Field {
     #[must_use]
     pub fn with_flatten(mut self) -> Self {
         self.flattened = true;
+        self
+    }
+
+    /// Require `Some(..)` or `None` for this `Option` field.
+    #[must_use]
+    pub fn with_explicit(mut self) -> Self {
+        self.explicit = true;
         self
     }
 }

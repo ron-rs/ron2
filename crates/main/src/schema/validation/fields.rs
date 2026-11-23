@@ -6,7 +6,7 @@ use ahash::{HashSet, HashSetExt};
 
 use super::{SchemaResolver, Severity, Walker};
 use crate::{
-    ast::StructField,
+    ast::{Expr, StructField},
     error::{Error, ErrorKind, Span},
     schema::{Field, Schema, TypeKind},
 };
@@ -126,7 +126,7 @@ impl<R: SchemaResolver + ?Sized> Walker<'_, R> {
                 .find(|f| !f.flattened && f.name == name)
                 .or_else(|| flattened.find_field(name))
             {
-                self.check(&ast_field.value, &field.ty, None);
+                self.check_field_value(&ast_field.value, field);
             } else if let Some(value_kind) = flattened.map_value() {
                 self.check(&ast_field.value, value_kind, None);
             } else if !flattened.open {
@@ -157,6 +157,19 @@ impl<R: SchemaResolver + ?Sized> Walker<'_, R> {
                 self.report_missing(flat.fields(), &seen, span);
             }
         }
+    }
+
+    /// Check a field's value. A `#[ron(explicit)]` option must be written
+    /// as `Some(..)` or `None`, like `FromRon` requires.
+    fn check_field_value(&mut self, expr: &Expr<'_>, field: &Field) {
+        if field.explicit
+            && matches!(field.ty, TypeKind::Option(_))
+            && !matches!(expr, Expr::Option(_) | Expr::Error(_))
+        {
+            self.mismatch("Some(...) or None", expr);
+            return;
+        }
+        self.check(expr, &field.ty, None);
     }
 
     /// Check a struct written without fields (`()` or `Name()`): valid when

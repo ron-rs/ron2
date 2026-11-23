@@ -52,13 +52,7 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
         }
     };
 
-    let schema_fn = cont.doc.as_ref().map(|doc| {
-        quote! {
-            fn schema() -> ::ron2::schema::Schema {
-                ::ron2::schema::Schema::with_doc(#doc, <Self as ::ron2::schema::RonSchema>::type_kind())
-            }
-        }
-    });
+    let schema_fn = schema_fn(cont);
 
     let mut seen = HashSet::new();
     let registrations: Vec<_> = cont
@@ -109,16 +103,45 @@ fn field_schemas(fields: &[Field<'_>]) -> TokenStream {
         let kind = reference_kind(field);
         let has_default = field.default_fn().is_some();
         let doc = field.doc.as_ref().map(|doc| quote!(.with_doc(#doc)));
-        let field = if field.is_flatten() {
+        let explicit = field.attrs.explicit.map(|_| quote!(.with_explicit()));
+        let constructor = if field.is_flatten() {
             quote!(::ron2::__private::flattened_field(#name, #kind, #has_default))
         } else if has_default {
             quote!(::ron2::schema::Field::optional(#name, #kind))
         } else {
             quote!(::ron2::schema::Field::new(#name, #kind))
         };
-        quote!(#field #doc)
+        quote!(#constructor #doc #explicit)
     });
     quote!(::std::vec![#(#fields),*])
+}
+
+/// `schema()`: the kind plus the type's doc comment, the struct name RON
+/// input must use, and `deny_unknown_fields`.
+fn schema_fn(cont: &Container<'_>) -> TokenStream {
+    let base = match &cont.doc {
+        Some(doc) => quote!(::ron2::schema::Schema::with_doc(
+            #doc,
+            <Self as ::ron2::schema::RonSchema>::type_kind(),
+        )),
+        None => quote!(::ron2::schema::Schema::new(
+            <Self as ::ron2::schema::RonSchema>::type_kind(),
+        )),
+    };
+    let is_struct = matches!(cont.data, Data::Struct(..)) && cont.attrs.transparent.is_none();
+    let name = is_struct.then(|| {
+        let name = &cont.name;
+        quote!(.with_name(#name))
+    });
+    let deny = cont
+        .attrs
+        .deny_unknown_fields
+        .map(|_| quote!(.with_deny_unknown_fields()));
+    quote! {
+        fn schema() -> ::ron2::schema::Schema {
+            #base #name #deny
+        }
+    }
 }
 
 fn variant_schema(variant: &Variant<'_>) -> TokenStream {

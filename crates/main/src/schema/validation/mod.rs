@@ -522,11 +522,13 @@ impl<'r, R: SchemaResolver + ?Sized> Walker<'r, R> {
             (VariantKind::Struct(fields), Some(StructBody::Fields(body))) => {
                 self.check_fields(&body.fields, fields, s.span, deny_unknown);
             }
+            // `V()` and bare `V`, like `FromRon`, when every field has a default.
             (VariantKind::Struct(fields), Some(StructBody::Tuple(body)))
                 if body.elements.is_empty() =>
             {
                 self.check_defaults_only(fields, s.span);
             }
+            (VariantKind::Struct(fields), None) => self.check_defaults_only(fields, s.span),
             (kind, _) => {
                 let expected = match kind {
                     VariantKind::Unit => "unit variant",
