@@ -16,8 +16,9 @@ use ron2::{
 
 /// Format RON files
 #[derive(Args, Debug)]
+#[command(after_help = "Exit codes: 0 = success, 1 = --check found unformatted input, 2 = error.")]
 pub struct FmtArgs {
-    /// Input file (reads from stdin if not provided)
+    /// Input file, formatted in place (reads stdin and writes stdout if omitted)
     #[arg(value_name = "FILE")]
     pub input: Option<PathBuf>,
 
@@ -29,11 +30,11 @@ pub struct FmtArgs {
     #[arg(short, long, default_value = "80", value_name = "N")]
     pub width: usize,
 
-    /// Check if file is formatted correctly (exit 1 if not)
+    /// Check if the input is formatted, without writing anything (exit 1 if not)
     #[arg(short, long)]
     pub check: bool,
 
-    /// Write output to file instead of stdout
+    /// Write the result to FILE [default: the input file in place, or stdout for stdin]
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
 }

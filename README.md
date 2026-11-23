@@ -133,6 +133,8 @@ ron fmt config.ron              # Format in place
 ron fmt --check config.ron      # Check formatting (for CI)
 ```
 
+`ron` exits with 1 when `--check` finds unformatted input and with 2 on errors.
+
 Generate documentation from schemas:
 
 ```bash

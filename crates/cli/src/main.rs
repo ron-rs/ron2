@@ -13,6 +13,9 @@ mod fmt;
 #[derive(Parser)]
 #[command(name = "ron")]
 #[command(version, about, long_about = None)]
+#[command(
+    after_help = "Exit codes: 0 = success, 1 = `ron fmt --check` found unformatted input, 2 = error."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

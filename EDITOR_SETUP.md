@@ -21,7 +21,8 @@
 
 3. **Configure schema directories** (optional)
 
-   Add initialization options to pass schema directories:
+   Pass schema directories as initialization options (flat, or nested under a
+   `ron` key as in VS Code settings):
 
    ```toml
    [language-server.ron-lsp]
@@ -48,7 +49,7 @@
    )
    ```
 
-   Or use an explicit schema path:
+   Or use an explicit schema path, relative to the RON file:
    ```ron
    #![schema = "./schemas/app_config.schema.ron"]
 
@@ -57,25 +58,31 @@
    )
    ```
 
-5. **Generate schemas** (using derive macros)
+5. **Generate schemas**
+
+   Derive `Ron` (or `RonSchema`) and write the schemas with `write_schemas`,
+   for example from a test or a small binary:
 
    ```rust
-   use ron2::Ron;
+   use ron2::{Ron, schema::RonSchema};
 
    #[derive(Ron)]
-   #[ron(output = "schemas/")]  // Output directory relative to crate root
    pub struct AppConfig {
        /// Server port
        port: u16,
        /// Hostname
        host: String,
    }
+
+   fn main() -> Result<(), Box<dyn std::error::Error>> {
+       // Writes schemas/my_crate/config/AppConfig.schema.ron and every type it references.
+       AppConfig::write_schemas(Some("schemas"))?;
+       Ok(())
+   }
    ```
 
-   Build your crate to generate schemas:
-   ```bash
-   cargo build
-   ```
+   `write_schemas(None)` writes to `RON_SCHEMA_DIR` or the XDG default
+   (`~/.local/share/ron-schemas/`), which the LSP also searches.
 
 ## VS Code
 
