@@ -160,6 +160,15 @@ mod tests {
         let diagnostics = validate_document(&doc, &resolver);
         assert!(!diagnostics.is_empty());
         assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+        // The first error points at `invalid`, which has no `:` after it.
+        assert_eq!(
+            diagnostics[0].message,
+            "Expected `:` after field name in struct field"
+        );
+        assert_eq!(
+            diagnostics[0].range,
+            Range::new(Position::new(2, 4), Position::new(2, 11))
+        );
     }
 
     #[test]

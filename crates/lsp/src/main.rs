@@ -378,7 +378,7 @@ mod tests {
         let HoverContents::Markup(markup) = hover.contents else {
             panic!("expected markup, got {:?}", hover.contents);
         };
-        assert!(markup.value.contains("Server port"), "{}", markup.value);
+        assert_eq!(markup.value, "**port**: `u16`\n\nServer port");
 
         // `port` is used, so only `host` is left to complete.
         let completion = server

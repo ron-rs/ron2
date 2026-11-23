@@ -137,9 +137,7 @@ mod tests {
         let field = Field::new("port", TypeKind::U16).with_doc("The server port");
         let hover = format_field_hover(&field);
 
-        assert!(hover.contains("**port**"));
-        assert!(hover.contains("`u16`"));
-        assert!(hover.contains("The server port"));
+        assert_eq!(hover, "**port**: `u16`\n\nThe server port");
     }
 
     #[test]
@@ -147,7 +145,7 @@ mod tests {
         let field = Field::optional("host", TypeKind::String).with_doc("The hostname");
         let hover = format_field_hover(&field);
 
-        assert!(hover.contains("(optional)"));
+        assert_eq!(hover, "**host**: `String` (optional)\n\nThe hostname");
     }
 
     fn tree_resolver() -> Box<DynResolver> {
@@ -169,7 +167,7 @@ mod tests {
         assert_eq!(hover_at("(unknown|: 1)", "t::Tree", &*r), None);
         assert_eq!(hover_at("(value: Unkn|own)", "t::Tree", &*r), None);
         let nested = hover_at("(children: [(val|ue: 1)])", "t::Tree", &*r).expect("hover");
-        assert!(nested.contains("**value**: `i32`"), "{nested}");
+        assert_eq!(nested, "**value**: `i32`");
     }
 
     #[test]
@@ -192,8 +190,8 @@ mod tests {
             ),
         ]);
         let info = hover_at("(name: \"a\", child: (na|me: 1))", "t::Root", &r).expect("hover");
-        assert!(info.contains("Child name"), "{info}");
+        assert_eq!(info, "**name**: `u8`\n\nChild name");
         let info = hover_at("(na|me: \"a\", child: (name: 1))", "t::Root", &r).expect("hover");
-        assert!(info.contains("Root name"), "{info}");
+        assert_eq!(info, "**name**: `String`\n\nRoot name");
     }
 }

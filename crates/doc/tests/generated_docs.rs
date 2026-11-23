@@ -301,14 +301,28 @@ fn cross_type_links_exist() {
     let schemas = showcase_schemas();
     let config = config(OutputFormat::Plain, 2);
     let generator = DocGenerator::new(&schemas, &config);
-    let links: usize = schemas
-        .iter()
-        .map(|s| link_targets(&generator.type_page(s)).len())
-        .sum();
-    assert!(
-        links > schemas.len(),
-        "expected cross-type links, found {links}"
+    // Links to other pages (not same-page anchors), by page.
+    let page_links = |name: &str| -> Vec<String> {
+        let schema = schemas
+            .iter()
+            .find(|s| s.type_path == format!("example_showcase::{name}"))
+            .expect("showcase schema");
+        link_targets(&generator.type_page(schema))
+            .into_iter()
+            .filter(|link| !link.starts_with('#'))
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(
+        page_links("GameConfig"),
+        [
+            "./WindowConfig.md",
+            "./GraphicsQuality.md",
+            "./AudioConfig.md",
+            "./PlayerConfig.md"
+        ]
     );
+    assert_eq!(page_links("PlayerConfig"), ["./ShipType.md"]);
 }
 
 /// A chain of `count` structs, each referencing the next.

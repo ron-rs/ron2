@@ -250,10 +250,14 @@ mod tests {
     #[test]
     fn test_completion_context() {
         let doc = doc("(\n    port: 8080,\n\n)");
-        assert!(matches!(
+        assert_eq!(
             doc.context_at_position(2, 4),
-            CursorContext::FieldName { .. }
-        ));
+            CursorContext::FieldName {
+                path: vec![],
+                used: vec!["port".to_string()],
+                ident: None,
+            }
+        );
     }
 
     #[test]

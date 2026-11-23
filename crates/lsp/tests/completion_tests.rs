@@ -189,15 +189,9 @@ mod hover_integration {
             tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
             _ => panic!("Expected markup content"),
         };
-        assert!(
-            content.contains("title"),
-            "Hover should mention field name: {}",
-            content
-        );
-        assert!(
-            content.contains("String"),
-            "Hover should mention type: {}",
-            content
+        assert_eq!(
+            content,
+            "**title**: `String`\n\nGame title displayed in the window."
         );
     }
 
@@ -227,11 +221,7 @@ mod hover_integration {
             tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
             _ => panic!("Expected markup content"),
         };
-        assert!(
-            content.contains("width"),
-            "Hover should mention field name: {}",
-            content
-        );
+        assert_eq!(content, "**width**: `u32`");
     }
 
     #[test]
@@ -262,11 +252,7 @@ mod hover_integration {
             tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
             _ => panic!("Expected markup content"),
         };
-        assert!(
-            content.contains("weapon_slots"),
-            "Hover should mention field name: {}",
-            content
-        );
+        assert_eq!(content, "**weapon_slots**: `u8`");
     }
 
     #[test]
@@ -291,11 +277,7 @@ mod hover_integration {
             tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
             _ => panic!("Expected markup content"),
         };
-        assert!(
-            content.contains("High"),
-            "Hover should mention variant name: {}",
-            content
-        );
+        assert_eq!(content, "**High**");
     }
 
     // =========================================================================
@@ -326,11 +308,7 @@ mod hover_integration {
             tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
             _ => panic!("Expected markup content"),
         };
-        assert!(
-            content.contains("width"),
-            "Hover should mention field name: {}",
-            content
-        );
+        assert_eq!(content, "**width**: `u32`");
     }
 
     #[test]
@@ -357,16 +335,7 @@ mod hover_integration {
             tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
             _ => panic!("Expected markup content"),
         };
-        assert!(
-            content.contains("version"),
-            "Hover should mention field name: {}",
-            content
-        );
-        assert!(
-            content.contains("String"),
-            "Hover should mention type: {}",
-            content
-        );
+        assert_eq!(content, "**version**: `String`\n\nVersion string.");
     }
 
     /// Regression: hover searched recursive schemas without a visited set and
@@ -395,8 +364,12 @@ mod hover_integration {
 
         // Unknown field, a field two levels down, and values behind a TypeRef cycle.
         assert!(ron2_lsp::hover::provide_hover(&doc, Position::new(3, 5), &resolver).is_none());
-        let nested = ron2_lsp::hover::provide_hover(&doc, Position::new(4, 17), &resolver);
-        assert!(nested.is_some(), "hover on nested `name`");
+        let nested = ron2_lsp::hover::provide_hover(&doc, Position::new(4, 17), &resolver)
+            .expect("hover on nested `name`");
+        let tower_lsp::lsp_types::HoverContents::Markup(nested) = nested.contents else {
+            panic!("Expected markup content");
+        };
+        assert_eq!(nested.value, "**name**: `String`\n\nNode name.");
         assert!(ron2_lsp::hover::provide_hover(&doc, Position::new(4, 47), &resolver).is_none());
         assert!(ron2_lsp::hover::provide_hover(&doc, Position::new(5, 10), &resolver).is_none());
         let _ = std::fs::remove_dir_all(dir);
@@ -506,15 +479,7 @@ mod completion_integration {
 
         let window = window_completion.unwrap();
         // Detail should show the fully qualified TypeRef path
-        assert!(
-            window
-                .detail
-                .as_ref()
-                .unwrap()
-                .contains("ron_showcase::WindowConfig"),
-            "Window field should show TypeRef type: {:?}",
-            window.detail
-        );
+        assert_eq!(window.detail.as_deref(), Some("ron_showcase::WindowConfig"));
     }
 
     #[test]
@@ -565,11 +530,9 @@ mod completion_integration {
 
         // Fighter should show struct fields in detail
         let fighter = completions.iter().find(|c| c.label == "Fighter").unwrap();
-        let detail = fighter.detail.as_ref().unwrap();
-        assert!(
-            detail.contains("weapon_slots") && detail.contains("shield_strength"),
-            "Fighter detail should show struct fields: {}",
-            detail
+        assert_eq!(
+            fighter.detail.as_deref(),
+            Some("Struct variant{ weapon_slots: u8, shield_strength: f32 }")
         );
     }
 
@@ -593,15 +556,8 @@ mod completion_integration {
         let snippet = struct_completion.unwrap();
         let insert_text = snippet.insert_text.as_ref().unwrap();
 
-        // Should include required fields (width and height are required)
-        assert!(
-            insert_text.contains("width"),
-            "Snippet should include 'width' field"
-        );
-        assert!(
-            insert_text.contains("height"),
-            "Snippet should include 'height' field"
-        );
+        // Should include the required fields only (fullscreen is optional)
+        assert_eq!(insert_text, "(\n    width: ${1},\n    height: ${2}\n)");
     }
 
     #[test]
@@ -638,23 +594,6 @@ mod completion_integration {
     }
 
     #[test]
-    fn test_completion_context_after_colon() {
-        let content = r#"#![type = "ron_showcase::GameConfig"]
-
-(
-    title:
-)"#;
-        let doc = make_doc(content);
-
-        // After the colon, context should be Value
-        let context = doc.context_at_position(3, 11);
-        assert!(
-            matches!(context, ron2_lsp::CursorContext::Value { .. }),
-            "After colon should be Value context"
-        );
-    }
-
-    #[test]
     fn test_completion_context_after_comma() {
         let content = r#"#![type = "ron_showcase::GameConfig"]
 
@@ -666,8 +605,13 @@ mod completion_integration {
 
         // After comma and newline, should be FieldName context
         let context = doc.context_at_position(4, 4);
-        assert!(
-            matches!(context, ron2_lsp::CursorContext::FieldName { .. }),
+        assert_eq!(
+            context,
+            ron2_lsp::CursorContext::FieldName {
+                path: vec![],
+                used: vec!["title".to_string()],
+                ident: None,
+            },
             "After comma should be FieldName context"
         );
     }
@@ -704,9 +648,14 @@ mod completion_integration {
         assert!(title.is_some(), "Should have 'title' completion");
 
         let title = title.unwrap();
-        assert!(
-            title.documentation.is_some(),
-            "Title completion should have documentation"
+        assert_eq!(
+            title.documentation,
+            Some(tower_lsp::lsp_types::Documentation::MarkupContent(
+                tower_lsp::lsp_types::MarkupContent {
+                    kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                    value: "Game title displayed in the window.".to_string(),
+                }
+            ))
         );
     }
 
@@ -724,8 +673,12 @@ mod completion_integration {
 
         // After "title:" - value context should be detected
         let context = doc.context_at_position(3, 11);
-        assert!(
-            matches!(context, ron2_lsp::CursorContext::Value { .. }),
+        assert_eq!(
+            context,
+            ron2_lsp::CursorContext::Value {
+                path: vec![ron2_lsp::PathStep::Field("title".into())],
+                ident: None,
+            },
             "After colon should be Value context"
         );
 
@@ -777,11 +730,9 @@ mod completion_integration {
         // After "keybindings:" - should suggest map snippet
         let completions = ron2_lsp::provide_completions(&doc, Position::new(3, 17), &resolver);
 
-        let map_completion = completions.iter().find(|c| c.label == "{}");
-        assert!(
-            map_completion.is_some(),
-            "Map field should suggest empty map snippet"
-        );
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, ["{}"], "Map field should suggest empty map snippet");
+        assert_eq!(completions[0].insert_text.as_deref(), Some("{$1}"));
     }
 
     #[test]
@@ -798,10 +749,15 @@ mod completion_integration {
         // After "window:" - should suggest struct snippet (WindowConfig is a struct)
         let completions = ron2_lsp::provide_completions(&doc, Position::new(3, 12), &resolver);
 
-        let struct_completion = completions.iter().find(|c| c.label == "(...)");
-        assert!(
-            struct_completion.is_some(),
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["(...)"],
             "TypeRef to struct should suggest struct snippet"
+        );
+        assert_eq!(
+            completions[0].insert_text.as_deref(),
+            Some("(\n    width: ${1},\n    height: ${2}\n)")
         );
     }
 
@@ -888,8 +844,12 @@ graphics:
 
         // Position right after the colon on "graphics:" line
         let context = doc.context_at_position(4, 13);
-        assert!(
-            matches!(context, ron2_lsp::CursorContext::Value { .. }),
+        assert_eq!(
+            context,
+            ron2_lsp::CursorContext::Value {
+                path: vec![ron2_lsp::PathStep::Field("graphics".into())],
+                ident: None,
+            },
             "Context after colon should be Value"
         );
 

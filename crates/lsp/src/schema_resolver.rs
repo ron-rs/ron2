@@ -377,7 +377,10 @@ mod tests {
 
         let resolver = SchemaResolver::with_revalidate_after(Duration::ZERO);
         resolver.set_schema_dirs(vec![dir.path().to_path_buf()]);
-        assert!(resolver.load_schema_by_type("app::Late").is_some());
+        assert_eq!(
+            resolver.load_schema_by_type("app::Late").unwrap().kind,
+            TypeKind::Bool
+        );
     }
 
     #[test]
@@ -391,7 +394,10 @@ mod tests {
             first.path().to_path_buf(),
             second.path().to_path_buf(),
         ]);
-        assert!(resolver.load_schema_by_type("app::Only").is_some());
+        assert_eq!(
+            resolver.load_schema_by_type("app::Only").unwrap().kind,
+            TypeKind::Bool
+        );
     }
 
     #[test]
