@@ -89,17 +89,19 @@ impl<'a> LinkResolver<'a> {
 
     /// The link target for a type's documentation, as seen from `from`.
     pub fn href(&self, type_path: &str, from: LinkFrom<'_>) -> String {
+        if let LinkFrom::SamePage = from {
+            return format!("#{}", type_anchor(type_path));
+        }
         let starlight = matches!(self.format, OutputFormat::Starlight);
         let target = self.route_segments(type_path);
         let trailing = if starlight { "/" } else { "" };
+        if let Some(base) = self.base_url {
+            let base = base.trim_end_matches('/');
+            return format!("{base}/{}{trailing}", target.join("/"));
+        }
 
         let from_dir: Vec<String> = match from {
-            LinkFrom::SamePage => return format!("#{}", type_anchor(type_path)),
-            _ if self.base_url.is_some() => {
-                let base = self.base_url.unwrap_or_default().trim_end_matches('/');
-                return format!("{base}/{}{trailing}", target.join("/"));
-            }
-            LinkFrom::Index => Vec::new(),
+            LinkFrom::SamePage | LinkFrom::Index => Vec::new(),
             // A Starlight page is served as a directory; a Markdown page lives in one.
             LinkFrom::Type(path) if starlight => self.route_segments(path),
             LinkFrom::Type(path) => {
