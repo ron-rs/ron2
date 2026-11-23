@@ -4,7 +4,7 @@ use alloc::{borrow::Cow, vec::Vec};
 
 use super::{AstParser, core::expected};
 use crate::{
-    ast::{Attribute, AttributeContent, Trivia},
+    ast::{Attribute, AttributeArg, AttributeContent, Trivia},
     error::{Error, Result, Span},
     token::TokenKind,
 };
@@ -29,40 +29,41 @@ impl<'a> AstParser<'a> {
         attributes
     }
 
-    /// Parse a single attribute. Its text is reproduced from its span, so
-    /// trivia inside it is not kept separately.
+    /// Parse a single attribute, keeping the trivia between its tokens.
     fn parse_attribute(&mut self, leading: Trivia<'a>) -> Result<Attribute<'a>> {
         let hash = self.next_token();
+        let expected_attribute = || Error::with_span(expected("attribute", None), hash.span);
 
-        if self.eat(TokenKind::Bang).is_none() || self.eat(TokenKind::LBracket).is_none() {
-            return Err(Error::with_span(expected("attribute", None), hash.span));
-        }
+        let post_hash = self.take_trivia();
+        self.eat(TokenKind::Bang).ok_or_else(expected_attribute)?;
+        let post_bang = self.take_trivia();
+        self.eat(TokenKind::LBracket)
+            .ok_or_else(expected_attribute)?;
+        let pre_name = self.take_trivia();
 
         if self.peek_kind() != TokenKind::Ident {
             return Err(Error::with_span(expected("identifier", None), hash.span));
         }
         let name = self.next_token();
+        let post_name = self.take_trivia();
 
         let content = if self.eat(TokenKind::Eq).is_some() {
+            let post_eq = self.take_trivia();
             if self.peek_kind() != TokenKind::String {
                 return Err(Error::with_span(expected("string", None), name.span));
             }
-            AttributeContent::Value(Cow::Borrowed(self.next_token().text))
-        } else if self.eat(TokenKind::LParen).is_some() {
-            let mut args = Vec::new();
-            while self.eat(TokenKind::RParen).is_none() {
-                if self.peek_kind() != TokenKind::Ident {
-                    return Err(Error::with_span(
-                        expected("identifier", None),
-                        self.peek_span(),
-                    ));
-                }
-                args.push(Cow::Borrowed(self.next_token().text));
-                self.eat(TokenKind::Comma);
+            AttributeContent::Value {
+                post_eq,
+                value: Cow::Borrowed(self.next_token().text),
             }
-            AttributeContent::Args(args)
+        } else if self.eat(TokenKind::LParen).is_some() {
+            self.parse_attribute_args()?
         } else {
             AttributeContent::None
+        };
+        let trailing = match content {
+            AttributeContent::None => Trivia::empty(),
+            _ => self.take_trivia(),
         };
 
         let Some(close) = self.eat(TokenKind::RBracket) else {
@@ -75,8 +76,47 @@ impl<'a> AstParser<'a> {
         Ok(Attribute {
             span: Span::between(&hash.span, &close),
             leading,
+            post_hash,
+            post_bang,
+            pre_name,
             name: Cow::Borrowed(name.text),
+            post_name,
             content,
+            trailing,
+        })
+    }
+
+    /// Parse `a, b)` after the `(` of an attribute: comma-separated identifiers.
+    fn parse_attribute_args(&mut self) -> Result<AttributeContent<'a>> {
+        let mut args = Vec::new();
+        let mut leading = self.take_trivia();
+        while self.eat(TokenKind::RParen).is_none() {
+            if self.peek_kind() != TokenKind::Ident {
+                return Err(Error::with_span(
+                    expected("identifier", None),
+                    self.peek_span(),
+                ));
+            }
+            let name = Cow::Borrowed(self.next_token().text);
+            let trailing = self.take_trivia();
+            let comma = self.eat(TokenKind::Comma);
+            args.push(AttributeArg {
+                leading,
+                name,
+                trailing,
+                comma,
+            });
+            leading = self.take_trivia();
+            if comma.is_none() && self.peek_kind() != TokenKind::RParen {
+                return Err(Error::with_span(
+                    expected("comma", Some("attribute")),
+                    self.peek_span(),
+                ));
+            }
+        }
+        Ok(AttributeContent::Args {
+            args,
+            trailing: leading,
         })
     }
 }
@@ -84,6 +124,12 @@ impl<'a> AstParser<'a> {
 #[cfg(test)]
 #[allow(clippy::panic)]
 mod tests {
+    use alloc::{
+        string::{String, ToString},
+        vec,
+        vec::Vec,
+    };
+
     use super::super::{parse_document, parse_document_lossy};
     use crate::ast::{AttributeContent, serialize_document};
 
@@ -93,11 +139,71 @@ mod tests {
         assert_eq!(doc.attributes.len(), 1);
         assert_eq!(doc.attributes[0].name, "enable");
         match &doc.attributes[0].content {
-            AttributeContent::Args(args) => {
-                assert_eq!(args, &["unwrap_newtypes"]);
+            AttributeContent::Args { args, .. } => {
+                let names: Vec<_> = args.iter().map(|arg| &*arg.name).collect();
+                assert_eq!(names, ["unwrap_newtypes"]);
             }
             _ => panic!("expected args"),
         }
+    }
+
+    /// The comments of each gap between an attribute's tokens.
+    fn gaps(source: &str) -> Vec<Vec<String>> {
+        let doc = parse_document(source).unwrap();
+        doc.attributes[0]
+            .inner_trivia()
+            .map(|t| t.comments.iter().map(|c| c.text.to_string()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn trivia_between_attribute_tokens_is_kept() {
+        let c = |s: &str| vec![s.to_string()];
+        assert_eq!(
+            gaps("#/*a*/!/*b*/[/*c*/type/*d*/=/*e*/\"Foo\"/*f*/]\n42"),
+            [
+                c("/*a*/"),
+                c("/*b*/"),
+                c("/*c*/"),
+                c("/*d*/"),
+                c("/*e*/"),
+                c("/*f*/")
+            ]
+        );
+        // Per argument: leading and trailing; then the trivia after the last
+        // comma, and after `)`.
+        assert_eq!(
+            gaps("#![enable/*n*/(/*a*/x/*b*/,/*c*/y,/*d*/)/*e*/]\n42"),
+            [
+                vec![],
+                vec![],
+                vec![],
+                c("/*n*/"),
+                c("/*a*/"),
+                c("/*b*/"),
+                c("/*c*/"),
+                vec![],
+                c("/*d*/"),
+                c("/*e*/"),
+            ]
+        );
+        // Without content, everything after the name is `post_name`.
+        let doc = parse_document("#![name // c\n]\n42").unwrap();
+        let attr = &doc.attributes[0];
+        assert_eq!(attr.post_name.comments[0].text, "// c");
+        assert!(attr.trailing.is_empty());
+    }
+
+    #[test]
+    fn attribute_arguments_need_commas() {
+        let (doc, errors) = parse_document_lossy("#![enable(a b)]\n42");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(
+            errors[0].to_string(),
+            "1:13-1:14: Expected comma in attribute"
+        );
+        assert_eq!(doc.attributes, []);
+        assert!(parse_document("#![enable(a, b,)]\n42").is_ok());
     }
 
     #[test]

@@ -252,56 +252,113 @@ impl_into_owned!(Document {
 ///
 /// Attributes provide metadata about the RON document, such as
 /// the expected Rust type, schema path, or enabled extensions.
+///
+/// The trivia between its tokens is kept, so comments inside an attribute
+/// survive formatting and serialization: `#` [`post_hash`](Self::post_hash)
+/// `!` [`post_bang`](Self::post_bang) `[` [`pre_name`](Self::pre_name) name
+/// [`post_name`](Self::post_name) content [`trailing`](Self::trailing) `]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attribute<'a> {
     /// The span of the entire attribute.
     pub span: Span,
     /// Leading trivia before this attribute.
     pub leading: Trivia<'a>,
+    /// Trivia between `#` and `!`.
+    pub post_hash: Trivia<'a>,
+    /// Trivia between `!` and `[`.
+    pub post_bang: Trivia<'a>,
+    /// Trivia between `[` and the name.
+    pub pre_name: Trivia<'a>,
     /// The attribute name (e.g., "type", "schema", "enable").
     pub name: Cow<'a, str>,
+    /// Trivia after the name: before `=`, `(`, or `]` when there is no content.
+    pub post_name: Trivia<'a>,
     /// The attribute content.
     pub content: AttributeContent<'a>,
+    /// Trivia between the content and `]` (empty when there is no content).
+    pub trailing: Trivia<'a>,
 }
 
 impl_into_owned!(Attribute {
     span: copy,
     leading: owned(Trivia),
+    post_hash: owned(Trivia),
+    post_bang: owned(Trivia),
+    pre_name: owned(Trivia),
     name: cow,
+    post_name: owned(Trivia),
     content: owned(AttributeContent),
+    trailing: owned(Trivia),
 });
 
-impl Attribute<'_> {
+impl<'a> Attribute<'a> {
     /// Create a synthetic `#![type = "..."]` attribute.
     ///
     /// This is useful when constructing documents programmatically.
     /// The created attribute has synthetic spans (line 0, column 0).
     #[must_use]
     pub fn synthetic_type(type_path: &str) -> Attribute<'static> {
+        let space = || Trivia {
+            span: None,
+            whitespace: Cow::Borrowed(" "),
+            comments: Vec::new(),
+        };
+        let mut value = String::new();
+        escape::push_string(&mut value, type_path);
         Attribute {
             span: Span::synthetic(),
             leading: Trivia::empty(),
-            name: Cow::Owned("type".to_string()),
-            content: AttributeContent::Value(Cow::Owned(alloc::format!("\"{type_path}\""))),
+            post_hash: Trivia::empty(),
+            post_bang: Trivia::empty(),
+            pre_name: Trivia::empty(),
+            name: Cow::Borrowed("type"),
+            post_name: space(),
+            content: AttributeContent::Value {
+                post_eq: space(),
+                value: Cow::Owned(value),
+            },
+            trailing: Trivia::empty(),
         }
+    }
+
+    /// The trivia inside the attribute (not [`leading`](Self::leading)), in
+    /// source order.
+    pub fn inner_trivia(&self) -> impl Iterator<Item = &Trivia<'a>> {
+        let (content_leading, args, content_trailing): (_, &[AttributeArg<'a>], _) =
+            match &self.content {
+                AttributeContent::None => (None, &[], None),
+                AttributeContent::Value { post_eq, .. } => (Some(post_eq), &[], None),
+                AttributeContent::Args { args, trailing } => (None, args, Some(trailing)),
+            };
+        [
+            &self.post_hash,
+            &self.post_bang,
+            &self.pre_name,
+            &self.post_name,
+        ]
+        .into_iter()
+        .chain(content_leading)
+        .chain(args.iter().flat_map(|arg| [&arg.leading, &arg.trailing]))
+        .chain(content_trailing)
+        .chain([&self.trailing])
     }
 }
 
-/// Writes the attribute in canonical form: `#![name]`, `#![name = value]` or
-/// `#![name(a, b)]`.
+/// Writes the attribute in canonical form, without comments: `#![name]`,
+/// `#![name = value]` or `#![name(a, b)]`.
 impl fmt::Display for Attribute<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#![{}", self.name)?;
         match &self.content {
             AttributeContent::None => {}
-            AttributeContent::Value(value) => write!(f, " = {value}")?,
-            AttributeContent::Args(args) => {
+            AttributeContent::Value { value, .. } => write!(f, " = {value}")?,
+            AttributeContent::Args { args, .. } => {
                 f.write_str("(")?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         f.write_str(", ")?;
                     }
-                    f.write_str(arg)?;
+                    f.write_str(&arg.name)?;
                 }
                 f.write_str(")")?;
             }
@@ -316,9 +373,20 @@ pub enum AttributeContent<'a> {
     /// No content: `#![name]`
     None,
     /// Equals value: `#![name = "value"]`
-    Value(Cow<'a, str>),
+    Value {
+        /// Trivia between `=` and the value.
+        post_eq: Trivia<'a>,
+        /// The value's source text, a string literal including its quotes.
+        value: Cow<'a, str>,
+    },
     /// Parenthesized arguments: `#![enable(implicit_some, unwrap_newtypes)]`
-    Args(Vec<Cow<'a, str>>),
+    Args {
+        /// The arguments.
+        args: Vec<AttributeArg<'a>>,
+        /// Trivia after the last argument's comma (or after `(` when there
+        /// are no arguments), before `)`.
+        trailing: Trivia<'a>,
+    },
 }
 
 impl AttributeContent<'_> {
@@ -327,15 +395,46 @@ impl AttributeContent<'_> {
     pub fn into_owned(self) -> AttributeContent<'static> {
         match self {
             Self::None => AttributeContent::None,
-            Self::Value(v) => AttributeContent::Value(Cow::Owned(v.into_owned())),
-            Self::Args(args) => AttributeContent::Args(
-                args.into_iter()
-                    .map(|a| Cow::Owned(a.into_owned()))
-                    .collect(),
-            ),
+            Self::Value { post_eq, value } => AttributeContent::Value {
+                post_eq: post_eq.into_owned(),
+                value: Cow::Owned(value.into_owned()),
+            },
+            Self::Args { args, trailing } => AttributeContent::Args {
+                args: args.into_iter().map(AttributeArg::into_owned).collect(),
+                trailing: trailing.into_owned(),
+            },
+        }
+    }
+
+    /// The string literal of `#![name = "value"]` content, including quotes.
+    #[must_use]
+    pub fn value(&self) -> Option<&str> {
+        match self {
+            Self::Value { value, .. } => Some(value),
+            _ => None,
         }
     }
 }
+
+/// An argument of `#![name(a, b)]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttributeArg<'a> {
+    /// Trivia before the argument: after `(` or the previous comma.
+    pub leading: Trivia<'a>,
+    /// The argument (an identifier).
+    pub name: Cow<'a, str>,
+    /// Trivia between the argument and its comma (or `)`).
+    pub trailing: Trivia<'a>,
+    /// The comma after the argument, if any.
+    pub comma: Option<Span>,
+}
+
+impl_into_owned!(AttributeArg {
+    leading: owned(Trivia),
+    name: cow,
+    trailing: owned(Trivia),
+    comma: copy,
+});
 
 // ============================================================================
 // Expressions

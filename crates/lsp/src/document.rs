@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use ron2::ast::{self, AttributeContent, Document as AstDocument};
+use ron2::ast::{self, Document as AstDocument};
 use tower_lsp::lsp_types::{Position, Range, Url};
 
 use crate::cursor::{self, CursorContext};
@@ -144,10 +144,7 @@ impl Document {
             doc.attributes
                 .iter()
                 .find(|a| a.name == name)
-                .and_then(|a| match &a.content {
-                    AttributeContent::Value(v) => Some(decode_attribute_string(v)),
-                    _ => None,
-                })
+                .and_then(|a| a.content.value().map(decode_attribute_string))
         };
         self.type_attr = attribute("type");
         self.schema_attr = attribute("schema");

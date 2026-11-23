@@ -381,6 +381,7 @@ fn in_comment(doc: &ast::Document<'_>, offset: usize) -> bool {
     check(&doc.leading);
     for attr in &doc.attributes {
         check(&attr.leading);
+        attr.inner_trivia().for_each(&mut check);
     }
     check(&doc.pre_value);
     if let Some(value) = &doc.value {

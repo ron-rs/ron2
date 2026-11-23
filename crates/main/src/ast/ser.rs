@@ -13,11 +13,10 @@ use core::fmt::Write;
 
 use crate::{
     ast::{
-        Attribute, CommentKind, Document, Expr, Ident, StructBody, StructField, Trivia,
-        TupleElement,
+        Attribute, AttributeContent, CommentKind, Document, Expr, Ident, StructBody, StructField,
+        Trivia, TupleElement,
     },
     error::{Error, ErrorKind, Result, Span},
-    lexer::Lexer,
 };
 
 /// Serialize an AST document back to RON text.
@@ -89,13 +88,32 @@ impl<W: Write> AstSerializer<'_, W> {
 
     fn attribute(&mut self, attr: &Attribute<'_>) -> Result<()> {
         self.trivia(&attr.leading)?;
-        // Attributes keep no inner trivia, so reuse the source text while it still
-        // spells the same tokens.
-        let canonical = attr.to_string();
-        match source_slice(self.source, &attr.span).filter(|text| same_tokens(text, &canonical)) {
-            Some(text) => self.str(text),
-            None => self.str(&canonical),
+        self.str("#")?;
+        self.trivia(&attr.post_hash)?;
+        self.str("!")?;
+        self.trivia(&attr.post_bang)?;
+        self.str("[")?;
+        self.trivia(&attr.pre_name)?;
+        self.str(&attr.name)?;
+        self.trivia(&attr.post_name)?;
+        match &attr.content {
+            AttributeContent::None => {}
+            AttributeContent::Value { post_eq, value } => {
+                self.str("=")?;
+                self.trivia(post_eq)?;
+                self.str(value)?;
+            }
+            AttributeContent::Args { args, trailing } => {
+                self.delimited("(", &Trivia::empty(), args, trailing, ")", |ser, arg| {
+                    ser.trivia(&arg.leading)?;
+                    ser.str(&arg.name)?;
+                    ser.trivia(&arg.trailing)?;
+                    Ok(arg.comma)
+                })?;
+            }
         }
+        self.trivia(&attr.trailing)?;
+        self.str("]")
     }
 
     fn expr(&mut self, expr: &Expr<'_>) -> Result<()> {
@@ -282,16 +300,6 @@ fn trivia_source<'s>(source: &'s str, trivia: &Trivia<'_>) -> Option<&'s str> {
     }
     gap(pos..span.end_offset)?;
     whitespace.is_empty().then_some(text)
-}
-
-/// Whether `a` and `b` consist of the same tokens, ignoring whitespace and comments.
-fn same_tokens(a: &str, b: &str) -> bool {
-    let tokens = |s| {
-        Lexer::new(s)
-            .filter(|token| !token.kind.is_trivia())
-            .map(|token| (token.kind, token.text))
-    };
-    tokens(a).eq(tokens(b))
 }
 
 #[cfg(test)]
@@ -630,8 +638,33 @@ Config(
     #[test]
     fn edited_attribute_is_serialized() {
         let mut doc = parse_document("#![type=\"Old\"]\n42").unwrap();
-        doc.attributes[0].content = crate::ast::AttributeContent::Value("\"New\"".into());
-        assert_eq!(serialize_document(&doc).unwrap(), "#![type = \"New\"]\n42");
+        let crate::ast::AttributeContent::Value { value, .. } = &mut doc.attributes[0].content
+        else {
+            panic!("expected a value");
+        };
+        *value = "\"New\"".into();
+        assert_eq!(serialize_document(&doc).unwrap(), "#![type=\"New\"]\n42");
+
+        // Comments inside the attribute stay where they were.
+        let mut doc = parse_document("#![type /* a */ = // b\n \"Old\" /* c */]\n42").unwrap();
+        doc.attributes[0].name = "schema".into();
+        assert_eq!(
+            serialize_document(&doc).unwrap(),
+            "#![schema /* a */ = // b\n \"Old\" /* c */]\n42"
+        );
+    }
+
+    #[test]
+    fn round_trip_attribute_comments() {
+        assert_round_trip("#![type /* c */ = \"Foo\"]\n42");
+        assert_round_trip(
+            "# /* a */ ! /* b */ [ /* c */ type /* d */ = /* e */ \"Foo\" /* f */ ]\n42",
+        );
+        assert_round_trip("#![type // c\n = \"Foo\"]\n42");
+        assert_round_trip(
+            "#![enable /* n */ ( /* a */ x /* b */ , // c\n y , /* d */ ) /* e */ ]\n42",
+        );
+        assert_round_trip("#![enable(/* empty */)]\n#![name /* bare */]\n42");
     }
 
     #[test]

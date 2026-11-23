@@ -83,6 +83,11 @@ const CORPUS: &[&str] = &[
     "Point(\n x: 1,\n // dangling\n)",
     "Some([\n 1,\n 2, // two\n])",
     "[[1 // c\n]]",
+    // Comments inside attributes.
+    "#![type /* c */ = \"Foo\"]\n42",
+    "# /* a */ ! /* b */ [ /* c */ type /* d */ = /* e */ \"Foo\" /* f */ ]\n42",
+    "#![type // c\n = \"Foo\"]\n#![enable( // a\n x /* b */ , y , /* c */ ) // d\n]\n(a: 1)",
+    "#![name /* bare */]\n#![enable(/* empty */)]\n42",
 ];
 
 fn configs() -> Vec<(&'static str, FormatConfig)> {
@@ -322,7 +327,7 @@ fn document_comments(doc: &Document<'_>) -> usize {
         + doc
             .attributes
             .iter()
-            .map(|a| trivia(&a.leading))
+            .map(|a| trivia(&a.leading) + a.inner_trivia().map(trivia).sum::<usize>())
             .sum::<usize>()
         + trivia(&doc.pre_value)
         + doc.value.as_ref().map_or(0, expr)

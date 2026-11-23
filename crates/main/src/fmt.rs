@@ -24,17 +24,12 @@
 //! assert_eq!(minimal, "Config(x:1,y:2)");
 //! ```
 
-use alloc::{
-    borrow::Cow,
-    collections::BTreeMap,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec::Vec};
 
 use crate::{
     ast::{
-        Comment, CommentKind, Document, Expr, Ident, MapEntry, OptionExpr, SeqItem, StructBody,
-        StructExpr, StructField, Trivia, TupleElement,
+        Attribute, AttributeContent, Comment, CommentKind, Document, Expr, Ident, MapEntry,
+        OptionExpr, SeqItem, StructBody, StructExpr, StructField, Trivia, TupleElement,
     },
     error::Span,
 };
@@ -890,7 +885,7 @@ impl<'c> Formatter<'c> {
                 self.comment_own_line(comment);
             }
             self.ensure_line_start();
-            self.token(&attr.to_string());
+            self.attribute(attr);
             self.pending_newline = true;
         }
         if self.config.is_pretty() && !doc.attributes.is_empty() && doc.value.is_some() {
@@ -911,6 +906,53 @@ impl<'c> Formatter<'c> {
         if self.config.is_pretty() && !self.out.is_empty() {
             self.ensure_line_start();
         }
+    }
+
+    /// Writes an attribute in canonical spacing (`#![name = value]`, `#![name(a, b)]`),
+    /// with the comments inside it in place.
+    fn attribute(&mut self, attr: &Attribute<'_>) {
+        self.token("#");
+        self.attribute_gap(&attr.post_hash, false);
+        self.token("!");
+        self.attribute_gap(&attr.post_bang, false);
+        self.token("[");
+        self.attribute_gap(&attr.pre_name, false);
+        self.token(&attr.name);
+        match &attr.content {
+            AttributeContent::None => self.attribute_gap(&attr.post_name, false),
+            AttributeContent::Value { post_eq, value } => {
+                self.attribute_gap(&attr.post_name, true);
+                self.token("=");
+                self.attribute_gap(post_eq, true);
+                self.token(value);
+            }
+            AttributeContent::Args { args, trailing } => {
+                self.attribute_gap(&attr.post_name, false);
+                self.token("(");
+                for (i, arg) in args.iter().enumerate() {
+                    self.attribute_gap(&arg.leading, i > 0);
+                    self.token(&arg.name);
+                    self.attribute_gap(&arg.trailing, false);
+                    if i + 1 < args.len() {
+                        self.token(",");
+                    }
+                }
+                self.attribute_gap(trailing, false);
+                self.token(")");
+            }
+        }
+        self.attribute_gap(&attr.trailing, false);
+        self.token("]");
+    }
+
+    /// The comments between two tokens of an attribute, inline (a line comment ends
+    /// the line). `space` separates the tokens when there are no comments.
+    fn attribute_gap(&mut self, trivia: &Trivia<'_>, space: bool) {
+        let comments = self.config.visible(trivia);
+        for comment in comments {
+            self.comment_inline(comment);
+        }
+        self.pending_space |= space || !comments.is_empty();
     }
 
     /// Writes `expr` at nesting `depth`; `suffix` is the width of what must follow it on
@@ -1364,6 +1406,32 @@ mod tests {
         let source = "#![enable(implicit_some, unwrap_newtypes)]\n42";
         let formatted = format(source);
         assert!(formatted.contains("#![enable(implicit_some, unwrap_newtypes)]"));
+    }
+
+    #[test]
+    fn comments_inside_attributes_are_kept() {
+        assert_eq!(
+            format("#![type /* c */ = \"Foo\"]\n42"),
+            "#![type /* c */ = \"Foo\"]\n\n42\n"
+        );
+        assert_eq!(
+            format("#/*a*/!/*b*/[/*c*/type/*d*/=/*e*/\"Foo\"/*f*/]\n42"),
+            "# /*a*/ ! /*b*/ [ /*c*/ type /*d*/ = /*e*/ \"Foo\" /*f*/ ]\n\n42\n"
+        );
+        // A line comment ends the line; the attribute continues on the next.
+        assert_eq!(
+            format("#![type // c\n = \"Foo\"]\n42"),
+            "#![type // c\n= \"Foo\"]\n\n42\n"
+        );
+        assert_eq!(
+            format("#![enable( /* a */ x /* b */ ,y, /* c */ )]\n#![name /* d */]\n42"),
+            "#![enable( /* a */ x /* b */ , y /* c */ )]\n#![name /* d */ ]\n\n42\n"
+        );
+        let delete = FormatConfig::default().comments(CommentMode::Delete);
+        assert_eq!(
+            format_with("#![type /* c */ = // d\n \"Foo\"]\n42", &delete),
+            "#![type = \"Foo\"]\n\n42\n"
+        );
     }
 
     // =========================================================================
