@@ -10,8 +10,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use ron2::Ron;
+//! ```
+//! use ron2::{FromRon, Ron};
 //!
 //! /// Application configuration
 //! #[derive(Debug, PartialEq, Ron)]
@@ -22,6 +22,10 @@
 //!     #[ron(default)]
 //!     host: Option<String>,
 //! }
+//!
+//! let config = AppConfig::from_ron("(port: 8080)")?;
+//! assert_eq!(config, AppConfig { port: 8080, host: None });
+//! # Ok::<(), ron2::Error>(())
 //! ```
 //!
 //! # Container Attributes
@@ -89,8 +93,13 @@ fn expand(
 ///
 /// Schemas are written at runtime with `write_schemas`:
 ///
-/// ```ignore
-/// use ron2::schema::RonSchema;
+/// ```no_run
+/// use ron2::{RonSchema, schema::RonSchema as _};
+///
+/// #[derive(RonSchema)]
+/// struct Config {
+///     port: u16,
+/// }
 ///
 /// // Write to a specific directory
 /// Config::write_schemas(Some("./schemas"))?;
@@ -98,12 +107,13 @@ fn expand(
 /// // Or to $RON_SCHEMA_DIR, falling back to the XDG data directory
 /// // (~/.local/share/ron-schemas/, requires the `xdg` feature of ron2)
 /// Config::write_schemas(None)?;
+/// # Ok::<(), ron2::schema::SchemaError>(())
 /// ```
 ///
 /// Schema files are named by their fully-qualified type path:
 /// `my_crate::config::Config` → `my_crate/config/Config.schema.ron`.
-/// Generic types have no schema file of their own; their schema is inlined
-/// where they are used.
+/// Each instantiation of a generic type has its own schema, named like
+/// `core::any::type_name` (`my_crate::Wrapper<u8>`).
 #[proc_macro_derive(RonSchema, attributes(ron))]
 pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
     expand(input, schema::expand)
@@ -111,7 +121,7 @@ pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
 
 /// Derive macro for serializing to RON.
 ///
-/// ```ignore
+/// ```
 /// use ron2::ToRon;
 ///
 /// #[derive(ToRon)]
@@ -120,7 +130,9 @@ pub fn derive_ron_schema(input: TokenStream) -> TokenStream {
 ///     y: f32,
 /// }
 ///
-/// let ron = Point { x: 1.0, y: 2.0 }.to_ron()?;
+/// let ron = Point { x: 1.0, y: 2.0 }.to_ron_with(&ron2::fmt::FormatConfig::minimal())?;
+/// assert_eq!(ron, "Point(x:1.0,y:2.0)");
+/// # Ok::<(), ron2::Error>(())
 /// ```
 #[proc_macro_derive(ToRon, attributes(ron))]
 pub fn derive_to_ron(input: TokenStream) -> TokenStream {
@@ -129,7 +141,7 @@ pub fn derive_to_ron(input: TokenStream) -> TokenStream {
 
 /// Derive macro for deserializing from RON.
 ///
-/// ```ignore
+/// ```
 /// use ron2::FromRon;
 ///
 /// #[derive(FromRon)]
@@ -139,6 +151,8 @@ pub fn derive_to_ron(input: TokenStream) -> TokenStream {
 /// }
 ///
 /// let point = Point::from_ron("(x: 1.0, y: 2.0)")?;
+/// assert_eq!(point.y, 2.0);
+/// # Ok::<(), ron2::Error>(())
 /// ```
 #[proc_macro_derive(FromRon, attributes(ron))]
 pub fn derive_from_ron(input: TokenStream) -> TokenStream {
