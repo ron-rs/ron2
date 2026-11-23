@@ -24,14 +24,18 @@
 //! # Mutation Example
 //!
 //! ```
-//! use ron2::ast::parse_document;
+//! use ron2::ast::{Expr, parse_document, serialize_document};
 //! use std::borrow::Cow;
 //!
-//! let source = "Config(name: \"old\")";
-//! let mut doc = parse_document(source).unwrap();
+//! let mut doc = parse_document("Config(name: \"old\") // keep me").unwrap();
+//! if let Some(Expr::Struct(s)) = &mut doc.value {
+//!     s.name.name = Cow::Borrowed("Settings");
+//! }
+//! // Tokens come from the AST, whitespace and comments from the source.
+//! assert_eq!(serialize_document(&doc).unwrap(), "Settings(name: \"old\") // keep me");
 //!
-//! // Convert to owned for mutation (can outlive source)
-//! let mut owned = doc.into_owned();
+//! // `into_owned` detaches the AST from the source string.
+//! let owned = doc.into_owned();
 //! ```
 
 mod convert;

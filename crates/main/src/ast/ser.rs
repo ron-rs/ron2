@@ -1,31 +1,26 @@
-//! AST serializer for RON documents.
+//! Lossless serialization of an AST back to RON text.
 //!
-//! This module provides serialization of AST back to RON text with
-//! format preservation. The serializer preserves:
-//! - Original whitespace and formatting
-//! - Comments (via trivia)
-//! - Raw literal representations (hex, binary, raw strings)
+//! Tokens are written from AST data: identifiers from their name, literals from their raw
+//! text (keeping hex numbers, raw strings and escapes as written), punctuation as fixed
+//! text. Edited and synthetic ASTs therefore serialize to what they contain.
 //!
-//! For perfect round-tripping, the serializer uses the span byte offsets
-//! to slice the original source text.
+//! Whitespace and comments come from the trivia. While a trivia's span still describes
+//! [`Document::source`] exactly, its original text is copied, so `parse_document` followed
+//! by `serialize_document` reproduces the source byte for byte.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use core::fmt::Write;
 
 use crate::{
-    ast::{
-        AnonStructExpr, Attribute, Comment, Document, Expr, FieldsBody, Ident, MapEntry, MapExpr,
-        OptionExpr, SeqExpr, SeqItem, StructBody, StructExpr, StructField, Trivia, TupleBody,
-        TupleElement, TupleExpr,
-    },
-    error::Result,
+    ast::{Attribute, CommentKind, Document, Expr, StructBody, StructField, Trivia, TupleElement},
+    error::{Error, ErrorKind, Result, Span},
+    lexer::Lexer,
 };
 
 /// Serialize an AST document back to RON text.
 ///
-/// This preserves the original formatting by using the source spans.
-/// For perfect round-tripping, this should produce identical output
-/// to the original source.
+/// For a document straight from [`parse_document`](crate::ast::parse_document) the
+/// output equals the source.
 ///
 /// # Example
 ///
@@ -39,424 +34,239 @@ use crate::{
 /// ```
 pub fn serialize_document(doc: &Document<'_>) -> Result<String> {
     let mut output = String::new();
-    let mut ser = AstSerializer::new(&mut output, &doc.source);
-    ser.write_document(doc)?;
+    serialize_document_to(&mut output, doc)?;
     Ok(output)
 }
 
 /// Serialize an AST document to a writer.
 pub fn serialize_document_to<W: Write>(writer: W, doc: &Document<'_>) -> Result<()> {
-    let mut ser = AstSerializer::new(writer, &doc.source);
-    ser.write_document(doc)
+    AstSerializer {
+        writer,
+        source: &doc.source,
+    }
+    .document(doc)
 }
 
-/// AST serializer that writes to a `fmt::Write` target.
-struct AstSerializer<'a, W: Write> {
+struct AstSerializer<'s, W: Write> {
     writer: W,
-    source: &'a str,
+    source: &'s str,
 }
 
-impl<'a, W: Write> AstSerializer<'a, W> {
-    fn new(writer: W, source: &'a str) -> Self {
-        Self { writer, source }
+impl<W: Write> AstSerializer<'_, W> {
+    fn str(&mut self, s: &str) -> Result<()> {
+        self.writer.write_str(s)?;
+        Ok(())
     }
 
-    fn write_document(&mut self, doc: &Document<'_>) -> Result<()> {
-        // Write leading trivia
-        self.write_trivia(&doc.leading)?;
-
-        // Write attributes
+    fn document(&mut self, doc: &Document<'_>) -> Result<()> {
+        self.trivia(&doc.leading)?;
         for attr in &doc.attributes {
-            self.write_attribute(attr)?;
+            self.attribute(attr)?;
         }
-
-        // Write trivia between attributes and value
-        self.write_trivia(&doc.pre_value)?;
-
-        // Write the main value if present
-        if let Some(ref value) = doc.value {
-            self.write_expr(value)?;
+        self.trivia(&doc.pre_value)?;
+        if let Some(value) = &doc.value {
+            self.expr(value)?;
         }
-
-        // Write trailing trivia
-        self.write_trivia(&doc.trailing)?;
-
-        Ok(())
+        self.trivia(&doc.trailing)
     }
 
-    fn write_trivia(&mut self, trivia: &Trivia<'_>) -> Result<()> {
-        // If we have a span, use the original source text for perfect round-tripping
-        if let Some(ref span) = trivia.span {
-            let text = span.slice(self.source);
-            self.writer.write_str(text)?;
-        } else {
-            // No span - write whitespace and comments individually
-            self.writer.write_str(&trivia.whitespace)?;
-            for comment in &trivia.comments {
-                self.write_comment(comment)?;
+    fn trivia(&mut self, trivia: &Trivia<'_>) -> Result<()> {
+        if let Some(text) = trivia_source(self.source, trivia) {
+            return self.str(text);
+        }
+        self.str(&trivia.whitespace)?;
+        for comment in &trivia.comments {
+            self.str(&comment.text)?;
+            if comment.kind == CommentKind::Line {
+                self.str("\n")?;
             }
         }
         Ok(())
     }
 
-    fn write_comment(&mut self, comment: &Comment<'_>) -> Result<()> {
-        // Use the raw text which includes delimiters
-        self.writer.write_str(&comment.text)?;
-        Ok(())
+    fn attribute(&mut self, attr: &Attribute<'_>) -> Result<()> {
+        self.trivia(&attr.leading)?;
+        // Attributes keep no inner trivia, so reuse the source text while it still
+        // spells the same tokens.
+        let canonical = attr.to_string();
+        match source_slice(self.source, &attr.span).filter(|text| same_tokens(text, &canonical)) {
+            Some(text) => self.str(text),
+            None => self.str(&canonical),
+        }
     }
 
-    fn write_attribute(&mut self, attr: &Attribute<'_>) -> Result<()> {
-        // Write leading trivia
-        self.write_trivia(&attr.leading)?;
-
-        // Use the span if available for exact reproduction
-        let text = attr.span.slice(self.source);
-        self.writer.write_str(text)?;
-
-        Ok(())
-    }
-
-    fn write_expr(&mut self, expr: &Expr<'_>) -> Result<()> {
+    fn expr(&mut self, expr: &Expr<'_>) -> Result<()> {
         match expr {
-            Expr::Unit(u) => {
-                let text = u.span.slice(self.source);
-                self.writer.write_str(text)?;
+            Expr::Unit(unit) => {
+                // `( )` may contain whitespace and comments that the AST does not keep.
+                let text = source_slice(self.source, &unit.span)
+                    .filter(|text| same_tokens(text, "()"))
+                    .unwrap_or("()");
+                self.str(text)
             }
-            Expr::Bool(b) => {
-                let text = b.span.slice(self.source);
-                self.writer.write_str(text)?;
+            Expr::Bool(b) => self.str(if b.value { "true" } else { "false" }),
+            Expr::Char(c) => self.str(&c.raw),
+            Expr::Byte(b) => self.str(&b.raw),
+            Expr::Number(n) => self.str(&n.raw),
+            Expr::String(s) => self.str(&s.raw),
+            Expr::Bytes(b) => self.str(&b.raw),
+            Expr::Option(opt) => match &opt.value {
+                None => self.str("None"),
+                Some(inner) => {
+                    self.str("Some(")?;
+                    self.trivia(&inner.leading)?;
+                    self.expr(&inner.expr)?;
+                    self.trivia(&inner.trailing)?;
+                    self.str(")")
+                }
+            },
+            Expr::Seq(seq) => self.delimited(
+                "[",
+                &seq.leading,
+                &seq.items,
+                &seq.trailing,
+                "]",
+                |ser, item| {
+                    ser.element(&item.leading, &item.expr, &item.trailing)?;
+                    Ok(item.comma)
+                },
+            ),
+            Expr::Map(map) => self.delimited(
+                "{",
+                &map.leading,
+                &map.entries,
+                &map.trailing,
+                "}",
+                |ser, entry| {
+                    ser.trivia(&entry.leading)?;
+                    ser.expr(&entry.key)?;
+                    ser.trivia(&entry.pre_colon)?;
+                    ser.str(":")?;
+                    ser.trivia(&entry.post_colon)?;
+                    ser.expr(&entry.value)?;
+                    ser.trivia(&entry.trailing)?;
+                    Ok(entry.comma)
+                },
+            ),
+            Expr::Tuple(tuple) => self.tuple(&tuple.leading, &tuple.elements, &tuple.trailing),
+            Expr::AnonStruct(s) => self.fields(&s.leading, &s.fields, &s.trailing),
+            Expr::Struct(s) => {
+                self.str(&s.name.name)?;
+                self.trivia(&s.pre_body)?;
+                match &s.body {
+                    Some(StructBody::Tuple(body)) => {
+                        self.tuple(&body.leading, &body.elements, &body.trailing)
+                    }
+                    Some(StructBody::Fields(body)) => {
+                        self.fields(&body.leading, &body.fields, &body.trailing)
+                    }
+                    None => Ok(()),
+                }
             }
-            Expr::Char(c) => {
-                // Use raw text to preserve original format
-                self.writer.write_str(&c.raw)?;
-            }
-            Expr::Byte(b) => {
-                self.writer.write_str(&b.raw)?;
-            }
-            Expr::Number(n) => {
-                // Use raw text to preserve hex, binary, underscores
-                self.writer.write_str(&n.raw)?;
-            }
-            Expr::String(s) => {
-                // Use raw text to preserve raw strings, escapes
-                self.writer.write_str(&s.raw)?;
-            }
-            Expr::Bytes(b) => {
-                self.writer.write_str(&b.raw)?;
-            }
-            Expr::Option(opt) => self.write_option(opt)?,
-            Expr::Seq(seq) => self.write_seq(seq)?,
-            Expr::Map(map) => self.write_map(map)?,
-            Expr::Tuple(tuple) => self.write_tuple(tuple)?,
-            Expr::AnonStruct(s) => self.write_anon_struct(s)?,
-            Expr::Struct(s) => self.write_struct(s)?,
-            Expr::Error(_) => {
-                return Err(crate::error::Error::new(crate::error::ErrorKind::Message(
-                    "cannot serialize error expression".to_string(),
-                )));
-            }
+            Expr::Error(_) => Err(Error::new(ErrorKind::Message(
+                "cannot serialize error expression".to_string(),
+            ))),
         }
-        Ok(())
     }
 
-    fn write_option(&mut self, opt: &OptionExpr<'_>) -> Result<()> {
-        if let Some(inner) = &opt.value {
-            // Write "Some"
-            self.writer.write_str("Some")?;
-            self.write_trivia(&inner.pre_paren)?;
-
-            // Write opening paren using span
-            let open_text = inner.open_paren.slice(self.source);
-            self.writer.write_str(open_text)?;
-
-            // Write leading trivia
-            self.write_trivia(&inner.leading)?;
-
-            // Write the inner expression
-            self.write_expr(&inner.expr)?;
-
-            // Write trailing trivia
-            self.write_trivia(&inner.trailing)?;
-            if let Some(comma) = inner.comma {
-                self.writer.write_str(comma.slice(self.source))?;
-                self.write_trivia(&inner.post_comma)?;
-            }
-
-            // Write closing paren using span
-            let close_text = inner.close_paren.slice(self.source);
-            self.writer.write_str(close_text)?;
-        } else {
-            // Write "None" - use span for exact text
-            let text = opt.span.slice(self.source);
-            self.writer.write_str(text)?;
-        }
-        Ok(())
+    fn tuple(
+        &mut self,
+        leading: &Trivia<'_>,
+        elements: &[TupleElement<'_>],
+        trailing: &Trivia<'_>,
+    ) -> Result<()> {
+        self.delimited("(", leading, elements, trailing, ")", |ser, element| {
+            ser.element(&element.leading, &element.expr, &element.trailing)?;
+            Ok(element.comma)
+        })
     }
 
-    fn write_seq(&mut self, seq: &SeqExpr<'_>) -> Result<()> {
-        // Write opening bracket
-        let open_text = seq.open_bracket.slice(self.source);
-        self.writer.write_str(open_text)?;
-
-        // Write leading trivia (inside the bracket)
-        self.write_trivia(&seq.leading)?;
-
-        // Write items
-        for item in &seq.items {
-            self.write_seq_item(item)?;
-        }
-
-        // Write trailing trivia (before closing bracket)
-        self.write_trivia(&seq.trailing)?;
-
-        // Write closing bracket
-        let close_text = seq.close_bracket.slice(self.source);
-        self.writer.write_str(close_text)?;
-
-        Ok(())
+    fn fields(
+        &mut self,
+        leading: &Trivia<'_>,
+        fields: &[StructField<'_>],
+        trailing: &Trivia<'_>,
+    ) -> Result<()> {
+        self.delimited("(", leading, fields, trailing, ")", |ser, field| {
+            ser.trivia(&field.leading)?;
+            ser.str(&field.name.name)?;
+            ser.trivia(&field.pre_colon)?;
+            ser.str(":")?;
+            ser.trivia(&field.post_colon)?;
+            ser.expr(&field.value)?;
+            ser.trivia(&field.trailing)?;
+            Ok(field.comma)
+        })
     }
 
-    fn write_seq_item(&mut self, item: &SeqItem<'_>) -> Result<()> {
-        // Write leading trivia
-        self.write_trivia(&item.leading)?;
-
-        // Write expression
-        self.write_expr(&item.expr)?;
-
-        // Write trailing trivia
-        self.write_trivia(&item.trailing)?;
-
-        // Write comma if present
-        if let Some(ref comma) = item.comma {
-            let text = comma.slice(self.source);
-            self.writer.write_str(text)?;
-        }
-
-        Ok(())
+    fn element(
+        &mut self,
+        leading: &Trivia<'_>,
+        expr: &Expr<'_>,
+        trailing: &Trivia<'_>,
+    ) -> Result<()> {
+        self.trivia(leading)?;
+        self.expr(expr)?;
+        self.trivia(trailing)
     }
 
-    fn write_map(&mut self, map: &MapExpr<'_>) -> Result<()> {
-        // Write opening brace
-        let open_text = map.open_brace.slice(self.source);
-        self.writer.write_str(open_text)?;
-
-        // Write leading trivia
-        self.write_trivia(&map.leading)?;
-
-        // Write entries
-        for entry in &map.entries {
-            self.write_map_entry(entry)?;
-        }
-
-        // Write trailing trivia
-        self.write_trivia(&map.trailing)?;
-
-        // Write closing brace
-        let close_text = map.close_brace.slice(self.source);
-        self.writer.write_str(close_text)?;
-
-        Ok(())
-    }
-
-    fn write_map_entry(&mut self, entry: &MapEntry<'_>) -> Result<()> {
-        // Write leading trivia
-        self.write_trivia(&entry.leading)?;
-
-        // Write key
-        self.write_expr(&entry.key)?;
-
-        // Write pre-colon trivia
-        self.write_trivia(&entry.pre_colon)?;
-
-        // Write colon
-        let colon_text = entry.colon.slice(self.source);
-        self.writer.write_str(colon_text)?;
-
-        // Write post-colon trivia
-        self.write_trivia(&entry.post_colon)?;
-
-        // Write value
-        self.write_expr(&entry.value)?;
-
-        // Write trailing trivia
-        self.write_trivia(&entry.trailing)?;
-
-        // Write comma if present
-        if let Some(ref comma) = entry.comma {
-            let text = comma.slice(self.source);
-            self.writer.write_str(text)?;
-        }
-
-        Ok(())
-    }
-
-    fn write_tuple(&mut self, tuple: &TupleExpr<'_>) -> Result<()> {
-        // Write opening paren
-        let open_text = tuple.open_paren.slice(self.source);
-        self.writer.write_str(open_text)?;
-
-        // Write leading trivia
-        self.write_trivia(&tuple.leading)?;
-
-        // Write elements
-        for elem in &tuple.elements {
-            self.write_tuple_element(elem)?;
-        }
-
-        // Write trailing trivia
-        self.write_trivia(&tuple.trailing)?;
-
-        // Write closing paren
-        let close_text = tuple.close_paren.slice(self.source);
-        self.writer.write_str(close_text)?;
-
-        Ok(())
-    }
-
-    fn write_tuple_element(&mut self, elem: &TupleElement<'_>) -> Result<()> {
-        // Write leading trivia
-        self.write_trivia(&elem.leading)?;
-
-        // Write expression
-        self.write_expr(&elem.expr)?;
-
-        // Write trailing trivia
-        self.write_trivia(&elem.trailing)?;
-
-        // Write comma if present
-        if let Some(ref comma) = elem.comma {
-            let text = comma.slice(self.source);
-            self.writer.write_str(text)?;
-        }
-
-        Ok(())
-    }
-
-    fn write_anon_struct(&mut self, s: &AnonStructExpr<'_>) -> Result<()> {
-        // Write opening paren
-        let open_text = s.open_paren.slice(self.source);
-        self.writer.write_str(open_text)?;
-
-        // Write leading trivia
-        self.write_trivia(&s.leading)?;
-
-        // Write fields
-        for field in &s.fields {
-            self.write_struct_field(field)?;
-        }
-
-        // Write trailing trivia
-        self.write_trivia(&s.trailing)?;
-
-        // Write closing paren
-        let close_text = s.close_paren.slice(self.source);
-        self.writer.write_str(close_text)?;
-
-        Ok(())
-    }
-
-    fn write_struct(&mut self, s: &StructExpr<'_>) -> Result<()> {
-        // Write the name
-        self.write_ident(&s.name)?;
-
-        // Write trivia between name and body (e.g., space in `Point { ... }`)
-        self.write_trivia(&s.pre_body)?;
-
-        // Write the body if present
-        if let Some(ref body) = s.body {
-            match body {
-                StructBody::Tuple(tuple) => self.write_tuple_body(tuple)?,
-                StructBody::Fields(fields) => self.write_fields_body(fields)?,
+    /// Writes a bracketed list. `item` writes one item and returns its comma; a comma is
+    /// also written between items that lack one (e.g. in synthetic ASTs).
+    fn delimited<T>(
+        &mut self,
+        open: &str,
+        leading: &Trivia<'_>,
+        items: &[T],
+        trailing: &Trivia<'_>,
+        close: &str,
+        mut item: impl FnMut(&mut Self, &T) -> Result<Option<Span>>,
+    ) -> Result<()> {
+        self.str(open)?;
+        self.trivia(leading)?;
+        for (i, element) in items.iter().enumerate() {
+            let comma = item(self, element)?;
+            if comma.is_some() || i + 1 < items.len() {
+                self.str(",")?;
             }
         }
-
-        Ok(())
+        self.trivia(trailing)?;
+        self.str(close)
     }
+}
 
-    fn write_ident(&mut self, ident: &Ident<'_>) -> Result<()> {
-        // Use the span for exact reproduction
-        let text = ident.span.slice(self.source);
-        self.writer.write_str(text)?;
-        Ok(())
+/// The text of `span` in `source`, if the span is real and in range.
+fn source_slice<'s>(source: &'s str, span: &Span) -> Option<&'s str> {
+    if span.is_synthetic() {
+        return None;
     }
+    source.get(span.start_offset..span.end_offset)
+}
 
-    fn write_tuple_body(&mut self, tuple: &TupleBody<'_>) -> Result<()> {
-        // Write opening paren
-        let open_text = tuple.open_paren.slice(self.source);
-        self.writer.write_str(open_text)?;
-
-        // Write leading trivia
-        self.write_trivia(&tuple.leading)?;
-
-        // Write elements
-        for elem in &tuple.elements {
-            self.write_tuple_element(elem)?;
+/// The original text of `trivia`, if its span still describes `source` exactly: the same
+/// comments, with only whitespace around them.
+fn trivia_source<'s>(source: &'s str, trivia: &Trivia<'_>) -> Option<&'s str> {
+    let span = trivia.span.as_ref()?;
+    let text = source_slice(source, span)?;
+    let is_blank = |range: core::ops::Range<usize>| {
+        source
+            .get(range)
+            .is_some_and(|gap| gap.chars().all(char::is_whitespace))
+    };
+    let mut pos = span.start_offset;
+    for comment in &trivia.comments {
+        let (start, end) = (comment.span.start_offset, comment.span.end_offset);
+        if !is_blank(pos..start) || source.get(start..end) != Some(comment.text.as_ref()) {
+            return None;
         }
-
-        // Write trailing trivia
-        self.write_trivia(&tuple.trailing)?;
-
-        // Write closing paren
-        let close_text = tuple.close_paren.slice(self.source);
-        self.writer.write_str(close_text)?;
-
-        Ok(())
+        pos = end;
     }
+    is_blank(pos..span.end_offset).then_some(text)
+}
 
-    fn write_fields_body(&mut self, fields: &FieldsBody<'_>) -> Result<()> {
-        // Write opening brace
-        let open_text = fields.open_brace.slice(self.source);
-        self.writer.write_str(open_text)?;
-
-        // Write leading trivia
-        self.write_trivia(&fields.leading)?;
-
-        // Write fields
-        for field in &fields.fields {
-            self.write_struct_field(field)?;
-        }
-
-        // Write trailing trivia
-        self.write_trivia(&fields.trailing)?;
-
-        // Write closing brace
-        let close_text = fields.close_brace.slice(self.source);
-        self.writer.write_str(close_text)?;
-
-        Ok(())
-    }
-
-    fn write_struct_field(&mut self, field: &StructField<'_>) -> Result<()> {
-        // Write leading trivia
-        self.write_trivia(&field.leading)?;
-
-        // Write field name
-        self.write_ident(&field.name)?;
-
-        // Write pre-colon trivia
-        self.write_trivia(&field.pre_colon)?;
-
-        // Write colon
-        let colon_text = field.colon.slice(self.source);
-        self.writer.write_str(colon_text)?;
-
-        // Write post-colon trivia
-        self.write_trivia(&field.post_colon)?;
-
-        // Write value
-        self.write_expr(&field.value)?;
-
-        // Write trailing trivia
-        self.write_trivia(&field.trailing)?;
-
-        // Write comma if present
-        if let Some(ref comma) = field.comma {
-            let text = comma.slice(self.source);
-            self.writer.write_str(text)?;
-        }
-
-        Ok(())
-    }
+/// Whether `a` and `b` consist of the same tokens, ignoring whitespace and comments.
+fn same_tokens(a: &str, b: &str) -> bool {
+    let tokens = |s| Lexer::new(s).map(|token| (token.kind, token.text));
+    tokens(a).eq(tokens(b))
 }
 
 #[cfg(test)]
@@ -686,5 +496,117 @@ Config(
         assert_round_trip("(1, 2, 3)");
         // Single element tuple
         assert_round_trip("(x)");
+    }
+
+    #[test]
+    fn round_trip_attribute_spacing() {
+        assert_round_trip("#![type=\"Foo\"]\n#![enable(implicit_some,unwrap_newtypes)]\n42");
+    }
+
+    #[test]
+    #[ignore = "parser bug: whitespace inside an attribute leaks into the following trivia"]
+    fn round_trip_attribute_inner_whitespace() {
+        assert_round_trip("#![type = \"Foo\"]\n#![ enable( implicit_some ,unwrap_newtypes ) ]\n42");
+    }
+
+    #[test]
+    fn round_trip_unit_with_comment() {
+        assert_round_trip("[( /* nothing */ )]");
+    }
+
+    // =========================================================================
+    // ASTs not parsed from `doc.source`
+    // =========================================================================
+
+    fn synthetic_document(value: crate::Value) -> Document<'static> {
+        Document {
+            source: "".into(),
+            leading: Trivia::empty(),
+            attributes: alloc::vec![Attribute::synthetic_type("my::Type")],
+            pre_value: Trivia::empty(),
+            value: Some(crate::ast::value_to_expr(value)),
+            trailing: Trivia::empty(),
+        }
+    }
+
+    #[test]
+    fn synthetic_ast_serializes_its_tokens() {
+        use crate::{Map, NamedContent, Value};
+
+        let seq = synthetic_document(Value::Seq(alloc::vec![
+            Value::from(1),
+            Value::Bool(true),
+            Value::Unit,
+            Value::Option(None),
+            Value::Option(Some(alloc::boxed::Box::new(Value::from('x')))),
+        ]));
+        assert_eq!(
+            serialize_document(&seq).unwrap(),
+            "#![type = \"my::Type\"][1,true,(),None,Some('x')]"
+        );
+
+        let mut map = Map::new();
+        map.insert(Value::from("k"), Value::from(2));
+        let named = synthetic_document(Value::Named {
+            name: "Point".into(),
+            content: NamedContent::Struct(alloc::vec![
+                ("x".into(), Value::from(1)),
+                ("y".into(), Value::Map(map)),
+            ]),
+        });
+        let text = serialize_document(&named).unwrap();
+        assert_eq!(text, "#![type = \"my::Type\"]Point(x:1,y:{\"k\":2})");
+        assert!(parse_document(&text).is_ok());
+    }
+
+    #[test]
+    fn edited_ast_serializes_the_edit() {
+        let source = "// head\nPoint( x : 1 , y : 2 ) // tail";
+        let mut doc = parse_document(source).unwrap();
+        let Some(Expr::Struct(s)) = &mut doc.value else {
+            panic!("expected struct");
+        };
+        s.name.name = "Vec2".into();
+        let Some(StructBody::Fields(body)) = &mut s.body else {
+            panic!("expected fields");
+        };
+        body.fields[0].name.name = "first".into();
+        body.fields[1].value = Expr::Bool(crate::ast::BoolExpr {
+            span: Span::synthetic(),
+            value: false,
+        });
+        assert_eq!(
+            serialize_document(&doc).unwrap(),
+            "// head\nVec2( first : 1 , y : false ) // tail"
+        );
+    }
+
+    #[test]
+    fn edited_trivia_is_not_taken_from_source() {
+        let mut doc = parse_document("[1, // one\n2]").unwrap();
+        let Some(Expr::Seq(seq)) = &mut doc.value else {
+            panic!("expected seq");
+        };
+        seq.items[1].leading.comments.clear();
+        let output = serialize_document(&doc).unwrap();
+        assert!(!output.contains("one"), "{output:?}");
+        assert!(parse_document(&output).is_ok(), "{output:?}");
+    }
+
+    #[test]
+    fn edited_attribute_is_serialized() {
+        let mut doc = parse_document("#![type=\"Old\"]\n42").unwrap();
+        doc.attributes[0].content = crate::ast::AttributeContent::Value("\"New\"".into());
+        assert_eq!(serialize_document(&doc).unwrap(), "#![type = \"New\"]\n42");
+    }
+
+    #[test]
+    fn foreign_source_does_not_panic() {
+        // The spans point past the end of the replaced source: nothing may be sliced from
+        // it, the trivia's own whitespace is used instead.
+        let source = "Config(name: \"a long value\", other: [1, 2, 3])";
+        let mut doc = parse_document(source).unwrap();
+        doc.source = "()".into();
+        assert_eq!(serialize_document(&doc).unwrap(), source);
     }
 }
