@@ -223,12 +223,9 @@ impl Walker<'_> {
             Expr::Tuple(t) if self.inside(&t.open_paren, &t.close_paren) => {
                 self.in_elements(&t.elements, path)
             }
+            // Comments inside `()` are in `u.inner` and handled by `in_comment`.
             Expr::Unit(u) if strictly_inside(&u.span, offset) => {
-                if self.in_unit_comment(&u.span) {
-                    CursorContext::None
-                } else {
-                    CursorContext::Parens { path, element: 0 }
-                }
+                CursorContext::Parens { path, element: 0 }
             }
             Expr::Seq(s) if self.inside(&s.open_bracket, &s.close_bracket) => {
                 path.push(PathStep::SeqItem);
@@ -351,21 +348,6 @@ impl Walker<'_> {
             .count();
         CursorContext::Parens { path, element }
     }
-
-    /// Whether the cursor is in a comment inside `( ... )` parsed as unit.
-    ///
-    /// The parser keeps no trivia for `()`, so these comments are not in the
-    /// AST. The text between `(` and the cursor is only whitespace and
-    /// comments, so the lexer decides: a value placed at the cursor is
-    /// swallowed exactly when the cursor is inside a comment.
-    fn in_unit_comment(&self, unit: &Span) -> bool {
-        let Some(trivia) = self.source.get(unit.start_offset + 1..self.offset) else {
-            return false;
-        };
-        let probe_source = format!("{trivia}0");
-        let (probe, _) = ast::parse_document_lossy(&probe_source);
-        !matches!(probe.value, Some(Expr::Number(_)))
-    }
 }
 
 /// The span of an expression's closing delimiter (the whole span for `()`).
@@ -410,11 +392,14 @@ fn in_comment(doc: &ast::Document<'_>, offset: usize) -> bool {
 
 fn visit_trivia<'a>(expr: &Expr<'a>, f: &mut dyn FnMut(&Trivia<'a>)) {
     match expr {
+        Expr::Unit(u) => f(&u.inner),
         Expr::Option(o) => {
             if let Some(v) = &o.value {
+                f(&v.pre_paren);
                 f(&v.leading);
                 visit_trivia(&v.expr, f);
                 f(&v.trailing);
+                f(&v.post_comma);
             }
         }
         Expr::Seq(s) => {
@@ -543,6 +528,8 @@ mod tests {
             "( // in unit|\n)",
             "( /* in unit| */ )",
             "( /* a /* nested */ still| */ )",
+            "(a: Some /* before| paren */ (1))",
+            "(a: Some(1, /* after| comma */ ))",
             "#![type = \"a|\"]\n()",
         ] {
             assert_eq!(context(source), CursorContext::None, "{source}");
@@ -550,7 +537,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "ron2 parser drops comments after the last trailing comma"]
     fn comment_after_last_trailing_comma_has_no_context() {
         assert_eq!(context("(a: 1, // comm|ent\n)"), CursorContext::None);
         assert_eq!(context("[1, // comm|ent\n]"), CursorContext::None);
