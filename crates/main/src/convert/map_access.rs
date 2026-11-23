@@ -1,36 +1,113 @@
 //! `AstMapAccess` helper for struct deserialization with span preservation.
 
-use alloc::borrow::Cow;
+use alloc::{borrow::Cow, string::String, vec, vec::Vec};
 use core::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
 
-use ahash::HashMapExt;
-
 use super::{FromRon, FromRonFields, expr_type_name};
 use crate::{
-    ast::{AnonStructExpr, Expr, FieldsBody, StringExpr, StringKind, StructField},
+    ast::{AnonStructExpr, Expr, FieldsBody, StructField, synthetic_string},
     error::{Error, ErrorKind, Result, Span},
 };
 
-/// Maximum number of fields supported in a struct.
-///
-/// This limit exists because we use a `u64` bitmask to track consumed fields.
-pub const MAX_FIELDS: usize = 64;
+/// Up to this many fields, a linear scan beats hashing: duplicates are found
+/// by pairwise comparison and lookups scan. Larger structs get a name index.
+const SMALL_STRUCT: usize = 16;
+
+type FieldIndex<'a> = ahash::HashMap<&'a str, usize>;
+
+/// Fail with [`ErrorKind::DuplicateField`] at the second occurrence of a
+/// repeated field name; index the names of structs above [`SMALL_STRUCT`].
+fn index_fields<'a>(
+    fields: &'a [StructField<'a>],
+    outer: Option<&str>,
+) -> Result<Option<FieldIndex<'a>>> {
+    let duplicate = |field: &StructField<'_>| {
+        Error::with_span(
+            ErrorKind::DuplicateField {
+                field: Cow::Owned(String::from(&*field.name.name)),
+                outer: outer.map(|s| Cow::Owned(String::from(s))),
+            },
+            field.name.span,
+        )
+    };
+
+    if fields.len() <= SMALL_STRUCT {
+        for (i, field) in fields.iter().enumerate() {
+            if fields[..i].iter().any(|f| f.name.name == field.name.name) {
+                return Err(duplicate(field));
+            }
+        }
+        return Ok(None);
+    }
+
+    let mut index = FieldIndex::with_capacity_and_hasher(fields.len(), ahash::RandomState::new());
+    for (i, field) in fields.iter().enumerate() {
+        if index.insert(&*field.name.name, i).is_some() {
+            return Err(duplicate(field));
+        }
+    }
+    Ok(Some(index))
+}
+
+/// Fail with [`ErrorKind::DuplicateField`] if a field name repeats.
+pub(crate) fn check_unique_fields(fields: &[StructField<'_>], outer: Option<&str>) -> Result<()> {
+    index_fields(fields, outer).map(drop)
+}
+
+/// Set of consumed field indices; stays inline for structs of up to 64 fields.
+#[derive(Debug)]
+enum Consumed {
+    Inline(u64),
+    Spilled(Vec<u64>),
+}
+
+impl Consumed {
+    fn new(len: usize) -> Self {
+        if len <= 64 {
+            Consumed::Inline(0)
+        } else {
+            Consumed::Spilled(vec![0; len.div_ceil(64)])
+        }
+    }
+
+    fn contains(&self, index: usize) -> bool {
+        let bit = 1 << (index % 64);
+        match self {
+            Consumed::Inline(word) => word & bit != 0,
+            Consumed::Spilled(words) => words.get(index / 64).is_some_and(|w| w & bit != 0),
+        }
+    }
+
+    /// Mark `index` as consumed; returns whether it was newly consumed.
+    fn insert(&mut self, index: usize) -> bool {
+        let bit = 1 << (index % 64);
+        let word = match self {
+            Consumed::Inline(word) => word,
+            Consumed::Spilled(words) => match words.get_mut(index / 64) {
+                Some(word) => word,
+                None => return false,
+            },
+        };
+        let fresh = *word & bit == 0;
+        *word |= bit;
+        fresh
+    }
+}
 
 /// Helper struct for deserializing RON structs to Rust structs from AST.
 ///
 /// Unlike Value-based deserialization, this preserves span information for
-/// precise error reporting at the field level.
+/// precise error reporting at the field level. Errors from a field's value
+/// carry the field name in their [path](Error::path).
 ///
 /// # Example
 ///
 /// ```
-/// use ron2::FromRon;
+/// use ron2::{convert::AstMapAccess, FromRon};
 /// use ron2::ast::Expr;
-/// use ron2::convert::AstMapAccess;
 /// use ron2::error::Result;
 ///
-/// // Manually implementing FromRon for a struct
 /// struct Point { x: i32, y: i32 }
 ///
 /// impl FromRon for Point {
@@ -43,26 +120,26 @@ pub const MAX_FIELDS: usize = 64;
 ///                 access.deny_unknown_fields(&["x", "y"])?;
 ///                 Ok(Point { x, y })
 ///             }
-///             _ => Err(ron2::Error::expected("struct", *expr.span()))
+///             _ => Err(ron2::Error::expected("struct", *expr.span())),
 ///         }
 ///     }
 /// }
 ///
 /// let point = Point::from_ron("(x: 1, y: 2)").unwrap();
 /// assert_eq!((point.x, point.y), (1, 2));
-/// assert!(Point::from_ron("(x: 1, y: 2, z: 3)").is_err());
 /// ```
 #[derive(Debug)]
 pub struct AstMapAccess<'a> {
-    /// Slice of struct fields from the AST
     fields: &'a [StructField<'a>],
-    /// O(1) field name to index lookup
-    field_indices: ahash::HashMap<&'a str, usize>,
-    /// Bitmask tracking which fields have been consumed (bit i = field i)
-    consumed: u64,
-    /// The span of the entire struct (for missing field errors)
+    /// Name index for structs above [`SMALL_STRUCT`] fields.
+    index: Option<FieldIndex<'a>>,
+    consumed: Consumed,
+    consumed_count: usize,
+    /// The field after the last one found: fields usually arrive in
+    /// declaration order, so checking it first makes most lookups O(1).
+    cursor: usize,
+    /// The span of the entire struct (for missing field errors).
     struct_span: Span,
-    /// Optional struct name for error messages
     struct_name: Option<&'a str>,
 }
 
@@ -71,191 +148,121 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The struct has more than 64 fields
-    /// - Duplicate field names are found
-    #[inline]
+    /// Returns an error if a field name occurs twice.
     pub fn from_anon(s: &'a AnonStructExpr<'a>, struct_name: Option<&'a str>) -> Result<Self> {
-        if s.fields.len() > MAX_FIELDS {
-            return Err(Error::with_span(
-                ErrorKind::TooManyFields {
-                    count: s.fields.len(),
-                    limit: MAX_FIELDS,
-                },
-                s.span,
-            ));
-        }
-
-        // Build field index HashMap while detecting duplicates in one pass
-        let mut field_indices = ahash::HashMap::with_capacity(s.fields.len());
-        for (i, field) in s.fields.iter().enumerate() {
-            let name = field.name.name.as_ref();
-            if field_indices.insert(name, i).is_some() {
-                return Err(Error::with_span(
-                    ErrorKind::DuplicateField {
-                        field: Cow::Owned(name.to_string()),
-                        outer: struct_name.map(|s| Cow::Owned(s.to_string())),
-                    },
-                    field.name.span,
-                ));
-            }
-        }
-
-        Ok(Self {
-            fields: &s.fields,
-            field_indices,
-            consumed: 0,
-            struct_span: s.span,
-            struct_name,
-        })
+        Self::new(&s.fields, struct_name, s.span)
     }
 
-    /// Create from named struct fields: `Name { field: value, ... }`
+    /// Create from named struct fields: `Name(field: value, ...)`
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The struct has more than 64 fields
-    /// - Duplicate field names are found
-    #[inline]
+    /// Returns an error if a field name occurs twice.
     pub fn from_fields(
         fields_body: &'a FieldsBody<'a>,
         struct_name: Option<&'a str>,
         struct_span: Span,
     ) -> Result<Self> {
-        if fields_body.fields.len() > MAX_FIELDS {
-            return Err(Error::with_span(
-                ErrorKind::TooManyFields {
-                    count: fields_body.fields.len(),
-                    limit: MAX_FIELDS,
-                },
-                struct_span,
-            ));
-        }
+        Self::new(&fields_body.fields, struct_name, struct_span)
+    }
 
-        // Build field index HashMap while detecting duplicates in one pass
-        let mut field_indices = ahash::HashMap::with_capacity(fields_body.fields.len());
-        for (i, field) in fields_body.fields.iter().enumerate() {
-            let name = field.name.name.as_ref();
-            if field_indices.insert(name, i).is_some() {
-                return Err(Error::with_span(
-                    ErrorKind::DuplicateField {
-                        field: Cow::Owned(name.to_string()),
-                        outer: struct_name.map(|s| Cow::Owned(s.to_string())),
-                    },
-                    field.name.span,
-                ));
-            }
-        }
-
+    fn new(
+        fields: &'a [StructField<'a>],
+        struct_name: Option<&'a str>,
+        struct_span: Span,
+    ) -> Result<Self> {
         Ok(Self {
-            fields: &fields_body.fields,
-            field_indices,
-            consumed: 0,
+            index: index_fields(fields, struct_name)?,
+            fields,
+            consumed: Consumed::new(fields.len()),
+            consumed_count: 0,
+            cursor: 0,
             struct_span,
             struct_name,
         })
     }
 
-    /// Find a field by name, returning its index and reference.
-    #[inline]
-    fn find_field(&self, name: &str) -> Option<(usize, &'a StructField<'a>)> {
-        self.field_indices
-            .get(name)
-            .map(|&idx| (idx, &self.fields[idx]))
+    /// Find a field by name and mark it consumed.
+    fn take(&mut self, name: &str) -> Option<&'a StructField<'a>> {
+        let fields = self.fields;
+        let index = if fields.get(self.cursor).is_some_and(|f| f.name.name == name) {
+            self.cursor
+        } else if let Some(index) = &self.index {
+            *index.get(name)?
+        } else {
+            fields.iter().position(|f| f.name.name == name)?
+        };
+        self.cursor = index + 1;
+        if self.consumed.insert(index) {
+            self.consumed_count += 1;
+        }
+        Some(&fields[index])
+    }
+
+    /// Deserialize a field's value if present, adding the field to error paths.
+    fn field<T: FromRon>(&mut self, name: &'static str) -> Option<Result<T>> {
+        let field = self.take(name)?;
+        Some(T::from_ast(&field.value).map_err(|e| e.in_field(name)))
+    }
+
+    /// Like [`field`](Self::field), but requires explicit `Some(...)` / `None`.
+    fn explicit_field<T: FromRon>(&mut self, name: &'static str) -> Option<Result<Option<T>>> {
+        let field = self.take(name)?;
+        Some(match &field.value {
+            Expr::Option(opt) => opt
+                .value
+                .as_ref()
+                .map(|inner| T::from_ast(&inner.expr))
+                .transpose()
+                .map_err(|e| e.in_field(name)),
+            other => Err(Error::with_span(
+                ErrorKind::TypeMismatch {
+                    expected: "Some(...) or None".into(),
+                    found: expr_type_name(other).into(),
+                },
+                *other.span(),
+            )
+            .in_field(name)),
+        })
+    }
+
+    fn missing(&self, name: &'static str) -> Error {
+        Error::with_span(
+            ErrorKind::MissingField {
+                field: Cow::Borrowed(name),
+                outer: self.struct_name.map(|s| Cow::Owned(String::from(s))),
+            },
+            self.struct_span,
+        )
     }
 
     /// Get a required field.
     ///
     /// Returns an error with the field's span if deserialization fails,
     /// or the struct's span if the field is missing.
-    #[inline]
     pub fn required<T: FromRon>(&mut self, name: &'static str) -> Result<T> {
-        match self.find_field(name) {
-            Some((idx, field)) => {
-                self.consumed |= 1 << idx;
-                T::from_ast(&field.value)
-            }
-            None => Err(Error::with_span(
-                ErrorKind::MissingField {
-                    field: Cow::Borrowed(name),
-                    outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
-                },
-                self.struct_span,
-            )),
-        }
+        self.field(name).unwrap_or_else(|| Err(self.missing(name)))
     }
 
     /// Get an optional field.
     ///
     /// Returns `Ok(None)` if the field is missing.
-    #[inline]
     pub fn optional<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
-        match self.find_field(name) {
-            Some((idx, field)) => {
-                self.consumed |= 1 << idx;
-                Ok(Some(T::from_ast(&field.value)?))
-            }
-            None => Ok(None),
-        }
+        self.field(name).transpose()
     }
 
     /// Get a field with a default value if missing.
-    #[inline]
     pub fn with_default<T: FromRon + Default>(&mut self, name: &'static str) -> Result<T> {
-        match self.find_field(name) {
-            Some((idx, field)) => {
-                self.consumed |= 1 << idx;
-                T::from_ast(&field.value)
-            }
-            None => Ok(T::default()),
-        }
+        self.field(name).unwrap_or_else(|| Ok(T::default()))
     }
 
     /// Get a field with a custom default function.
-    #[inline]
     pub fn with_default_fn<T: FromRon, F: FnOnce() -> T>(
         &mut self,
         name: &'static str,
         default_fn: F,
     ) -> Result<T> {
-        match self.find_field(name) {
-            Some((idx, field)) => {
-                self.consumed |= 1 << idx;
-                T::from_ast(&field.value)
-            }
-            None => Ok(default_fn()),
-        }
-    }
-
-    /// Check for unknown fields.
-    ///
-    /// Pass the list of expected field names. Returns an error pointing to
-    /// the first unknown field's span.
-    pub fn deny_unknown_fields(&self, expected: &'static [&'static str]) -> Result<()> {
-        for (i, field) in self.fields.iter().enumerate() {
-            if self.consumed & (1 << i) == 0 {
-                let name = field.name.name.as_ref();
-                return Err(Error::with_span(
-                    ErrorKind::UnknownField {
-                        field: Cow::Owned(name.to_string()),
-                        expected,
-                        outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
-                    },
-                    field.name.span,
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// Get an iterator over remaining (unconsumed) field names.
-    pub fn remaining_keys(&self) -> impl Iterator<Item = &str> {
-        self.fields
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| self.consumed & (1 << *i) == 0)
-            .map(|(_, f)| f.name.name.as_ref())
+        self.field(name).unwrap_or_else(|| Ok(default_fn()))
     }
 
     /// Get a required Option field that requires explicit `Some(...)` or `None` syntax.
@@ -264,62 +271,47 @@ impl<'a> AstMapAccess<'a> {
     /// this method rejects bare values and requires explicit option syntax.
     ///
     /// Use this for fields marked with `#[ron(explicit)]`.
-    #[inline]
     pub fn required_explicit<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
-        match self.find_field(name) {
-            Some((idx, field)) => {
-                self.consumed |= 1 << idx;
-                match &field.value {
-                    Expr::Option(opt) => match &opt.value {
-                        None => Ok(None),
-                        Some(inner) => Ok(Some(T::from_ast(&inner.expr)?)),
-                    },
-                    other => Err(Error::with_span(
-                        ErrorKind::TypeMismatch {
-                            expected: "Some(...) or None".to_string(),
-                            found: expr_type_name(other).to_string(),
-                        },
-                        *other.span(),
-                    )),
-                }
-            }
-            None => Err(Error::with_span(
-                ErrorKind::MissingField {
-                    field: Cow::Borrowed(name),
-                    outer: self.struct_name.map(|s| Cow::Owned(s.to_string())),
-                },
-                self.struct_span,
-            )),
-        }
+        self.explicit_field(name)
+            .unwrap_or_else(|| Err(self.missing(name)))
     }
 
     /// Get an Option field with explicit syntax, using `None` as default if missing.
     ///
-    /// Unlike the default `Option<T>` handling which accepts bare values as `Some`,
-    /// this method rejects bare values and requires explicit option syntax.
-    ///
     /// Use this for fields marked with `#[ron(explicit, default)]`.
-    #[inline]
     pub fn with_default_explicit<T: FromRon>(&mut self, name: &'static str) -> Result<Option<T>> {
-        match self.find_field(name) {
-            Some((idx, field)) => {
-                self.consumed |= 1 << idx;
-                match &field.value {
-                    Expr::Option(opt) => match &opt.value {
-                        None => Ok(None),
-                        Some(inner) => Ok(Some(T::from_ast(&inner.expr)?)),
-                    },
-                    other => Err(Error::with_span(
-                        ErrorKind::TypeMismatch {
-                            expected: "Some(...) or None".to_string(),
-                            found: expr_type_name(other).to_string(),
-                        },
-                        *other.span(),
-                    )),
-                }
-            }
-            None => Ok(None),
+        self.explicit_field(name).unwrap_or(Ok(None))
+    }
+
+    /// Check for unknown fields.
+    ///
+    /// Pass the list of expected field names. Returns an error pointing to
+    /// the first unknown field's span.
+    pub fn deny_unknown_fields(&self, expected: &'static [&'static str]) -> Result<()> {
+        match self.remaining().next() {
+            None => Ok(()),
+            Some(field) => Err(Error::with_span(
+                ErrorKind::UnknownField {
+                    field: Cow::Owned(String::from(field.name.name.as_ref())),
+                    expected,
+                    outer: self.struct_name.map(|s| Cow::Owned(String::from(s))),
+                },
+                field.name.span,
+            )),
         }
+    }
+
+    fn remaining(&self) -> impl Iterator<Item = &'a StructField<'a>> + '_ {
+        self.fields
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.consumed.contains(*i))
+            .map(|(_, field)| field)
+    }
+
+    /// Get an iterator over remaining (unconsumed) field names.
+    pub fn remaining_keys(&self) -> impl Iterator<Item = &str> {
+        self.remaining().map(|field| field.name.name.as_ref())
     }
 
     /// Consume fields for a flattened struct.
@@ -329,7 +321,6 @@ impl<'a> AstMapAccess<'a> {
     ///
     /// The inner type must implement [`FromRonFields`] to consume fields
     /// from this access.
-    #[inline]
     pub fn flatten<T: FromRonFields>(&mut self) -> Result<T> {
         T::from_fields(self)
     }
@@ -337,57 +328,46 @@ impl<'a> AstMapAccess<'a> {
 
 impl<T: FromRonFields> FromRonFields for Option<T> {
     fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
-        let consumed_before = access.consumed;
+        let consumed_before = access.consumed_count;
+        let nothing_consumed = |access: &AstMapAccess<'_>| access.consumed_count == consumed_before;
 
         match T::from_fields(access) {
-            Ok(value) => {
-                if access.consumed == consumed_before {
-                    Ok(None)
-                } else {
-                    Ok(Some(value))
-                }
+            Ok(_) if nothing_consumed(access) => Ok(None),
+            Ok(value) => Ok(Some(value)),
+            Err(err)
+                if nothing_consumed(access)
+                    && matches!(err.kind(), ErrorKind::MissingField { .. }) =>
+            {
+                Ok(None)
             }
-            Err(err) => {
-                if access.consumed == consumed_before
-                    && matches!(err.kind(), ErrorKind::MissingField { .. })
-                {
-                    Ok(None)
-                } else {
-                    Err(err)
-                }
-            }
+            Err(err) => Err(err),
         }
     }
 }
 
+/// A catch-all map takes every field no other field consumed.
 impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRonFields
     for HashMap<K, V, S>
 {
     fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
-        let remaining = access
-            .fields
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| access.consumed & (1 << *i) == 0)
-            .count();
-        let mut map = HashMap::with_capacity_and_hasher(remaining, S::default());
+        let mut map = HashMap::with_capacity_and_hasher(
+            access.fields.len() - access.consumed_count,
+            S::default(),
+        );
 
-        for (i, field) in access.fields.iter().enumerate() {
-            if access.consumed & (1 << i) != 0 {
+        for (index, field) in access.fields.iter().enumerate() {
+            if !access.consumed.insert(index) {
                 continue;
             }
+            access.consumed_count += 1;
 
-            access.consumed |= 1 << i;
-
-            let key_expr = Expr::String(StringExpr {
-                span: field.name.span,
-                raw: Cow::Owned(format!("\"{}\"", field.name.name)),
-                value: field.name.name.to_string(),
-                kind: StringKind::Regular,
-            });
-
-            let key = K::from_ast(&key_expr)?;
-            let value = V::from_ast(&field.value)?;
+            let name = field.name.name.as_ref();
+            let mut key_expr = synthetic_string(String::from(name));
+            if let Expr::String(key) = &mut key_expr {
+                key.span = field.name.span;
+            }
+            let key = K::from_ast(&key_expr).map_err(Error::in_map_key)?;
+            let value = V::from_ast(&field.value).map_err(|e| e.in_field(name))?;
             map.insert(key, value);
         }
 
@@ -400,203 +380,159 @@ mod tests {
     use core::fmt::Write;
 
     use super::*;
-    use crate::ast::parse_document;
+    use crate::{PathSegment, ast::parse_document};
+
+    fn with_access<R>(ron: &str, f: impl FnOnce(Result<AstMapAccess<'_>>) -> R) -> R {
+        let doc = parse_document(ron).unwrap();
+        let Some(Expr::AnonStruct(s)) = &doc.value else {
+            panic!("expected anonymous struct");
+        };
+        f(AstMapAccess::from_anon(s, Some("Test")))
+    }
+
+    fn many_fields(count: usize) -> String {
+        let mut ron = String::from("(");
+        for i in 0..count {
+            let _ = write!(ron, "f{i}: {i}, ");
+        }
+        ron.push(')');
+        ron
+    }
 
     #[test]
     fn test_basic_field_access() {
-        let ron = "(a: 1, b: 2, c: 3)";
-        let doc = parse_document(ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s, Some("Test")).unwrap();
-
+        with_access("(a: 1, b: 2, c: 3)", |access| {
+            let mut access = access.unwrap();
             assert_eq!(access.required::<i32>("a").unwrap(), 1);
             assert_eq!(access.required::<i32>("b").unwrap(), 2);
             assert_eq!(access.required::<i32>("c").unwrap(), 3);
             assert!(access.deny_unknown_fields(&["a", "b", "c"]).is_ok());
-        } else {
-            panic!("Expected anonymous struct");
-        }
+        });
     }
 
     #[test]
-    fn test_consumed_bitmask_tracking() {
-        let ron = "(a: 1, b: 2, c: 3)";
-        let doc = parse_document(ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s, Some("Test")).unwrap();
+    fn test_out_of_order_access() {
+        with_access("(c: 3, a: 1, b: 2)", |access| {
+            let mut access = access.unwrap();
+            assert_eq!(access.required::<i32>("a").unwrap(), 1);
+            assert_eq!(access.required::<i32>("b").unwrap(), 2);
+            assert_eq!(access.required::<i32>("c").unwrap(), 3);
+            assert_eq!(access.required::<i32>("a").unwrap(), 1);
+            assert!(access.deny_unknown_fields(&["a", "b", "c"]).is_ok());
+        });
+    }
 
-            // Only consume 'a' and 'c', leaving 'b' unconsumed
+    #[test]
+    fn test_unconsumed_field_is_unknown() {
+        with_access("(a: 1, b: 2, c: 3)", |access| {
+            let mut access = access.unwrap();
             assert_eq!(access.required::<i32>("a").unwrap(), 1);
             assert_eq!(access.required::<i32>("c").unwrap(), 3);
 
-            // deny_unknown_fields should fail because 'b' wasn't consumed
             let err = access.deny_unknown_fields(&["a", "c"]).unwrap_err();
-            assert!(matches!(err.kind(), ErrorKind::UnknownField { .. }));
-        } else {
-            panic!("Expected anonymous struct");
-        }
-    }
-
-    #[test]
-    fn test_remaining_keys() {
-        let ron = "(a: 1, b: 2, c: 3, d: 4)";
-        let doc = parse_document(ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s, None).unwrap();
-
-            // Consume a and c
-            let _ = access.required::<i32>("a").unwrap();
-            let _ = access.required::<i32>("c").unwrap();
-
-            // Remaining should be b and d
-            let remaining: Vec<_> = access.remaining_keys().collect();
-            assert_eq!(remaining.len(), 2);
-            assert!(remaining.contains(&"b"));
-            assert!(remaining.contains(&"d"));
-        } else {
-            panic!("Expected anonymous struct");
-        }
+            assert!(matches!(err.kind(), ErrorKind::UnknownField { field, .. } if field == "b"));
+            assert_eq!(access.remaining_keys().collect::<Vec<_>>(), ["b"]);
+        });
     }
 
     #[test]
     fn test_duplicate_field_detection() {
-        let ron = "(a: 1, b: 2, a: 3)";
-        let doc = parse_document(ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let err = AstMapAccess::from_anon(s, Some("Test")).unwrap_err();
-            match err.kind() {
-                ErrorKind::DuplicateField { field, outer } => {
-                    assert_eq!(field.as_ref(), "a");
-                    assert_eq!(outer.as_deref(), Some("Test"));
-                }
-                _ => panic!("Expected DuplicateField error"),
-            }
-        } else {
-            panic!("Expected anonymous struct");
+        for ron in [
+            "(a: 1, b: 2, a: 3)".into(),
+            many_fields(40).replace(')', "f3: 0)"),
+        ] {
+            with_access(&ron, |access| {
+                let err = access.unwrap_err();
+                assert!(
+                    matches!(err.kind(), ErrorKind::DuplicateField { outer: Some(o), .. } if o == "Test"),
+                    "{err:?}"
+                );
+            });
         }
     }
 
+    /// Regression: a `u64` bitmask over the input once capped structs at 64
+    /// input fields, even when the extra fields were unknown and ignored.
     #[test]
-    fn test_too_many_fields_error() {
-        // Build a RON string with 65 fields
-        let mut fields = String::new();
-        for i in 0..65 {
-            if i > 0 {
-                fields.push_str(", ");
-            }
-            let _ = write!(fields, "field_{i}: {i}");
-        }
-        let ron = format!("({fields})");
+    fn test_more_than_64_input_fields() {
+        with_access(&many_fields(200), |access| {
+            let mut access = access.unwrap();
+            assert_eq!(access.required::<i32>("f0").unwrap(), 0);
+            assert_eq!(access.required::<i32>("f150").unwrap(), 150);
+            assert_eq!(access.required::<i32>("f199").unwrap(), 199);
+            assert_eq!(access.remaining_keys().count(), 197);
 
-        let doc = parse_document(&ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let err = AstMapAccess::from_anon(s, Some("TooLarge")).unwrap_err();
-            match err.kind() {
-                ErrorKind::TooManyFields { count, limit } => {
-                    assert_eq!(*count, 65);
-                    assert_eq!(*limit, MAX_FIELDS);
-                }
-                _ => panic!("Expected TooManyFields error, got {:?}", err.kind()),
-            }
-        } else {
-            panic!("Expected anonymous struct");
-        }
+            let map: HashMap<String, i32> = access.flatten().unwrap();
+            assert_eq!(map.len(), 197);
+            assert_eq!(map["f64"], 64);
+            assert_eq!(access.remaining_keys().count(), 0);
+        });
     }
 
+    /// Regression: lookups scanned from a cursor, which is quadratic for
+    /// out-of-order input (5000 reversed fields took 236 ms). Large structs
+    /// now use a name index.
     #[test]
-    fn test_exactly_64_fields_ok() {
-        // Build a RON string with exactly 64 fields (should succeed)
-        let mut fields = String::new();
-        for i in 0..64 {
-            if i > 0 {
-                fields.push_str(", ");
+    fn test_large_out_of_order_struct() {
+        let mut ron = String::from("(");
+        for i in (0..5000).rev() {
+            let _ = write!(ron, "f{i}: {i}, ");
+        }
+        ron.push(')');
+        with_access(&ron, |access| {
+            let mut access = access.unwrap();
+            assert!(access.index.is_some());
+            for i in 0..5000 {
+                let name: &'static str = String::leak(alloc::format!("f{i}"));
+                assert_eq!(access.required::<i32>(name).unwrap(), i);
+                assert_eq!(access.optional::<i32>("missing").unwrap(), None);
             }
-            let _ = write!(fields, "f{i}: {i}");
-        }
-        let ron = format!("({fields})");
-
-        let doc = parse_document(&ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let access = AstMapAccess::from_anon(s, None).unwrap();
-            assert_eq!(access.fields.len(), 64);
-        } else {
-            panic!("Expected anonymous struct");
-        }
+            assert_eq!(access.remaining_keys().count(), 0);
+        });
     }
 
     #[test]
     fn test_missing_field_error() {
-        let ron = "(a: 1)";
-        let doc = parse_document(ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s, Some("Test")).unwrap();
-            let err = access.required::<i32>("missing").unwrap_err();
-            match err.kind() {
-                ErrorKind::MissingField { field, outer } => {
-                    assert_eq!(field.as_ref(), "missing");
-                    assert_eq!(outer.as_deref(), Some("Test"));
+        with_access("(a: 1)", |access| {
+            let err = access.unwrap().required::<i32>("missing").unwrap_err();
+            assert_eq!(
+                err.kind(),
+                &ErrorKind::MissingField {
+                    field: "missing".into(),
+                    outer: Some("Test".into())
                 }
-                _ => panic!("Expected MissingField error"),
-            }
-        } else {
-            panic!("Expected anonymous struct");
-        }
+            );
+        });
     }
 
     #[test]
-    fn test_optional_field() {
-        let ron = "(a: 1)";
-        let doc = parse_document(ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s, None).unwrap();
+    fn test_field_errors_carry_path() {
+        with_access("(a: \"x\", b: 1)", |access| {
+            let mut access = access.unwrap();
+            let err = access.required::<i32>("a").unwrap_err();
+            assert_eq!(err.path(), &[PathSegment::Field("a".into())]);
+            assert_eq!(err.span().start.col, 5);
 
+            let err = access.required_explicit::<i32>("b").unwrap_err();
+            assert_eq!(err.path(), &[PathSegment::Field("b".into())]);
+        });
+    }
+
+    #[test]
+    fn test_optional_and_defaults() {
+        with_access("(a: 1, e: Some(2), n: None)", |access| {
+            let mut access = access.unwrap();
             assert_eq!(access.optional::<i32>("a").unwrap(), Some(1));
             assert_eq!(access.optional::<i32>("missing").unwrap(), None);
-        } else {
-            panic!("Expected anonymous struct");
-        }
-    }
-
-    #[test]
-    fn test_with_default() {
-        let ron = "(a: 1)";
-        let doc = parse_document(ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s, None).unwrap();
-
-            assert_eq!(access.with_default::<i32>("a").unwrap(), 1);
-            assert_eq!(access.with_default::<i32>("missing").unwrap(), 0); // i32::default()
-        } else {
-            panic!("Expected anonymous struct");
-        }
-    }
-
-    #[test]
-    fn test_high_index_field_consumed() {
-        // Test that field at index 63 (highest bit) is tracked correctly
-        let mut fields = String::new();
-        for i in 0..64 {
-            if i > 0 {
-                fields.push_str(", ");
-            }
-            let _ = write!(fields, "f{i}: {i}");
-        }
-        let ron = format!("({fields})");
-
-        let doc = parse_document(&ron).unwrap();
-        if let Some(Expr::AnonStruct(s)) = &doc.value {
-            let mut access = AstMapAccess::from_anon(s, None).unwrap();
-
-            // Consume the last field (index 63)
-            assert_eq!(access.required::<i32>("f63").unwrap(), 63);
-
-            // Verify it's marked as consumed (bit 63 should be set)
-            assert_eq!(access.consumed & (1u64 << 63), 1u64 << 63);
-
-            // Verify f62 is not consumed
-            assert_eq!(access.consumed & (1u64 << 62), 0);
-        } else {
-            panic!("Expected anonymous struct");
-        }
+            assert_eq!(access.with_default::<i32>("missing").unwrap(), 0);
+            assert_eq!(access.with_default_fn("missing", || 7).unwrap(), 7);
+            assert_eq!(access.with_default_explicit::<i32>("e").unwrap(), Some(2));
+            assert_eq!(access.with_default_explicit::<i32>("n").unwrap(), None);
+            assert_eq!(
+                access.with_default_explicit::<i32>("missing").unwrap(),
+                None
+            );
+            assert!(access.required_explicit::<i32>("missing").is_err());
+        });
     }
 }

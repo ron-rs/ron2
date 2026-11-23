@@ -122,21 +122,6 @@ impl Error {
         }))
     }
 
-    /// Create an error spanning from (1,1) to the end of source.
-    #[must_use]
-    pub fn wrap(kind: ErrorKind, source: &str) -> Self {
-        Self(Box::new(ErrorInner {
-            kind,
-            span: Span {
-                start: Position { line: 1, col: 1 },
-                end: Position::from_src_end(source),
-                start_offset: 0,
-                end_offset: source.len(),
-            },
-            path: Vec::new(),
-        }))
-    }
-
     /// Create an error at position (1,1) with zero-length span.
     #[must_use]
     pub fn at_start(kind: ErrorKind) -> Self {
@@ -150,6 +135,18 @@ impl Error {
             },
             path: Vec::new(),
         }))
+    }
+
+    /// Attach `span` if this error does not carry a source location yet.
+    ///
+    /// Errors raised deeper in a conversion already point at the most precise
+    /// location, so an existing span is kept.
+    #[must_use]
+    pub(crate) fn or_span(mut self, span: Span) -> Self {
+        if self.0.span.is_synthetic() {
+            self.0.span = span;
+        }
+        self
     }
 
     // =========================================================================
@@ -202,12 +199,6 @@ impl Error {
     // Convenience constructors
     // =========================================================================
 
-    /// Create an "unexpected end of input" error.
-    #[must_use]
-    pub fn eof() -> Self {
-        Self::new(ErrorKind::Eof)
-    }
-
     /// Create an "expected X" error.
     #[must_use]
     pub fn expected(what: impl Into<Cow<'static, str>>, span: Span) -> Self {
@@ -215,22 +206,6 @@ impl Error {
             ErrorKind::Expected {
                 expected: what.into(),
                 context: None,
-            },
-            span,
-        )
-    }
-
-    /// Create an "expected X in Y" error.
-    #[must_use]
-    pub fn expected_in(
-        what: impl Into<Cow<'static, str>>,
-        context: &'static str,
-        span: Span,
-    ) -> Self {
-        Self::with_span(
-            ErrorKind::Expected {
-                expected: what.into(),
-                context: Some(context),
             },
             span,
         )
@@ -254,18 +229,6 @@ impl Error {
         })
     }
 
-    /// Create a missing field error with outer context.
-    #[must_use]
-    pub fn missing_field_in(
-        field: impl Into<Cow<'static, str>>,
-        outer: impl Into<Cow<'static, str>>,
-    ) -> Self {
-        Self::new(ErrorKind::MissingField {
-            field: field.into(),
-            outer: Some(outer.into()),
-        })
-    }
-
     /// Create an unknown field error.
     #[must_use]
     pub fn unknown_field(
@@ -276,41 +239,6 @@ impl Error {
             field: field.into(),
             expected,
             outer: None,
-        })
-    }
-
-    /// Create an unknown field error with outer context.
-    #[must_use]
-    pub fn unknown_field_in(
-        field: impl Into<Cow<'static, str>>,
-        expected: &'static [&'static str],
-        outer: impl Into<Cow<'static, str>>,
-    ) -> Self {
-        Self::new(ErrorKind::UnknownField {
-            field: field.into(),
-            expected,
-            outer: Some(outer.into()),
-        })
-    }
-
-    /// Create a duplicate field error.
-    #[must_use]
-    pub fn duplicate_field(field: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::DuplicateField {
-            field: field.into(),
-            outer: None,
-        })
-    }
-
-    /// Create a duplicate field error with outer context.
-    #[must_use]
-    pub fn duplicate_field_in(
-        field: impl Into<Cow<'static, str>>,
-        outer: impl Into<Cow<'static, str>>,
-    ) -> Self {
-        Self::new(ErrorKind::DuplicateField {
-            field: field.into(),
-            outer: Some(outer.into()),
         })
     }
 
@@ -327,20 +255,6 @@ impl Error {
         })
     }
 
-    /// Create an unknown variant error with outer context.
-    #[must_use]
-    pub fn unknown_variant_in(
-        variant: impl Into<Cow<'static, str>>,
-        expected: &'static [&'static str],
-        outer: impl Into<Cow<'static, str>>,
-    ) -> Self {
-        Self::new(ErrorKind::UnknownVariant {
-            variant: variant.into(),
-            expected,
-            outer: Some(outer.into()),
-        })
-    }
-
     /// Create a length mismatch error.
     #[must_use]
     pub fn length_mismatch(expected: impl Into<String>, found: usize) -> Self {
@@ -348,20 +262,6 @@ impl Error {
             expected: expected.into(),
             found,
             context: None,
-        })
-    }
-
-    /// Create a length mismatch error with context.
-    #[must_use]
-    pub fn length_mismatch_in(
-        expected: impl Into<String>,
-        found: usize,
-        context: &'static str,
-    ) -> Self {
-        Self::new(ErrorKind::LengthMismatch {
-            expected: expected.into(),
-            found,
-            context: Some(context),
         })
     }
 
@@ -392,8 +292,37 @@ impl Error {
 // ErrorKind enum
 // =============================================================================
 
+/// The underlying cause of an [`ErrorKind::Io`] or [`ErrorKind::Utf8`] error.
+///
+/// Shared via [`Arc`] so errors stay cheap to clone. Two sources always
+/// compare equal: equality of errors is defined by their message, span and path.
+#[derive(Debug)]
+pub struct ErrorSource<T>(pub Arc<T>);
+
+impl<T> Clone for ErrorSource<T> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl<T> PartialEq for ErrorSource<T> {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl<T> Eq for ErrorSource<T> {}
+
+impl<T> core::ops::Deref for ErrorSource<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
 /// The specific kind of error that occurred.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ErrorKind {
     // =========================================================================
@@ -409,17 +338,16 @@ pub enum ErrorKind {
     Io {
         /// Human-readable error message.
         message: String,
-        /// Original IO error (wrapped in Arc for Clone).
-        #[allow(clippy::redundant_allocation)]
-        source: Option<Arc<io::Error>>,
+        /// Original IO error.
+        source: Option<ErrorSource<io::Error>>,
     },
 
     /// UTF-8 decoding error with preserved source.
     Utf8 {
         /// Human-readable error message.
         message: String,
-        /// Original UTF-8 error (wrapped in Arc for Clone).
-        source: Option<Arc<Utf8Error>>,
+        /// Original UTF-8 error.
+        source: Option<ErrorSource<Utf8Error>>,
     },
 
     // =========================================================================
@@ -434,9 +362,6 @@ pub enum ErrorKind {
     /// Unclosed block comment (`/* ... */`).
     UnclosedBlockComment,
 
-    /// Unclosed line comment (for `RawValue`).
-    UnclosedLineComment,
-
     /// Invalid escape sequence in string.
     InvalidEscape(Cow<'static, str>),
 
@@ -447,9 +372,6 @@ pub enum ErrorKind {
         /// The number base (2, 8, 10, or 16).
         base: u8,
     },
-
-    /// Unexpected leading underscore in number.
-    UnderscoreAtBeginning,
 
     /// Unexpected underscore in float.
     FloatUnderscore,
@@ -473,12 +395,6 @@ pub enum ErrorKind {
 
     /// Invalid identifier.
     InvalidIdentifier(String),
-
-    /// Suggest using raw identifier syntax.
-    SuggestRawIdentifier(String),
-
-    /// Expected a `ron::value::RawValue`.
-    ExpectedRawValue,
 
     // =========================================================================
     // Type Mismatch Errors
@@ -530,6 +446,12 @@ pub enum ErrorKind {
         outer: Option<Cow<'static, str>>,
     },
 
+    /// Duplicate map key.
+    DuplicateKey {
+        /// The duplicated key, rendered as RON.
+        key: String,
+    },
+
     /// Unknown enum variant.
     UnknownVariant {
         /// The name of the unknown variant.
@@ -538,14 +460,6 @@ pub enum ErrorKind {
         expected: &'static [&'static str],
         /// The enum name, if known.
         outer: Option<Cow<'static, str>>,
-    },
-
-    /// Expected a different struct name.
-    ExpectedStructName {
-        /// The expected struct name.
-        expected: Cow<'static, str>,
-        /// The found struct name (if any).
-        found: Option<String>,
     },
 
     // =========================================================================
@@ -559,22 +473,19 @@ pub enum ErrorKind {
         target_type: &'static str,
     },
 
-    // =========================================================================
-    // Extension / Config Errors
-    // =========================================================================
-    /// Unknown RON extension.
-    NoSuchExtension(String),
+    /// Finite float literal too large for the target type.
+    FloatOutOfBounds {
+        /// The source text of the literal.
+        value: Cow<'static, str>,
+        /// The target type that couldn't hold the value.
+        target_type: &'static str,
+    },
 
+    // =========================================================================
+    // Limits
+    // =========================================================================
     /// Exceeded recursion limit.
     ExceededRecursionLimit,
-
-    /// Too many struct fields for deserialization (max 64).
-    TooManyFields {
-        /// Number of fields found.
-        count: usize,
-        /// Maximum supported.
-        limit: usize,
-    },
 }
 
 impl ErrorKind {
@@ -588,7 +499,6 @@ impl ErrorKind {
             ErrorKind::UnknownVariant {
                 variant, expected, ..
             } => find_similar(variant, expected),
-            ErrorKind::SuggestRawIdentifier(ident) => Some(alloc::format!("r#{ident}")),
             _ => None,
         }
     }
@@ -688,16 +598,9 @@ impl fmt::Display for ErrorKind {
             ErrorKind::Eof => f.write_str("Unexpected end of RON"),
             ErrorKind::UnexpectedChar(c) => write!(f, "Unexpected char {c:?}"),
             ErrorKind::UnclosedBlockComment => f.write_str("Unclosed block comment"),
-            ErrorKind::UnclosedLineComment => f.write_str(
-                "`ron::value::RawValue` cannot end in unclosed line comment, \
-                try using a block comment or adding a newline",
-            ),
             ErrorKind::InvalidEscape(s) => f.write_str(s),
             ErrorKind::InvalidIntegerDigit { digit, base } => {
                 write!(f, "Invalid digit {digit:?} for base {base} integers")
-            }
-            ErrorKind::UnderscoreAtBeginning => {
-                f.write_str("Unexpected leading underscore in a number")
             }
             ErrorKind::FloatUnderscore => f.write_str("Unexpected underscore in float"),
 
@@ -713,11 +616,6 @@ impl fmt::Display for ErrorKind {
             ErrorKind::TrailingCharacters => f.write_str("Non-whitespace trailing characters"),
             ErrorKind::ExpectedStringEnd => f.write_str("Expected end of string"),
             ErrorKind::InvalidIdentifier(s) => write!(f, "Invalid identifier {s:?}"),
-            ErrorKind::SuggestRawIdentifier(s) => write!(
-                f,
-                "Found invalid std identifier {s:?}, try the raw identifier `r#{s}` instead"
-            ),
-            ErrorKind::ExpectedRawValue => f.write_str("Expected a `ron::value::RawValue`"),
 
             // Type mismatch
             ErrorKind::TypeMismatch { expected, found } => {
@@ -772,6 +670,7 @@ impl fmt::Display for ErrorKind {
                 }
                 Ok(())
             }
+            ErrorKind::DuplicateKey { key } => write!(f, "Duplicate map key {key}"),
             ErrorKind::UnknownVariant {
                 variant,
                 expected,
@@ -794,42 +693,22 @@ impl fmt::Display for ErrorKind {
                     }
                 )
             }
-            ErrorKind::ExpectedStructName { expected, found } => {
-                if let Some(found) = found {
-                    write!(
-                        f,
-                        "Expected struct {} but found {}",
-                        Identifier(expected),
-                        Identifier(found)
-                    )
-                } else {
-                    write!(
-                        f,
-                        "Expected the explicit struct name {}, but none was found",
-                        Identifier(expected)
-                    )
-                }
-            }
-
             // Numeric
             ErrorKind::IntegerOutOfBounds { value, target_type } => {
                 write!(f, "Integer {value} is out of bounds for {target_type}")
             }
+            ErrorKind::FloatOutOfBounds { value, target_type } => {
+                write!(f, "Float {value} is out of range for {target_type}")
+            }
 
-            // Config
-            ErrorKind::NoSuchExtension(name) => {
-                write!(f, "No RON extension named {}", Identifier(name))
-            }
+            // Limits
             ErrorKind::ExceededRecursionLimit => f.write_str("Exceeded recursion limit"),
-            ErrorKind::TooManyFields { count, limit } => {
-                write!(f, "Struct has {count} fields but maximum is {limit}")
-            }
         }
     }
 }
 
 // =============================================================================
-// PartialEq / Eq (manual implementation)
+// PartialEq / Eq
 // =============================================================================
 
 impl PartialEq for Error {
@@ -840,152 +719,6 @@ impl PartialEq for Error {
 
 impl Eq for Error {}
 
-impl PartialEq for ErrorKind {
-    #[allow(clippy::too_many_lines)]
-    fn eq(&self, other: &Self) -> bool {
-        // Compare variants, skipping source fields (not meaningful for equality)
-        match (self, other) {
-            (ErrorKind::Message(a), ErrorKind::Message(b))
-            | (ErrorKind::InvalidIdentifier(a), ErrorKind::InvalidIdentifier(b))
-            | (ErrorKind::SuggestRawIdentifier(a), ErrorKind::SuggestRawIdentifier(b))
-            | (ErrorKind::NoSuchExtension(a), ErrorKind::NoSuchExtension(b))
-            | (ErrorKind::Io { message: a, .. }, ErrorKind::Io { message: b, .. })
-            | (ErrorKind::Utf8 { message: a, .. }, ErrorKind::Utf8 { message: b, .. }) => a == b,
-            (ErrorKind::Fmt, ErrorKind::Fmt)
-            | (ErrorKind::Eof, ErrorKind::Eof)
-            | (ErrorKind::UnclosedBlockComment, ErrorKind::UnclosedBlockComment)
-            | (ErrorKind::UnclosedLineComment, ErrorKind::UnclosedLineComment)
-            | (ErrorKind::UnderscoreAtBeginning, ErrorKind::UnderscoreAtBeginning)
-            | (ErrorKind::FloatUnderscore, ErrorKind::FloatUnderscore)
-            | (ErrorKind::TrailingCharacters, ErrorKind::TrailingCharacters)
-            | (ErrorKind::ExpectedStringEnd, ErrorKind::ExpectedStringEnd)
-            | (ErrorKind::ExpectedRawValue, ErrorKind::ExpectedRawValue)
-            | (ErrorKind::ExceededRecursionLimit, ErrorKind::ExceededRecursionLimit) => true,
-            (ErrorKind::UnexpectedChar(a), ErrorKind::UnexpectedChar(b)) => a == b,
-            (ErrorKind::InvalidEscape(a), ErrorKind::InvalidEscape(b)) => a == b,
-            (
-                ErrorKind::InvalidIntegerDigit {
-                    digit: d1,
-                    base: b1,
-                },
-                ErrorKind::InvalidIntegerDigit {
-                    digit: d2,
-                    base: b2,
-                },
-            ) => d1 == d2 && b1 == b2,
-            (
-                ErrorKind::Expected {
-                    expected: e1,
-                    context: c1,
-                },
-                ErrorKind::Expected {
-                    expected: e2,
-                    context: c2,
-                },
-            ) => e1 == e2 && c1 == c2,
-            (
-                ErrorKind::TypeMismatch {
-                    expected: e1,
-                    found: f1,
-                },
-                ErrorKind::TypeMismatch {
-                    expected: e2,
-                    found: f2,
-                },
-            ) => e1 == e2 && f1 == f2,
-            (
-                ErrorKind::LengthMismatch {
-                    expected: e1,
-                    found: f1,
-                    context: c1,
-                },
-                ErrorKind::LengthMismatch {
-                    expected: e2,
-                    found: f2,
-                    context: c2,
-                },
-            ) => e1 == e2 && f1 == f2 && c1 == c2,
-            (
-                ErrorKind::MissingField {
-                    field: f1,
-                    outer: o1,
-                },
-                ErrorKind::MissingField {
-                    field: f2,
-                    outer: o2,
-                },
-            )
-            | (
-                ErrorKind::DuplicateField {
-                    field: f1,
-                    outer: o1,
-                },
-                ErrorKind::DuplicateField {
-                    field: f2,
-                    outer: o2,
-                },
-            ) => f1 == f2 && o1 == o2,
-            (
-                ErrorKind::UnknownField {
-                    field: f1,
-                    expected: e1,
-                    outer: o1,
-                },
-                ErrorKind::UnknownField {
-                    field: f2,
-                    expected: e2,
-                    outer: o2,
-                },
-            ) => f1 == f2 && e1 == e2 && o1 == o2,
-            (
-                ErrorKind::UnknownVariant {
-                    variant: v1,
-                    expected: e1,
-                    outer: o1,
-                },
-                ErrorKind::UnknownVariant {
-                    variant: v2,
-                    expected: e2,
-                    outer: o2,
-                },
-            ) => v1 == v2 && e1 == e2 && o1 == o2,
-            (
-                ErrorKind::ExpectedStructName {
-                    expected: e1,
-                    found: f1,
-                },
-                ErrorKind::ExpectedStructName {
-                    expected: e2,
-                    found: f2,
-                },
-            ) => e1 == e2 && f1 == f2,
-            (
-                ErrorKind::IntegerOutOfBounds {
-                    value: v1,
-                    target_type: t1,
-                },
-                ErrorKind::IntegerOutOfBounds {
-                    value: v2,
-                    target_type: t2,
-                },
-            ) => v1 == v2 && t1 == t2,
-            (
-                ErrorKind::TooManyFields {
-                    count: c1,
-                    limit: l1,
-                },
-                ErrorKind::TooManyFields {
-                    count: c2,
-                    limit: l2,
-                },
-            ) => c1 == c2 && l1 == l2,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for ErrorKind {}
-
 // =============================================================================
 // std::error::Error implementation
 // =============================================================================
@@ -995,10 +728,10 @@ impl core::error::Error for Error {
         match &self.0.kind {
             ErrorKind::Io {
                 source: Some(e), ..
-            } => Some(e.as_ref()),
+            } => Some(&**e),
             ErrorKind::Utf8 {
                 source: Some(e), ..
-            } => Some(e.as_ref()),
+            } => Some(&**e),
             _ => None,
         }
     }
@@ -1012,7 +745,7 @@ impl From<Utf8Error> for Error {
     fn from(e: Utf8Error) -> Self {
         Error::new(ErrorKind::Utf8 {
             message: e.to_string(),
-            source: Some(Arc::new(e)),
+            source: Some(ErrorSource(Arc::new(e))),
         })
     }
 }
@@ -1027,7 +760,7 @@ impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Error::new(ErrorKind::Io {
             message: e.to_string(),
-            source: Some(Arc::new(e)),
+            source: Some(ErrorSource(Arc::new(e))),
         })
     }
 }
@@ -1111,13 +844,16 @@ mod tests {
     fn error_messages() {
         check_message(&Error::from(fmt::Error), "Formatting RON failed");
         check_message(&Error::new(ErrorKind::Message("custom".into())), "custom");
-        check_message(&Error::eof(), "Unexpected end of RON");
+        check_message(&Error::new(ErrorKind::Eof), "Unexpected end of RON");
         check_message(
             &Error::expected("opening `[`", Span::synthetic()),
             "Expected opening `[`",
         );
         check_message(
-            &Error::expected_in("comma", "array", Span::synthetic()),
+            &Error::new(ErrorKind::Expected {
+                expected: "comma".into(),
+                context: Some("array"),
+            }),
             "Expected comma in array",
         );
         check_message(
@@ -1129,7 +865,10 @@ mod tests {
             "missing required field `name`",
         );
         check_message(
-            &Error::missing_field_in("name", "Config"),
+            &Error::new(ErrorKind::MissingField {
+                field: "name".into(),
+                outer: Some("Config".into()),
+            }),
             "missing required field `name` in `Config`",
         );
         check_message(
@@ -1139,6 +878,19 @@ mod tests {
         check_message(
             &Error::integer_out_of_bounds("256", "u8"),
             "Integer 256 is out of bounds for u8",
+        );
+        check_message(
+            &Error::new(ErrorKind::DuplicateKey {
+                key: "\"a\"".into(),
+            }),
+            "Duplicate map key \"a\"",
+        );
+        check_message(
+            &Error::new(ErrorKind::FloatOutOfBounds {
+                value: "1e40".into(),
+                target_type: "f32",
+            }),
+            "Float 1e40 is out of range for f32",
         );
     }
 
@@ -1184,9 +936,6 @@ mod tests {
 
         let err = Error::unknown_variant("Tru", &["True", "False"]);
         assert_eq!(err.suggestion(), Some("True".to_string()));
-
-        let err = Error::new(ErrorKind::SuggestRawIdentifier("type".into()));
-        assert_eq!(err.suggestion(), Some("r#type".to_string()));
     }
 
     #[test]
@@ -1206,5 +955,40 @@ mod tests {
 
         let err3 = Error::type_mismatch("i32", "bool");
         assert_ne!(err1, err3);
+
+        assert_ne!(err1, err1.clone().in_field("x"));
+    }
+
+    #[test]
+    fn io_error_equality_ignores_source() {
+        let a = Error::from(io::Error::new(io::ErrorKind::NotFound, "gone"));
+        let b = Error::from(io::Error::other("gone"));
+        assert_eq!(a, b);
+
+        let c = Error::from(io::Error::other("different"));
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn or_span_keeps_existing_span() {
+        let span = Span {
+            start: Position { line: 2, col: 3 },
+            end: Position { line: 2, col: 4 },
+            start_offset: 5,
+            end_offset: 6,
+        };
+        let other = Span {
+            start: Position { line: 9, col: 9 },
+            end: Position { line: 9, col: 10 },
+            start_offset: 90,
+            end_offset: 91,
+        };
+
+        let err = Error::type_mismatch("i32", "String").in_field("x");
+        let err = err.or_span(span);
+        assert_eq!(*err.span(), span);
+        assert_eq!(err.path(), &[PathSegment::Field("x".into())]);
+
+        assert_eq!(*err.or_span(other).span(), span);
     }
 }

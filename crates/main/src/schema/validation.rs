@@ -1024,7 +1024,7 @@ fn validate_integer_expr(
     kind: &TypeKind,
 ) -> ValidationResult<()> {
     // First, reject floats for integer types
-    if matches!(expr.kind, NumberKind::Float | NumberKind::SpecialFloat) {
+    if expr.kind == NumberKind::Float {
         return Err(expr_type_mismatch_found(
             kind_to_type_name(kind),
             "float",

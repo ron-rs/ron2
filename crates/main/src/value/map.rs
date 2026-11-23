@@ -1,3 +1,4 @@
+use alloc::string::ToString;
 use core::{
     cmp::{Eq, Ordering},
     hash::{Hash, Hasher},
@@ -6,6 +7,7 @@ use core::{
 };
 
 use super::Value;
+use crate::error::{Error, ErrorKind, Result};
 
 /// A [`Value`] to [`Value`] map.
 ///
@@ -58,6 +60,20 @@ impl Map {
     /// there was any.
     pub fn insert(&mut self, key: impl Into<Value>, value: impl Into<Value>) -> Option<Value> {
         self.0.insert(key.into(), value.into())
+    }
+
+    /// Inserts a new element, failing with [`ErrorKind::DuplicateKey`] if
+    /// `key` is already present.
+    pub(crate) fn insert_unique(&mut self, key: Value, value: Value) -> Result<()> {
+        match self.0.entry(key) {
+            indexmap::map::Entry::Occupied(entry) => Err(Error::new(ErrorKind::DuplicateKey {
+                key: entry.key().to_string(),
+            })),
+            indexmap::map::Entry::Vacant(entry) => {
+                entry.insert(value);
+                Ok(())
+            }
+        }
     }
 
     /// Removes an element by its `key`.
@@ -133,6 +149,16 @@ impl IntoIterator for Map {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Map {
+    type Item = (&'a Value, &'a Value);
+
+    type IntoIter = indexmap::map::Iter<'a, Value, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 

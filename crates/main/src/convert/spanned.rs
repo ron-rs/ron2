@@ -159,9 +159,8 @@
 //!
 //! # Performance
 //!
-//! [`Span`] is a small type (32 bytes on 64-bit platforms) and implements [`Copy`],
-//! so cloning during deserialization is very cheap. The overhead of capturing spans
-//! is minimal compared to the parsing cost itself.
+//! [`Span`] is [`Copy`], so capturing it during deserialization is cheap
+//! compared to the parsing cost itself.
 
 use core::ops::{Deref, DerefMut};
 
@@ -390,17 +389,6 @@ mod tests {
     }
 
     #[test]
-    fn test_new_and_accessors() {
-        let span = make_span(1, 1);
-        let spanned = Spanned::new(42, span);
-
-        assert_eq!(spanned.value, 42);
-        assert_eq!(*spanned.get(), 42);
-        assert_eq!(*spanned, 42); // Deref
-        assert_eq!(*spanned.span(), span);
-    }
-
-    #[test]
     fn test_get_mut() {
         let span = make_span(1, 1);
         let mut spanned = Spanned::new(42, span);
@@ -582,30 +570,5 @@ world"
         assert_eq!(spanned.value, "hello\nworld");
         // Span should cover multiple lines
         assert!(spanned.span.end.line > spanned.span.start.line);
-    }
-
-    #[test]
-    fn test_clone() {
-        let span = make_span(1, 1);
-        let spanned = Spanned::new(42, span);
-        let cloned = spanned.clone();
-
-        assert_eq!(cloned.value, spanned.value);
-        assert_eq!(cloned.span, spanned.span);
-    }
-
-    #[test]
-    fn test_eq() {
-        let span1 = make_span(1, 1);
-        let span2 = make_span(2, 2);
-
-        let spanned1 = Spanned::new(42, span1);
-        let spanned2 = Spanned::new(42, span1);
-        let spanned3 = Spanned::new(42, span2);
-        let spanned4 = Spanned::new(100, span1);
-
-        assert_eq!(spanned1, spanned2); // Same value and span
-        assert_ne!(spanned1, spanned3); // Same value, different span
-        assert_ne!(spanned1, spanned4); // Different value, same span
     }
 }

@@ -299,7 +299,7 @@ pub fn format_document(doc: &Document<'_>, config: &FormatConfig) -> String {
 /// use ron2::fmt::{FormatConfig, format_expr};
 /// use ron2::Value;
 ///
-/// let expr = value_to_expr(Value::Seq(vec![Value::from(1), Value::from(2)]));
+/// let expr = value_to_expr(&Value::Seq(vec![Value::from(1), Value::from(2)])).unwrap();
 /// assert_eq!(format_expr(&expr, &FormatConfig::minimal()), "[1,2]");
 /// assert_eq!(format_expr(&expr, &FormatConfig::default()), "[\n    1,\n    2,\n]");
 /// ```
@@ -2349,7 +2349,7 @@ mod tests {
                 crate::Value::from(1)
             )]),
         };
-        let expr = crate::ast::value_to_expr(value);
+        let expr = crate::ast::value_to_expr(&value).unwrap();
         assert_eq!(
             format_expr(&expr, &FormatConfig::minimal()),
             "r#None(r#x-y:1)"

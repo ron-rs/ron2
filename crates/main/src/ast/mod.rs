@@ -39,6 +39,7 @@
 //! ```
 
 mod convert;
+mod escape;
 mod parse;
 mod ser;
 mod unescape;
@@ -46,11 +47,10 @@ mod unescape;
 use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 use core::fmt;
 
-pub use convert::{expr_to_value, value_to_expr};
+pub use convert::{MAX_CONVERSION_DEPTH, expr_to_value, value_to_expr};
 pub(crate) use convert::{
-    into_value, synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer,
-    synthetic_map, synthetic_option, synthetic_seq, synthetic_string, synthetic_tuple,
-    synthetic_unit,
+    synthetic_bool, synthetic_char, synthetic_f32, synthetic_f64, synthetic_integer, synthetic_map,
+    synthetic_option, synthetic_seq, synthetic_string, synthetic_tuple, synthetic_unit,
 };
 /// Not public API: used by `ron2-derive` generated code and the `ron2-lsp` crate.
 #[doc(hidden)]
@@ -512,10 +512,8 @@ pub enum NumberKind {
     Integer,
     /// A negative integer.
     NegativeInteger,
-    /// A floating-point number.
+    /// A floating-point number, including `inf`, `-inf` and `NaN`.
     Float,
-    /// Special float values: `inf`, `-inf`, `NaN`.
-    SpecialFloat,
 }
 
 /// String expression: `"hello"`, `"with\nescape"`, `r#"raw"#`.

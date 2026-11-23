@@ -1,11 +1,15 @@
 //! Primitive type implementations for `ToRon` and `FromRon`.
 
 use alloc::string::String;
+use std::{
+    ffi::{OsStr, OsString},
+    path::{Path, PathBuf},
+};
 
 use super::{
     FromRon, ToRon,
-    number::{parse_float_from_raw, parse_integer_from_raw},
-    spanned_err, spanned_type_mismatch,
+    number::{expr_to_float, expr_to_int},
+    spanned_type_mismatch,
 };
 use crate::{
     ast::{
@@ -15,19 +19,33 @@ use crate::{
     error::{Error, ErrorKind, Result},
 };
 
-// =============================================================================
-// ToRon implementations
-// =============================================================================
-
 impl ToRon for bool {
     fn to_ast(&self) -> Result<Expr<'static>> {
         Ok(synthetic_bool(*self))
     }
 }
 
+impl FromRon for bool {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
+        match expr {
+            Expr::Bool(b) => Ok(b.value),
+            _ => Err(spanned_type_mismatch("bool", expr)),
+        }
+    }
+}
+
 impl ToRon for char {
     fn to_ast(&self) -> Result<Expr<'static>> {
         Ok(synthetic_char(*self))
+    }
+}
+
+impl FromRon for char {
+    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
+        match expr {
+            Expr::Char(c) => Ok(c.value),
+            _ => Err(spanned_type_mismatch("char", expr)),
+        }
     }
 }
 
@@ -43,76 +61,52 @@ impl ToRon for str {
     }
 }
 
-impl ToRon for () {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        Ok(synthetic_unit())
-    }
-}
-
-// Integer types
-macro_rules! impl_to_ron_int {
-    ($($ty:ty),+ $(,)?) => {
-        $(
-            impl ToRon for $ty {
-                fn to_ast(&self) -> Result<Expr<'static>> {
-                    Ok(synthetic_integer(*self))
-                }
-            }
-        )+
-    };
-}
-
-impl_to_ron_int! {
-    i8, i16, i32, i64, isize,
-    u8, u16, u32, u64, usize,
-}
-
-#[cfg(feature = "integer128")]
-impl_to_ron_int! {
-    i128, u128,
-}
-
-// Float types
-impl ToRon for f32 {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        Ok(synthetic_f32(*self))
-    }
-}
-
-impl ToRon for f64 {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        Ok(synthetic_f64(*self))
-    }
-}
-
-// =============================================================================
-// FromRon implementations
-// =============================================================================
-
-impl FromRon for bool {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match expr {
-            Expr::Bool(b) => Ok(b.value),
-            _ => Err(spanned_type_mismatch("bool", expr)),
-        }
-    }
-}
-
-impl FromRon for char {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match expr {
-            Expr::Char(c) => Ok(c.value),
-            _ => Err(spanned_type_mismatch("char", expr)),
-        }
-    }
-}
-
 impl FromRon for String {
     fn from_ast(expr: &Expr<'_>) -> Result<Self> {
         match expr {
             Expr::String(s) => Ok(s.value.clone()),
             _ => Err(spanned_type_mismatch("String", expr)),
         }
+    }
+}
+
+/// Paths and OS strings are RON strings; non-UTF-8 ones cannot be written.
+macro_rules! impl_os_string {
+    ($($owned:ty, $borrowed:ty, $what:literal;)*) => {$(
+        impl ToRon for $borrowed {
+            fn to_ast(&self) -> Result<Expr<'static>> {
+                match self.to_str() {
+                    Some(s) => Ok(synthetic_string(s.into())),
+                    None => Err(Error::new(ErrorKind::Message(alloc::format!(
+                        "{} {:?} is not valid UTF-8",
+                        $what, self
+                    )))),
+                }
+            }
+        }
+
+        impl ToRon for $owned {
+            fn to_ast(&self) -> Result<Expr<'static>> {
+                (**self).to_ast()
+            }
+        }
+
+        impl FromRon for $owned {
+            fn from_ast(expr: &Expr<'_>) -> Result<Self> {
+                String::from_ast(expr).map(Self::from)
+            }
+        }
+    )*};
+}
+
+impl_os_string! {
+    PathBuf, Path, "path";
+    OsString, OsStr, "OS string";
+}
+
+impl ToRon for () {
+    fn to_ast(&self) -> Result<Expr<'static>> {
+        Ok(synthetic_unit())
     }
 }
 
@@ -125,58 +119,45 @@ impl FromRon for () {
     }
 }
 
-macro_rules! impl_from_ron_int {
+macro_rules! impl_int {
     ($($ty:ty),+ $(,)?) => {
         $(
+            impl ToRon for $ty {
+                fn to_ast(&self) -> Result<Expr<'static>> {
+                    Ok(synthetic_integer(*self))
+                }
+            }
+
             impl FromRon for $ty {
                 fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-                    match expr {
-                        Expr::Number(n) => {
-                            parse_integer_from_raw::<$ty>(&n.raw, &n.kind, stringify!($ty))
-                                .map_err(|e| spanned_err(e, expr))
-                        }
-                        Expr::Byte(b) => {
-                            // Byte literals can be converted to integers
-                            <$ty>::try_from(b.value)
-                                .map_err(|_| spanned_err(Error::new(ErrorKind::IntegerOutOfBounds {
-                                    value: alloc::format!("b'{}'", b.value as char).into(),
-                                    target_type: stringify!($ty),
-                                }), expr))
-                        }
-                        _ => Err(spanned_type_mismatch(stringify!($ty), expr)),
-                    }
+                    expr_to_int(expr, stringify!($ty))
                 }
             }
         )+
     };
 }
 
-impl_from_ron_int!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
+impl_int!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
 #[cfg(feature = "integer128")]
-impl_from_ron_int!(i128, u128);
+impl_int!(i128, u128);
 
-impl FromRon for f32 {
-    #[allow(clippy::cast_possible_truncation)]
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match expr {
-            Expr::Number(n) => {
-                let val =
-                    parse_float_from_raw(&n.raw, &n.kind).map_err(|e| spanned_err(e, expr))?;
-                Ok(val as f32)
+macro_rules! impl_float {
+    ($($ty:ty: $synthetic:ident),+) => {
+        $(
+            impl ToRon for $ty {
+                fn to_ast(&self) -> Result<Expr<'static>> {
+                    Ok($synthetic(*self))
+                }
             }
-            _ => Err(spanned_type_mismatch("f32", expr)),
-        }
-    }
+
+            impl FromRon for $ty {
+                fn from_ast(expr: &Expr<'_>) -> Result<Self> {
+                    expr_to_float(expr)
+                }
+            }
+        )+
+    };
 }
 
-impl FromRon for f64 {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match expr {
-            Expr::Number(n) => {
-                parse_float_from_raw(&n.raw, &n.kind).map_err(|e| spanned_err(e, expr))
-            }
-            _ => Err(spanned_type_mismatch("f64", expr)),
-        }
-    }
-}
+impl_float!(f32: synthetic_f32, f64: synthetic_f64);

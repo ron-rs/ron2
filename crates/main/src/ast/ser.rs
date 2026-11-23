@@ -542,13 +542,13 @@ Config(
     // ASTs not parsed from `doc.source`
     // =========================================================================
 
-    fn synthetic_document(value: crate::Value) -> Document<'static> {
+    fn synthetic_document(value: &crate::Value) -> Document<'static> {
         Document {
             source: "".into(),
             leading: Trivia::empty(),
             attributes: alloc::vec![Attribute::synthetic_type("my::Type")],
             pre_value: Trivia::empty(),
-            value: Some(crate::ast::value_to_expr(value)),
+            value: Some(crate::ast::value_to_expr(value).unwrap()),
             trailing: Trivia::empty(),
         }
     }
@@ -557,7 +557,7 @@ Config(
     fn synthetic_ast_serializes_its_tokens() {
         use crate::{Map, NamedContent, Value};
 
-        let seq = synthetic_document(Value::Seq(alloc::vec![
+        let seq = synthetic_document(&Value::Seq(alloc::vec![
             Value::from(1),
             Value::Bool(true),
             Value::Unit,
@@ -571,7 +571,7 @@ Config(
 
         let mut map = Map::new();
         map.insert(Value::from("k"), Value::from(2));
-        let named = synthetic_document(Value::Named {
+        let named = synthetic_document(&Value::Named {
             name: "Point".into(),
             content: NamedContent::Struct(alloc::vec![
                 ("x".into(), Value::from(1)),
@@ -667,7 +667,7 @@ Config(
         inner.name.name = "Some".into();
         assert_eq!(serialize_document(&doc).unwrap(), "(r#a.b: r#Some(b: 1))");
 
-        let synthetic = synthetic_document(crate::Value::Named {
+        let synthetic = synthetic_document(&crate::Value::Named {
             name: "true".into(),
             content: crate::NamedContent::Unit,
         });

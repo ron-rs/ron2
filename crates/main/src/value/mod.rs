@@ -16,7 +16,7 @@ pub use number::{F32, F64, Number};
 
 use crate::{
     Error, ErrorKind,
-    ast::{into_value, parse_document, value_to_expr},
+    ast::{parse_document, to_value, value_to_expr},
     fmt::{FormatConfig, format_expr},
 };
 
@@ -74,8 +74,7 @@ impl FromStr for Value {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let doc = parse_document(s)?;
 
-        // Use consuming conversion to avoid unnecessary clones
-        match into_value(doc) {
+        match to_value(&doc) {
             Some(Ok(value)) => Ok(value),
             Some(Err(e)) => {
                 // Conversion error - e already contains span information
@@ -90,9 +89,13 @@ impl FromStr for Value {
 }
 
 /// Formats the value as RON with [`FormatConfig::default`].
+///
+/// A value nested deeper than [`MAX_CONVERSION_DEPTH`](crate::ast::MAX_CONVERSION_DEPTH)
+/// cannot be formatted and yields [`fmt::Error`]; [`ToRon::to_ron`](crate::ToRon::to_ron)
+/// reports that case as an error instead.
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let expr = value_to_expr(self.clone());
+        let expr = value_to_expr(self).map_err(|_| fmt::Error)?;
         f.write_str(&format_expr(&expr, &FormatConfig::default()))
     }
 }

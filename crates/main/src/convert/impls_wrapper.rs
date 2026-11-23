@@ -3,9 +3,7 @@
 use alloc::{borrow::Cow, boxed::Box, rc::Rc, sync::Arc};
 use core::cell::{Cell, RefCell};
 
-use super::{
-    FromRon, ToRon, extract_seq_elements, invalid_value, spanned_err, spanned_type_mismatch,
-};
+use super::{FromRon, ToRon, check_len, element, seq_elements, spanned_type_mismatch};
 use crate::{
     ast::{Expr, synthetic_option, synthetic_tuple},
     error::Result,
@@ -169,25 +167,10 @@ macro_rules! impl_from_ron_tuple {
     ($first:ident $(, $rest:ident)*) => {
         impl<$first: FromRon $(, $rest: FromRon)*> FromRon for ($first, $($rest,)*) {
             fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-                let Some(elements) = extract_seq_elements(expr) else {
-                    return Err(spanned_type_mismatch("tuple", expr));
-                };
-                #[allow(unused_variables)]
-                let expected = impl_from_ron_tuple!(@count $first $(, $rest)*);
-                if elements.len() != expected {
-                    return Err(spanned_err(
-                        invalid_value(alloc::format!(
-                            "expected tuple of {expected} elements, got {}",
-                            elements.len()
-                        )),
-                        expr,
-                    ));
-                }
-                let mut iter = elements.into_iter();
-                Ok((
-                    $first::from_ast(iter.next().ok_or_else(|| spanned_err(invalid_value("tuple too short"), expr))?)?,
-                    $($rest::from_ast(iter.next().ok_or_else(|| spanned_err(invalid_value("tuple too short"), expr))?)?,)*
-                ))
+                let mut elements = seq_elements(expr, "tuple")?;
+                check_len(&elements, impl_from_ron_tuple!(@count $first $(, $rest)*), "tuple", expr)?;
+                let mut next = || elements.next().ok_or_else(|| spanned_type_mismatch("tuple", expr));
+                Ok((element::<$first>(next()?)?, $(element::<$rest>(next()?)?,)*))
             }
         }
         impl_from_ron_tuple!($($rest),*);

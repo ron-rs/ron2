@@ -2,257 +2,116 @@
 
 use alloc::{
     collections::{BTreeMap, BTreeSet, LinkedList, VecDeque},
-    format,
     vec::Vec,
 };
 use core::hash::{BuildHasher, Hash};
 use std::collections::{HashMap, HashSet};
 
+use indexmap::{IndexMap, IndexSet};
+
 use super::{
-    FromRon, ToRon, extract_seq_elements, invalid_value, spanned_err, spanned_type_mismatch,
+    FromRon, ToRon, check_len, collect_seq, element, expect_map, read_map_entries, seq_elements,
 };
 use crate::{
     ast::{Expr, synthetic_map, synthetic_seq},
-    error::Result,
+    error::{Error, ErrorKind, Result},
 };
 
-// =============================================================================
-// ToRon implementations
-// =============================================================================
-
-impl<T: ToRon> ToRon for Vec<T> {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
-        Ok(synthetic_seq(items?))
-    }
+fn seq_to_ast<'i, T: ToRon + 'i>(items: impl Iterator<Item = &'i T>) -> Result<Expr<'static>> {
+    Ok(synthetic_seq(
+        items.map(ToRon::to_ast).collect::<Result<_>>()?,
+    ))
 }
 
-impl<T: ToRon> ToRon for VecDeque<T> {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
-        Ok(synthetic_seq(items?))
-    }
+fn map_to_ast<'i, K: ToRon + 'i, V: ToRon + 'i>(
+    entries: impl Iterator<Item = (&'i K, &'i V)>,
+) -> Result<Expr<'static>> {
+    let entries = entries
+        .map(|(k, v)| Ok((k.to_ast()?, v.to_ast()?)))
+        .collect::<Result<_>>()?;
+    Ok(synthetic_map(entries))
 }
 
-impl<T: ToRon> ToRon for LinkedList<T> {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
-        Ok(synthetic_seq(items?))
-    }
+/// `ToRon` and `FromRon` for sequence-like collections.
+macro_rules! seq_impls {
+    ($($seq:ident<T $(, $s:ident)?> $(where [$($bounds:tt)*])?;)*) => {$(
+        impl<T: ToRon $(, $s)?> ToRon for $seq<T $(, $s)?> {
+            fn to_ast(&self) -> Result<Expr<'static>> {
+                seq_to_ast(self.iter())
+            }
+        }
+
+        impl<T: FromRon $(, $s)?> FromRon for $seq<T $(, $s)?> $(where $($bounds)*)? {
+            fn from_ast(expr: &Expr<'_>) -> Result<Self> {
+                collect_seq(expr)
+            }
+        }
+    )*};
 }
 
-impl<T: ToRon + Eq + Hash, S: BuildHasher> ToRon for HashSet<T, S> {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
-        Ok(synthetic_seq(items?))
-    }
+seq_impls! {
+    Vec<T>;
+    VecDeque<T>;
+    LinkedList<T>;
+    BTreeSet<T> where [T: Ord];
+    HashSet<T, S> where [T: Eq + Hash, S: BuildHasher + Default];
+    IndexSet<T, S> where [T: Eq + Hash, S: BuildHasher + Default];
 }
 
-impl<T: ToRon + Ord> ToRon for BTreeSet<T> {
+impl<T: ToRon> ToRon for [T] {
     fn to_ast(&self) -> Result<Expr<'static>> {
-        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
-        Ok(synthetic_seq(items?))
+        seq_to_ast(self.iter())
     }
 }
 
 impl<T: ToRon, const N: usize> ToRon for [T; N] {
     fn to_ast(&self) -> Result<Expr<'static>> {
-        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
-        Ok(synthetic_seq(items?))
-    }
-}
-
-impl<T: ToRon> ToRon for [T] {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
-        Ok(synthetic_seq(items?))
-    }
-}
-
-// Map types
-impl<K: ToRon + Eq + Hash, V: ToRon, S: BuildHasher> ToRon for HashMap<K, V, S> {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let entries: Result<Vec<_>> = self
-            .iter()
-            .map(|(k, v)| Ok((k.to_ast()?, v.to_ast()?)))
-            .collect();
-        Ok(synthetic_map(entries?))
-    }
-}
-
-impl<K: ToRon + Ord, V: ToRon> ToRon for BTreeMap<K, V> {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let entries: Result<Vec<_>> = self
-            .iter()
-            .map(|(k, v)| Ok((k.to_ast()?, v.to_ast()?)))
-            .collect();
-        Ok(synthetic_map(entries?))
-    }
-}
-
-impl<K: ToRon + Eq + Hash, V: ToRon, S: core::hash::BuildHasher> ToRon
-    for indexmap::IndexMap<K, V, S>
-{
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let entries: Result<Vec<_>> = self
-            .iter()
-            .map(|(k, v)| Ok((k.to_ast()?, v.to_ast()?)))
-            .collect();
-        Ok(synthetic_map(entries?))
-    }
-}
-
-impl<T: ToRon + Eq + Hash, S: core::hash::BuildHasher> ToRon for indexmap::IndexSet<T, S> {
-    fn to_ast(&self) -> Result<Expr<'static>> {
-        let items: Result<Vec<_>> = self.iter().map(ToRon::to_ast).collect();
-        Ok(synthetic_seq(items?))
-    }
-}
-
-// =============================================================================
-// FromRon implementations
-// =============================================================================
-
-impl<T: FromRon> FromRon for Vec<T> {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match extract_seq_elements(expr) {
-            Some(elements) => elements.into_iter().map(T::from_ast).collect(),
-            None => Err(spanned_type_mismatch("sequence", expr)),
-        }
-    }
-}
-
-impl<T: FromRon> FromRon for VecDeque<T> {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match extract_seq_elements(expr) {
-            Some(elements) => elements.into_iter().map(T::from_ast).collect(),
-            None => Err(spanned_type_mismatch("sequence", expr)),
-        }
-    }
-}
-
-impl<T: FromRon> FromRon for LinkedList<T> {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match extract_seq_elements(expr) {
-            Some(elements) => elements.into_iter().map(T::from_ast).collect(),
-            None => Err(spanned_type_mismatch("sequence", expr)),
-        }
-    }
-}
-
-impl<T: FromRon + Eq + Hash, S: BuildHasher + Default> FromRon for HashSet<T, S> {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match extract_seq_elements(expr) {
-            Some(elements) => elements
-                .into_iter()
-                .map(T::from_ast)
-                .collect::<Result<HashSet<T, S>>>(),
-            None => Err(spanned_type_mismatch("sequence", expr)),
-        }
-    }
-}
-
-impl<T: FromRon + Ord> FromRon for BTreeSet<T> {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match extract_seq_elements(expr) {
-            Some(elements) => elements.into_iter().map(T::from_ast).collect(),
-            None => Err(spanned_type_mismatch("sequence", expr)),
-        }
+        seq_to_ast(self.iter())
     }
 }
 
 impl<T: FromRon, const N: usize> FromRon for [T; N] {
     fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match extract_seq_elements(expr) {
-            Some(elements) => {
-                if elements.len() != N {
-                    return Err(spanned_err(
-                        invalid_value(format!(
-                            "expected array of length {N}, got {}",
-                            elements.len()
-                        )),
-                        expr,
-                    ));
-                }
-                let vec: Vec<T> = elements
-                    .into_iter()
-                    .map(T::from_ast)
-                    .collect::<Result<_>>()?;
-                vec.try_into().map_err(|_| {
-                    spanned_err(
-                        invalid_value(format!("failed to convert to array of length {N}")),
-                        expr,
-                    )
-                })
-            }
-            None => Err(spanned_type_mismatch("array", expr)),
-        }
+        let elements = seq_elements(expr, "array")?;
+        check_len(&elements, N, "array", expr)?;
+        let items = elements.map(element).collect::<Result<Vec<T>>>()?;
+        items.try_into().map_err(|_| {
+            Error::with_span(
+                ErrorKind::Message(alloc::format!("expected array of length {N}")),
+                *expr.span(),
+            )
+        })
     }
 }
 
-// Map types
-impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRon for HashMap<K, V, S> {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match expr {
-            Expr::Map(map) => {
-                let mut result =
-                    HashMap::with_capacity_and_hasher(map.entries.len(), Default::default());
-                for entry in &map.entries {
-                    let k = K::from_ast(&entry.key)?;
-                    let v = V::from_ast(&entry.value)?;
-                    result.insert(k, v);
-                }
-                Ok(result)
+/// `ToRon` and `FromRon` for map collections; repeated keys are an error.
+macro_rules! map_impls {
+    ($($map:ident<K, V $(, $s:ident)?> where [$($bounds:tt)*] = $new:expr;)*) => {$(
+        impl<K: ToRon, V: ToRon $(, $s)?> ToRon for $map<K, V $(, $s)?> {
+            fn to_ast(&self) -> Result<Expr<'static>> {
+                map_to_ast(self.iter())
             }
-            _ => Err(spanned_type_mismatch("map", expr)),
         }
-    }
+
+        impl<K: FromRon, V: FromRon $(, $s)?> FromRon for $map<K, V $(, $s)?>
+        where
+            $($bounds)*
+        {
+            fn from_ast(expr: &Expr<'_>) -> Result<Self> {
+                let map = expect_map(expr)?;
+                let new: fn(usize) -> Self = $new;
+                let mut out = new(map.entries.len());
+                read_map_entries(map, |k, v| out.insert(k, v))?;
+                Ok(out)
+            }
+        }
+    )*};
 }
 
-impl<K: FromRon + Ord, V: FromRon> FromRon for BTreeMap<K, V> {
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match expr {
-            Expr::Map(map) => {
-                let mut result = BTreeMap::new();
-                for entry in &map.entries {
-                    let k = K::from_ast(&entry.key)?;
-                    let v = V::from_ast(&entry.value)?;
-                    result.insert(k, v);
-                }
-                Ok(result)
-            }
-            _ => Err(spanned_type_mismatch("map", expr)),
-        }
-    }
-}
-
-impl<K: FromRon + Eq + Hash, V: FromRon, S: core::hash::BuildHasher + Default> FromRon
-    for indexmap::IndexMap<K, V, S>
-{
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match expr {
-            Expr::Map(map) => {
-                let mut result =
-                    indexmap::IndexMap::with_capacity_and_hasher(map.entries.len(), S::default());
-                for entry in &map.entries {
-                    let k = K::from_ast(&entry.key)?;
-                    let v = V::from_ast(&entry.value)?;
-                    result.insert(k, v);
-                }
-                Ok(result)
-            }
-            _ => Err(spanned_type_mismatch("map", expr)),
-        }
-    }
-}
-
-impl<T: FromRon + Eq + Hash, S: core::hash::BuildHasher + Default> FromRon
-    for indexmap::IndexSet<T, S>
-{
-    fn from_ast(expr: &Expr<'_>) -> Result<Self> {
-        match extract_seq_elements(expr) {
-            Some(elements) => elements.into_iter().map(T::from_ast).collect::<Result<_>>(),
-            None => Err(spanned_type_mismatch("sequence", expr)),
-        }
-    }
+map_impls! {
+    BTreeMap<K, V> where [K: Ord] = |_| BTreeMap::new();
+    HashMap<K, V, S> where [K: Eq + Hash, S: BuildHasher + Default] =
+        |n| HashMap::with_capacity_and_hasher(n, S::default());
+    IndexMap<K, V, S> where [K: Eq + Hash, S: BuildHasher + Default] =
+        |n| IndexMap::with_capacity_and_hasher(n, S::default());
 }
