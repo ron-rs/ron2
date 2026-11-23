@@ -509,10 +509,11 @@ mod tests {
         let ron = "Some(42)";
         let opt: Option<Spanned<i32>> = Option::from_ron(ron).unwrap();
 
-        assert!(opt.is_some());
         let spanned = opt.unwrap();
         assert_eq!(spanned.value, 42);
-        assert!(spanned.span.start.line > 0); // Has a real span
+        // Span of the inner `42`, not of the whole `Some(...)`
+        assert_eq!((spanned.span.start_offset, spanned.span.end_offset), (5, 7));
+        assert_eq!(spanned.span.start, Position { line: 1, col: 6 });
     }
 
     #[test]
@@ -529,7 +530,8 @@ mod tests {
         let spanned: Spanned<Option<i32>> = Spanned::from_ron(ron).unwrap();
 
         assert_eq!(spanned.value, Some(42));
-        assert!(spanned.span.start.line > 0); // Span for entire expression
+        // Span for entire expression
+        assert_eq!((spanned.span.start_offset, spanned.span.end_offset), (0, 8));
     }
 
     #[test]
@@ -538,7 +540,8 @@ mod tests {
         let spanned: Spanned<Option<i32>> = Spanned::from_ron(ron).unwrap();
 
         assert_eq!(spanned.value, None);
-        assert!(spanned.span.start.line > 0); // Span for None keyword!
+        // Span for None keyword!
+        assert_eq!((spanned.span.start_offset, spanned.span.end_offset), (0, 4));
     }
 
     #[test]
@@ -546,9 +549,9 @@ mod tests {
         let ron = "42"; // Bare value
         let opt: Option<Spanned<i32>> = Option::from_ron(ron).unwrap();
 
-        assert!(opt.is_some());
         let spanned = opt.unwrap();
         assert_eq!(spanned.value, 42);
+        assert_eq!((spanned.span.start_offset, spanned.span.end_offset), (0, 2));
     }
 
     #[test]
@@ -569,6 +572,7 @@ world"
 
         assert_eq!(spanned.value, "hello\nworld");
         // Span should cover multiple lines
-        assert!(spanned.span.end.line > spanned.span.start.line);
+        assert_eq!(spanned.span.start, Position { line: 1, col: 1 });
+        assert_eq!(spanned.span.end, Position { line: 2, col: 7 });
     }
 }

@@ -3,7 +3,7 @@
 //! Tests cover:
 //! - Schema serialization/deserialization roundtrips
 //! - All TypeKind variants
-//! - Field and Variant builders
+//! - Field and Variant serialization
 //! - Nested types (Vec of Option of Struct, etc.)
 
 #![cfg(feature = "derive")]
@@ -11,7 +11,7 @@
 use ron2::{
     FromRon, ToRon,
     fmt::FormatConfig,
-    schema::{Field, Schema, TypeKind, Variant, VariantKind},
+    schema::{Field, Schema, TypeKind, Variant},
 };
 
 // ============================================================================
@@ -19,24 +19,14 @@ use ron2::{
 // ============================================================================
 
 #[test]
-fn test_schema_new() {
-    let schema = Schema::new(TypeKind::Bool);
-    assert_eq!(schema.doc, None);
-    assert_eq!(schema.kind, TypeKind::Bool);
-}
-
-#[test]
-fn test_schema_with_doc() {
-    let schema = Schema::with_doc("A boolean value", TypeKind::Bool);
-    assert_eq!(schema.doc, Some("A boolean value".to_string()));
-    assert_eq!(schema.kind, TypeKind::Bool);
-}
-
-#[test]
 fn test_schema_serialization_roundtrip_simple() {
     let schema = Schema::with_doc("Test schema", TypeKind::String);
 
     let serialized = schema.to_ron_with(&FormatConfig::default()).unwrap();
+    assert_eq!(
+        serialized,
+        "Schema(\n    doc: Some(\"Test schema\"),\n    kind: String,\n)"
+    );
     let deserialized = Schema::from_ron(&serialized).unwrap();
 
     assert_eq!(schema, deserialized);
@@ -47,8 +37,8 @@ fn test_schema_serialization_without_doc() {
     let schema = Schema::new(TypeKind::I32);
 
     let serialized = schema.to_ron_with(&FormatConfig::default()).unwrap();
-    // doc should not appear in serialized output when None
-    assert!(!serialized.contains("doc:"));
+    // doc (and the other unset metadata) should not appear when None
+    assert_eq!(serialized, "Schema(\n    kind: I32,\n)");
 
     let deserialized = Schema::from_ron(&serialized).unwrap();
     assert_eq!(schema, deserialized);
@@ -217,66 +207,31 @@ fn test_type_kind_type_ref_roundtrip() {
 // ============================================================================
 
 #[test]
-fn test_field_new() {
-    let field = Field::new("port", TypeKind::U16);
-    assert_eq!(field.name, "port");
-    assert_eq!(field.ty, TypeKind::U16);
-    assert_eq!(field.doc, None);
-    assert!(!field.optional);
-}
-
-#[test]
-fn test_field_optional() {
-    let field = Field::optional("host", TypeKind::String);
-    assert_eq!(field.name, "host");
-    assert_eq!(field.ty, TypeKind::String);
-    assert_eq!(field.doc, None);
-    assert!(field.optional);
-}
-
-#[test]
-fn test_field_with_doc() {
-    let field = Field::new("port", TypeKind::U16).with_doc("The server port number");
-    assert_eq!(field.name, "port");
-    assert_eq!(field.ty, TypeKind::U16);
-    assert_eq!(field.doc, Some("The server port number".to_string()));
-    assert!(!field.optional);
-}
-
-#[test]
-fn test_field_optional_with_doc() {
-    let field = Field::optional("timeout", TypeKind::U64).with_doc("Request timeout in ms");
-    assert_eq!(field.name, "timeout");
-    assert_eq!(field.ty, TypeKind::U64);
-    assert_eq!(field.doc, Some("Request timeout in ms".to_string()));
-    assert!(field.optional);
-}
-
-#[test]
 fn test_field_serialization_skips_none_doc() {
     let field = Field::new("value", TypeKind::I32);
     let serialized = field.to_ron_with(&FormatConfig::default()).unwrap();
-    assert!(!serialized.contains("doc:"));
-}
-
-#[test]
-fn test_field_serialization_skips_false_optional() {
-    let field = Field::new("value", TypeKind::I32);
-    let serialized = field.to_ron_with(&FormatConfig::default()).unwrap();
-    assert!(!serialized.contains("optional:"));
+    // Neither `doc: None` nor `optional: false` is written.
+    assert_eq!(serialized, "Field(\n    name: \"value\",\n    ty: I32,\n)");
 }
 
 #[test]
 fn test_field_serialization_includes_true_optional() {
     let field = Field::optional("value", TypeKind::I32);
     let serialized = field.to_ron_with(&FormatConfig::default()).unwrap();
-    assert!(serialized.contains("optional: true"));
+    assert_eq!(
+        serialized,
+        "Field(\n    name: \"value\",\n    ty: I32,\n    optional: true,\n)"
+    );
 }
 
 #[test]
 fn test_field_roundtrip() {
     let field = Field::optional("config", TypeKind::String).with_doc("Configuration path");
     let serialized = field.to_ron().unwrap();
+    assert_eq!(
+        serialized,
+        "Field(\n    name: \"config\",\n    ty: String,\n    doc: Some(\"Configuration path\"),\n    optional: true,\n)"
+    );
     let deserialized = Field::from_ron(&serialized).unwrap();
     assert_eq!(field, deserialized);
 }
@@ -286,51 +241,13 @@ fn test_field_roundtrip() {
 // ============================================================================
 
 #[test]
-fn test_variant_unit() {
-    let variant = Variant::unit("None");
-    assert_eq!(variant.name, "None");
-    assert_eq!(variant.doc, None);
-    assert_eq!(variant.kind, VariantKind::Unit);
-}
-
-#[test]
-fn test_variant_tuple() {
-    let variant = Variant::tuple("Point", vec![TypeKind::F64, TypeKind::F64]);
-    assert_eq!(variant.name, "Point");
-    assert_eq!(variant.doc, None);
-    assert_eq!(
-        variant.kind,
-        VariantKind::Tuple(vec![TypeKind::F64, TypeKind::F64])
-    );
-}
-
-#[test]
-fn test_variant_struct() {
-    let fields = vec![
-        Field::new("x", TypeKind::F64),
-        Field::new("y", TypeKind::F64),
-    ];
-    let variant = Variant::struct_variant("Point", fields.clone());
-    assert_eq!(variant.name, "Point");
-    assert_eq!(variant.doc, None);
-    assert_eq!(variant.kind, VariantKind::Struct(fields));
-}
-
-#[test]
-fn test_variant_with_doc() {
-    let variant = Variant::unit("Success").with_doc("Operation completed successfully");
-    assert_eq!(variant.name, "Success");
-    assert_eq!(
-        variant.doc,
-        Some("Operation completed successfully".to_string())
-    );
-    assert_eq!(variant.kind, VariantKind::Unit);
-}
-
-#[test]
 fn test_variant_roundtrip_unit() {
     let variant = Variant::unit("Empty").with_doc("An empty value");
     let serialized = variant.to_ron().unwrap();
+    assert_eq!(
+        serialized,
+        "Variant(\n    name: \"Empty\",\n    doc: Some(\"An empty value\"),\n    kind: Unit,\n)"
+    );
     let deserialized = Variant::from_ron(&serialized).unwrap();
     assert_eq!(variant, deserialized);
 }
@@ -339,6 +256,10 @@ fn test_variant_roundtrip_unit() {
 fn test_variant_roundtrip_tuple() {
     let variant = Variant::tuple("Rgb", vec![TypeKind::U8, TypeKind::U8, TypeKind::U8]);
     let serialized = variant.to_ron().unwrap();
+    assert_eq!(
+        serialized,
+        "Variant(\n    name: \"Rgb\",\n    kind: Tuple([U8, U8, U8]),\n)"
+    );
     let deserialized = Variant::from_ron(&serialized).unwrap();
     assert_eq!(variant, deserialized);
 }
@@ -353,6 +274,10 @@ fn test_variant_roundtrip_struct() {
         ],
     );
     let serialized = variant.to_ron().unwrap();
+    assert_eq!(
+        serialized,
+        "Variant(\n    name: \"Person\",\n    kind: Struct(\n        [\n            Field(name: \"name\", ty: String),\n            Field(name: \"age\", ty: U8, optional: true),\n        ],\n    ),\n)"
+    );
     let deserialized = Variant::from_ron(&serialized).unwrap();
     assert_eq!(variant, deserialized);
 }

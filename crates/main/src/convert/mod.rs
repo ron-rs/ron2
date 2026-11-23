@@ -1376,6 +1376,6 @@ mod tests {
             .to_typed_document(&SerializeConfig::without_type_attribute())
             .unwrap();
         assert_eq!(doc.attributes.len(), 0);
-        assert!(doc.value.is_some());
+        assert!(matches!(&doc.value, Some(Expr::Number(n)) if n.raw == "42"));
     }
 }

@@ -9,7 +9,7 @@
 //! - Struct fields use PARENTHESES: `Point(x: 1, y: 2)`
 //! - Curly braces are for MAPS only: `{ "key": value }`
 
-use ron2::{NamedContent, Number, ToRon, Value, fmt::FormatConfig};
+use ron2::{Map, NamedContent, Number, ToRon, Value, fmt::FormatConfig};
 
 // =============================================================================
 // Unit Named Types - Edge Cases
@@ -234,9 +234,7 @@ fn serialize_named_struct_pretty() {
         ]),
     };
     let pretty = value.to_ron().unwrap();
-    assert!(pretty.contains("x: 1"));
-    assert!(pretty.contains("y: 2"));
-    assert!(pretty.contains('\n'));
+    assert_eq!(pretty, "Point(\n    x: 1,\n    y: 2,\n)");
 }
 
 // =============================================================================
@@ -348,8 +346,40 @@ fn realistic_api_response() {
     .parse()
     .unwrap();
 
-    // Just verify it parses correctly
-    assert!(matches!(value, Value::Named { .. }));
+    let unit = |name: &str| Value::Named {
+        name: String::from(name),
+        content: NamedContent::Unit,
+    };
+    let string = |s: &str| Value::String(String::from(s));
+    let mut metadata = Map::new();
+    metadata.insert(string("request_id"), string("abc123"));
+    metadata.insert(
+        string("timestamp"),
+        Value::Number(Number::U32(1_234_567_890)),
+    );
+    let user = Value::Named {
+        name: String::from("User"),
+        content: NamedContent::Struct(vec![
+            (String::from("id"), Value::Number(Number::U8(1))),
+            (String::from("username"), string("alice")),
+            (String::from("email"), string("alice@example.com")),
+            (
+                String::from("roles"),
+                Value::Seq(vec![unit("Admin"), unit("User")]),
+            ),
+        ]),
+    };
+    assert_eq!(
+        value,
+        Value::Named {
+            name: String::from("Response"),
+            content: NamedContent::Struct(vec![
+                (String::from("status"), unit("Ok")),
+                (String::from("data"), Value::Option(Some(Box::new(user)))),
+                (String::from("metadata"), Value::Map(metadata)),
+            ]),
+        }
+    );
 }
 
 #[test]

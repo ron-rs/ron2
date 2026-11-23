@@ -176,7 +176,10 @@ fn test_write_overwrites_existing_file() {
 #[test]
 fn test_read_nonexistent_file_fails() {
     let result = read_schema(&PathBuf::from("/nonexistent/path/schema.ron"));
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(SchemaError::Storage(StorageError::Io(_)))
+    ));
 }
 
 #[test]
@@ -213,7 +216,10 @@ fn test_find_schema_not_found_in_directory() {
 
     let result = find_schema("nonexistent::Type", &[temp_dir.path().to_path_buf()]);
     // Should fail since it's not in the temp dir and not in the default location
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(SchemaError::Storage(StorageError::SchemaNotFound(ty))) if ty == "nonexistent::Type"
+    ));
 }
 
 #[test]
@@ -405,16 +411,23 @@ fn test_resolve_schema_dir_without_env_var_uses_xdg() {
 
     let resolved = resolve_schema_dir();
 
-    // Should succeed with XDG fallback (on most systems)
-    // The exact path depends on the system, but it should end with "ron-schemas"
-    if let Ok(path) = resolved {
-        let path_str = path.to_string_lossy();
+    // With the `xdg` feature this falls back to the XDG data directory. The
+    // exact path depends on the system, but it should end with "ron-schemas".
+    #[cfg(feature = "xdg")]
+    {
+        let path = resolved.unwrap();
         assert!(
-            path_str.ends_with("ron-schemas"),
+            path.ends_with("ron-schemas"),
             "Expected path to end with 'ron-schemas', got: {}",
-            path_str
+            path.display()
         );
     }
+    // Without it there is no schema directory at all.
+    #[cfg(not(feature = "xdg"))]
+    assert!(matches!(
+        resolved,
+        Err(SchemaError::Storage(StorageError::NoSchemaDir))
+    ));
 
     // Restore original value
     if let Some(val) = original {
@@ -503,7 +516,10 @@ fn test_schema_file_can_be_manually_edited_and_read() {
 fn test_type_path_with_empty_string_is_rejected() {
     use ron2::schema::storage::type_path_to_file_path;
 
-    assert!(type_path_to_file_path("").is_err());
+    assert!(matches!(
+        type_path_to_file_path(""),
+        Err(SchemaError::Storage(StorageError::InvalidTypePath(_)))
+    ));
 }
 
 #[test]

@@ -60,13 +60,17 @@ fn span_points_to_invalid_token() {
     let result: Result<Value> = source.parse();
     let err = result.unwrap_err();
 
-    // The error should be at the invalid digit
-    assert_eq!(err.span().start.line, 1);
-    assert!(
-        err.span().start.col >= 3,
-        "Error should point to 'G' at col 3 or later, got col {}",
-        err.span().start.col
+    // The error should be at the first invalid digit
+    assert_eq!(
+        err.kind(),
+        &ErrorKind::InvalidIntegerDigit {
+            digit: 'G',
+            base: 16
+        }
     );
+    assert_eq!(err.span().start.line, 1);
+    assert_eq!(err.span().start.col, 3);
+    assert_eq!(err.span().slice(source), "G");
 }
 
 #[test]
@@ -76,6 +80,13 @@ fn span_points_to_unclosed_bracket_content() {
     let err = result.unwrap_err();
 
     // Error should be at end of file
+    assert_eq!(
+        err.kind(),
+        &ErrorKind::Expected {
+            expected: "closing `]`".into(),
+            context: Some("array")
+        }
+    );
     assert_eq!(err.span().start.line, 1);
     assert_eq!(err.span().start.col, 9, "Error should be at EOF position");
 }
@@ -115,8 +126,9 @@ fn span_points_to_unclosed_string() {
     let result: Result<Value> = source.parse();
     let err = result.unwrap_err();
 
-    // Should point to the string start or end
-    assert_eq!(err.span().start.line, 1);
+    // Should cover the whole unterminated string
+    assert_eq!(err.kind(), &ErrorKind::ExpectedStringEnd);
+    assert_eq!(err.span().slice(source), source);
 }
 
 #[test]
@@ -128,11 +140,8 @@ fn span_points_to_invalid_escape_sequence() {
     // Error should be in the string where \q appears
     assert_eq!(err.span().start.line, 1);
     // Column should point to the escape sequence
-    assert!(
-        err.span().start.col >= 7,
-        "Error should point to escape sequence area, got col {}",
-        err.span().start.col
-    );
+    assert_eq!(err.span().start.col, 7);
+    assert_eq!(err.span().slice(source), "\\q");
 }
 
 #[test]
@@ -143,11 +152,8 @@ fn span_points_to_map_missing_colon() {
 
     assert_eq!(err.span().start.line, 1);
     // Should point to "value" where colon was expected before
-    assert!(
-        err.span().start.col >= 9,
-        "Error should point near 'value', got col {}",
-        err.span().start.col
-    );
+    assert_eq!(err.span().start.col, 9);
+    assert_eq!(err.span().slice(source), "\"value\"");
 }
 
 #[test]
@@ -170,23 +176,8 @@ fn span_byte_offsets_enable_slicing() {
     let result: Result<Value> = source.parse();
     let err = result.unwrap_err();
 
-    // Verify byte offsets are valid for slicing
-    assert!(
-        err.span().start_offset <= source.len(),
-        "start_offset {} should be <= source len {}",
-        err.span().start_offset,
-        source.len()
-    );
-    assert!(
-        err.span().end_offset <= source.len(),
-        "end_offset {} should be <= source len {}",
-        err.span().end_offset,
-        source.len()
-    );
-    assert!(
-        err.span().start_offset <= err.span().end_offset,
-        "start_offset should be <= end_offset"
-    );
+    // Verify byte offsets slice out the offending token
+    assert_eq!(&source[err.span().start_offset..err.span().end_offset], "}");
 }
 
 // =============================================================================
@@ -243,11 +234,7 @@ fn error_message_includes_context_for_comma() {
     let msg = err.to_string();
 
     // Error should mention what was expected
-    assert!(
-        msg.contains("comma") || msg.contains(",") || msg.contains("Expected"),
-        "Error should mention comma or expectation: {}",
-        msg
-    );
+    assert_eq!(msg, "1:4-1:5: Expected comma in array");
 }
 
 #[test]
@@ -258,11 +245,7 @@ fn error_message_shows_position() {
     let msg = err.to_string();
 
     // Should show line:col format
-    assert!(
-        msg.contains(':'),
-        "Error should contain position separator: {}",
-        msg
-    );
+    assert_eq!(msg, "1:8-1:9: Unexpected char '}'");
 }
 
 #[test]
@@ -273,27 +256,30 @@ fn error_message_eof_is_clear() {
     let msg = err.to_string();
 
     // Should mention EOF or end
-    assert!(
-        msg.to_lowercase().contains("eof")
-            || msg.to_lowercase().contains("end")
-            || msg.contains("Unexpected"),
-        "Error should mention EOF: {}",
-        msg
-    );
+    assert_eq!(msg, "1:7: Unexpected end of RON");
 }
 
 #[test]
 fn type_bounds_checked_at_deserialization_not_parsing() {
+    use ron2::{FromRon, Number};
+
     // Type bounds like u8 are checked during deserialization, not parsing
-    // 256 is fine for i64 (default integer storage) but too big for u8
+    // 256 parses as the smallest fitting number but is too big for u8
     let source = "256";
     let result: Result<Value> = source.parse();
-    assert!(result.is_ok(), "256 should parse as a generic number");
+    assert_eq!(result.unwrap(), Value::Number(Number::U16(256)));
+    assert!(matches!(
+        u8::from_ron(source).unwrap_err().kind(),
+        ErrorKind::IntegerOutOfBounds { .. }
+    ));
 
     // i64::MAX is valid
     let source = "9223372036854775807";
     let result: Result<Value> = source.parse();
-    assert!(result.is_ok(), "i64::MAX should parse successfully");
+    assert_eq!(
+        result.unwrap(),
+        Value::Number(Number::U64(9_223_372_036_854_775_807))
+    );
 }
 
 #[test]
@@ -307,13 +293,9 @@ fn error_distinguishes_bracket_types() {
     let result2: Result<Value> = source2.parse();
     let err2 = result2.unwrap_err();
 
-    // Errors should be different or at least specific
-    let msg1 = err1.to_string();
-    let msg2 = err2.to_string();
-
-    // Both should have position info
-    assert!(msg1.contains(':'), "Error 1 should have position: {}", msg1);
-    assert!(msg2.contains(':'), "Error 2 should have position: {}", msg2);
+    // Each error names the closer that does not match
+    assert_eq!(err1.to_string(), "1:6-1:7: Unexpected char '}'");
+    assert_eq!(err2.to_string(), "1:6-1:7: Unexpected char ']'");
 }
 
 // =============================================================================
@@ -326,11 +308,7 @@ fn error_code_for_unclosed_string() {
     let result: Result<Value> = source.parse();
     let err = result.unwrap_err();
 
-    assert!(
-        matches!(err.kind(), ErrorKind::ExpectedStringEnd | ErrorKind::Eof),
-        "Expected ExpectedStringEnd or Eof error, got {:?}",
-        err.kind()
-    );
+    assert_eq!(err.kind(), &ErrorKind::ExpectedStringEnd);
 }
 
 #[test]
@@ -419,11 +397,8 @@ fn very_long_line_has_correct_position() {
     let err = result_err.unwrap_err();
 
     assert_eq!(err.span().start.line, 1);
-    assert!(
-        err.span().start.col > 1000,
-        "Column should be > 1000, got {}",
-        err.span().start.col
-    );
+    // Byte offset 1001 (just past the 1000 `x`s) is column 1002
+    assert_eq!(err.span().start.col, 1002);
 }
 
 // =============================================================================
@@ -439,12 +414,8 @@ fn span_slice_method_works() {
     // Use the span to extract text
     let sliced = err.span().slice(source);
 
-    // The sliced text should be non-empty and from the source
-    assert!(
-        source.contains(sliced) || sliced.is_empty(),
-        "Sliced '{}' should be in source",
-        sliced
-    );
+    // The sliced text is the token where `:` was expected
+    assert_eq!(sliced, "value");
 }
 
 // =============================================================================

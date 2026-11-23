@@ -613,7 +613,11 @@ mod tests {
                 access.with_default_explicit::<i32>("missing").unwrap(),
                 None
             );
-            assert!(access.required_explicit::<i32>("missing").is_err());
+            let err = access.required_explicit::<i32>("missing").unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "1:1-1:28: missing required field `missing` in `Test`"
+            );
         });
     }
 }

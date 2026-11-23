@@ -1227,8 +1227,7 @@ mod tests {
     fn test_seq_with_line_comment() {
         let source = "[\n    // first item\n    1,\n    2,\n]";
         let formatted = format(source);
-        assert!(formatted.contains("// first item"));
-        assert!(formatted.contains("    1,"));
+        assert_eq!(formatted, "[\n    // first item\n    1,\n    2,\n]\n");
     }
 
     // =========================================================================
@@ -1270,12 +1269,10 @@ mod tests {
     fn test_struct_exceeds_limit() {
         let config = FormatConfig::default().char_limit(20);
         let formatted = format_with("Config(name: \"test\", value: 42)", &config);
-        assert!(
-            formatted.contains('\n'),
-            "Expected multiline, got: {formatted:?}"
+        assert_eq!(
+            formatted,
+            "Config(\n    name: \"test\",\n    value: 42,\n)\n"
         );
-        assert!(formatted.contains("name: \"test\","));
-        assert!(formatted.contains("value: 42,"));
     }
 
     #[test]
@@ -1286,9 +1283,7 @@ mod tests {
     host: "localhost",
 )"#;
         let formatted = format(source);
-        assert!(formatted.contains("// Server port"));
-        assert!(formatted.contains("port: 8080,"));
-        assert!(formatted.contains("host: \"localhost\","));
+        assert_eq!(formatted, format!("{source}\n"));
     }
 
     #[test]
@@ -1304,8 +1299,8 @@ mod tests {
         let config = FormatConfig::default().char_limit(30);
         let source = "A(b: B(c: C(d: D(e: 1))))";
         let formatted = format_with(source, &config);
-        // Should expand due to length
-        assert!(formatted.contains('\n'));
+        // Root is multiline; `    b: B(c: C(d: D(e: 1))),` fits in 30
+        assert_eq!(formatted, "A(\n    b: B(c: C(d: D(e: 1))),\n)\n");
     }
 
     // =========================================================================
@@ -1329,7 +1324,7 @@ mod tests {
     fn test_map_exceeds_limit() {
         let config = FormatConfig::default().char_limit(15);
         let formatted = format_with("{\"key\": \"value\"}", &config);
-        assert!(formatted.contains('\n'));
+        assert_eq!(formatted, "{\n    \"key\": \"value\",\n}\n");
     }
 
     // =========================================================================
@@ -1357,15 +1352,14 @@ mod tests {
     fn test_leading_comment() {
         let source = "// header comment\n42";
         let formatted = format(source);
-        assert!(formatted.starts_with("// header comment\n"));
-        assert!(formatted.contains("42"));
+        assert_eq!(formatted, "// header comment\n42\n");
     }
 
     #[test]
     fn test_block_comment() {
         let source = "/* block */ 42";
         let formatted = format(source);
-        assert!(formatted.contains("/* block */"));
+        assert_eq!(formatted, "/* block */\n42\n");
     }
 
     #[test]
@@ -1376,9 +1370,7 @@ mod tests {
     y: 2,
 )";
         let formatted = format(source);
-        assert!(formatted.contains("// separator"));
-        assert!(formatted.contains("x: 1,"));
-        assert!(formatted.contains("y: 2,"));
+        assert_eq!(formatted, format!("{source}\n"));
     }
 
     // =========================================================================
@@ -1397,15 +1389,20 @@ mod tests {
     fn test_multiple_attributes() {
         let source = "#![type = \"Foo\"]\n#![enable(unwrap_newtypes)]\n42";
         let formatted = format(source);
-        assert!(formatted.contains("#![type = \"Foo\"]"));
-        assert!(formatted.contains("#![enable(unwrap_newtypes)]"));
+        assert_eq!(
+            formatted,
+            "#![type = \"Foo\"]\n#![enable(unwrap_newtypes)]\n\n42\n"
+        );
     }
 
     #[test]
     fn test_attribute_with_args() {
         let source = "#![enable(implicit_some, unwrap_newtypes)]\n42";
         let formatted = format(source);
-        assert!(formatted.contains("#![enable(implicit_some, unwrap_newtypes)]"));
+        assert_eq!(
+            formatted,
+            "#![enable(implicit_some, unwrap_newtypes)]\n\n42\n"
+        );
     }
 
     #[test]
@@ -1442,20 +1439,14 @@ mod tests {
     fn test_custom_indent() {
         let config = FormatConfig::new().indent("  ").char_limit(5);
         let formatted = format_with("[1, 2, 3]", &config);
-        assert!(
-            formatted.contains("  1,"),
-            "Expected 2-space indent in: {formatted:?}"
-        );
+        assert_eq!(formatted, "[\n  1,\n  2,\n  3,\n]\n");
     }
 
     #[test]
     fn test_tab_indent() {
         let config = FormatConfig::new().indent("\t").char_limit(5);
         let formatted = format_with("[1, 2, 3]", &config);
-        assert!(
-            formatted.contains("\t1,"),
-            "Expected tab indent in: {formatted:?}"
-        );
+        assert_eq!(formatted, "[\n\t1,\n\t2,\n\t3,\n]\n");
     }
 
     #[test]
@@ -1470,7 +1461,10 @@ mod tests {
         let source = format!("Config(items: [{long_array}])");
         let formatted = format_with(&source, &config);
         // Root should be multiline, but nested array stays compact
-        assert!(formatted.contains(&format!("[{long_array}]")));
+        assert_eq!(
+            formatted,
+            format!("Config(\n    items: [{long_array}],\n)\n")
+        );
     }
 
     // =========================================================================
@@ -1487,7 +1481,7 @@ mod tests {
     fn test_comment_only_document() {
         let source = "// just a comment\n";
         let formatted = format(source);
-        assert!(formatted.contains("// just a comment"));
+        assert_eq!(formatted, "// just a comment\n");
     }
 
     #[test]
@@ -1495,8 +1489,7 @@ mod tests {
         let config = FormatConfig::default().char_limit(5);
         let formatted = format_with("[1, 2]", &config);
         // All items should have trailing commas in multiline mode
-        assert!(formatted.contains("1,"), "Expected '1,' in: {formatted:?}");
-        assert!(formatted.contains("2,"), "Expected '2,' in: {formatted:?}");
+        assert_eq!(formatted, "[\n    1,\n    2,\n]\n");
     }
 
     #[test]
@@ -1504,7 +1497,7 @@ mod tests {
         // Test compact nested collection has no trailing comma
         let formatted = format("Config(items: [1, 2, 3])");
         // Root is multiline, nested is compact without trailing comma
-        assert!(formatted.contains("[1, 2, 3]"));
+        assert_eq!(formatted, "Config(\n    items: [1, 2, 3],\n)\n");
     }
 
     #[test]
@@ -1544,14 +1537,11 @@ mod tests {
 
     #[test]
     fn test_compact_from_depth_0() {
-        // Compact from depth 0 means compact even the root (unless root which is always multiline)
+        // Compact from depth 0 means compact even the root
         let config = FormatConfig::new().compact_from_depth(0);
-        // Nested collections should be compacted
         let source = "Config(items: [1, 2, 3], point: (1, 2))";
         let formatted = format_with(source, &config);
-        // Root is still multiline, but nested should be compact
-        assert!(formatted.contains("[1, 2, 3]"));
-        assert!(formatted.contains("(1, 2)"));
+        assert_eq!(formatted, format!("{source}\n"));
     }
 
     #[test]
@@ -1561,32 +1551,12 @@ mod tests {
         let source = "Config(items: [1, 2, 3])";
         let formatted = format_with(source, &config);
         // Root multiline, nested compact
-        assert!(
-            formatted.contains("items: [1, 2, 3]"),
-            "Expected compact array: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    items: [1, 2, 3],\n)\n");
     }
 
     // =========================================================================
     // Compaction - Type-based
     // =========================================================================
-
-    #[test]
-    fn test_compact_types_arrays() {
-        let config = FormatConfig::new()
-            .char_limit(5) // Would normally expand due to length
-            .compact_types(CompactTypes {
-                arrays: true,
-                ..Default::default()
-            });
-        let source = "Config(items: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])";
-        let formatted = format_with(source, &config);
-        // Arrays should be compact despite exceeding char limit
-        assert!(
-            formatted.contains("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]"),
-            "Expected compact array: {formatted:?}"
-        );
-    }
 
     #[test]
     fn test_compact_types_tuples() {
@@ -1598,10 +1568,10 @@ mod tests {
             });
         let source = "Config(point: (1, 2, 3, 4, 5, 6, 7, 8, 9, 10))";
         let formatted = format_with(source, &config);
-        // Tuples should be compact
-        assert!(
-            formatted.contains("(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)"),
-            "Expected compact tuple: {formatted:?}"
+        // Tuples should be compact; the root struct is not a tuple
+        assert_eq!(
+            formatted,
+            "Config(\n    point: (1, 2, 3, 4, 5, 6, 7, 8, 9, 10),\n)\n"
         );
     }
 
@@ -1615,11 +1585,8 @@ mod tests {
             });
         let source = "Outer(inner: Inner(x: 1, y: 2, z: 3))";
         let formatted = format_with(source, &config);
-        // Nested struct should be compact
-        assert!(
-            formatted.contains("Inner(x: 1, y: 2, z: 3)"),
-            "Expected compact struct: {formatted:?}"
-        );
+        // Nested struct should be compact, and so is the root struct
+        assert_eq!(formatted, format!("{source}\n"));
     }
 
     #[test]
@@ -1629,9 +1596,7 @@ mod tests {
             .compact_types(CompactTypes::all());
         let source = "Config(a: [1, 2], b: (3, 4), c: Point(x: 5))";
         let formatted = format_with(source, &config);
-        assert!(formatted.contains("[1, 2]"));
-        assert!(formatted.contains("(3, 4)"));
-        assert!(formatted.contains("Point(x: 5)"));
+        assert_eq!(formatted, format!("{source}\n"));
     }
 
     // =========================================================================
@@ -1651,28 +1616,7 @@ mod tests {
 )";
         let formatted = format_with(source, &config);
         // In compact mode, line comment should become block comment
-        assert!(
-            formatted.contains("/* comment */"),
-            "Expected block comment: {formatted:?}"
-        );
-        // Should not have newlines in the compact section
-        assert!(formatted.contains("items: ["));
-    }
-
-    #[test]
-    fn test_compact_preserves_block_comments() {
-        let config = FormatConfig::new().compact_from_depth(1);
-        let source = "Config(
-    items: [
-        /* existing block */
-        1,
-    ],
-)";
-        let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("/* existing block */"),
-            "Expected block comment preserved: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    items: [/* comment */ 1, 2],\n)\n");
     }
 
     // =========================================================================
@@ -1712,10 +1656,7 @@ mod tests {
         // AR-2.1: Root collections are multiline by default
         let config = FormatConfig::new(); // No compaction rules
         let formatted = format_with("[1, 2, 3]", &config);
-        assert!(
-            formatted.contains('\n'),
-            "Root should be multiline: {formatted:?}"
-        );
+        assert_eq!(formatted, "[\n    1,\n    2,\n    3,\n]\n");
     }
 
     #[test]
@@ -1751,13 +1692,9 @@ mod tests {
         // Root (depth 0): multiline
         // Inner (depth 1): multiline (below threshold)
         // Array (depth 2): compact (at threshold)
-        assert!(
-            formatted.contains("[1, 2, 3]"),
-            "Array should be compact: {formatted:?}"
-        );
-        assert!(
-            formatted.contains("a: Inner("),
-            "Should have newlines: {formatted:?}"
+        assert_eq!(
+            formatted,
+            "Outer(\n    a: Inner(\n        b: [1, 2, 3],\n    ),\n)\n"
         );
     }
 
@@ -1769,9 +1706,9 @@ mod tests {
         let formatted = format_with(source, &config);
         // Root (depth 0): multiline
         // Array (depth 1): still multiline (1 < 2)
-        assert!(
-            formatted.contains("items: [\n"),
-            "Depth 1 should be multiline: {formatted:?}"
+        assert_eq!(
+            formatted,
+            "Config(\n    items: [\n        1,\n        2,\n        3,\n    ],\n)\n"
         );
     }
 
@@ -1785,9 +1722,9 @@ mod tests {
         // B (depth 1): multiline
         // C (depth 2): multiline
         // Array (depth 3): compact
-        assert!(
-            formatted.contains("[1, 2]"),
-            "Depth 3 array should be compact: {formatted:?}"
+        assert_eq!(
+            formatted,
+            "A(\n    b: B(\n        c: C(\n            d: [1, 2],\n        ),\n    ),\n)\n"
         );
     }
 
@@ -1806,10 +1743,7 @@ mod tests {
             });
         let source = "Config(data: {\"a\": 1, \"b\": 2})";
         let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("{\"a\": 1, \"b\": 2}"),
-            "Map should be compact: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    data: {\"a\": 1, \"b\": 2},\n)\n");
     }
 
     #[test]
@@ -1823,10 +1757,8 @@ mod tests {
             });
         let source = "Config(point: (x: 1, y: 2))";
         let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("(x: 1, y: 2)"),
-            "Anonymous struct should be compact: {formatted:?}"
-        );
+        // The root struct matches the struct rule too
+        assert_eq!(formatted, format!("{source}\n"));
     }
 
     #[test]
@@ -1841,9 +1773,9 @@ mod tests {
         let source = "Config(items: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])";
         let formatted = format_with(source, &config);
         // Array should be compact despite exceeding char_limit
-        assert!(
-            formatted.contains("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]"),
-            "Type rule should override char_limit: {formatted:?}"
+        assert_eq!(
+            formatted,
+            "Config(\n    items: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],\n)\n"
         );
     }
 
@@ -1858,10 +1790,7 @@ mod tests {
         let source = "Config(items: [1])"; // Very short
         let formatted = format_with(source, &config);
         // Nested should be multiline since no length-based compaction
-        assert!(
-            formatted.contains("items: [\n"),
-            "char_limit=0 should disable length-based: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    items: [\n        1,\n    ],\n)\n");
     }
 
     /// `Config(items: ["xx…"])` whose `items` line is `line_width` characters long.
@@ -1933,10 +1862,7 @@ mod tests {
         let config = FormatConfig::new().compact_from_depth(1).char_limit(0); // Disable length
         let source = "Config(items: [1, 2, 3])";
         let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("[1, 2, 3]"),
-            "Depth rule should trigger: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    items: [1, 2, 3],\n)\n");
     }
 
     #[test]
@@ -1950,10 +1876,7 @@ mod tests {
             .char_limit(0); // Disable length
         let source = "Config(items: [1, 2, 3])";
         let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("[1, 2, 3]"),
-            "Type rule should trigger: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    items: [1, 2, 3],\n)\n");
     }
 
     #[test]
@@ -1962,10 +1885,7 @@ mod tests {
         let config = FormatConfig::new().char_limit(100); // No depth/type rules
         let source = "Config(items: [1, 2, 3])";
         let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("[1, 2, 3]"),
-            "Length rule should trigger: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    items: [1, 2, 3],\n)\n");
     }
 
     #[test]
@@ -1974,9 +1894,9 @@ mod tests {
         let config = FormatConfig::new().char_limit(0); // Disable all
         let source = "Config(items: [1, 2, 3])";
         let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("items: [\n"),
-            "No rules = multiline: {formatted:?}"
+        assert_eq!(
+            formatted,
+            "Config(\n    items: [\n        1,\n        2,\n        3,\n    ],\n)\n"
         );
     }
 
@@ -1997,14 +1917,7 @@ mod tests {
 )";
         let formatted = format_with(source, &config);
         // Line comment should PREVENT compact mode (stay multiline)
-        assert!(
-            formatted.contains("// comment"),
-            "Line comment preserved: {formatted:?}"
-        );
-        assert!(
-            formatted.contains("items: [\n"),
-            "Should stay multiline: {formatted:?}"
-        );
+        assert_eq!(formatted, format!("{source}\n"));
     }
 
     #[test]
@@ -2019,14 +1932,7 @@ mod tests {
 )";
         let formatted = format_with(source, &config);
         // Hard compaction converts line comment to block
-        assert!(
-            formatted.contains("/* comment */"),
-            "Line → block: {formatted:?}"
-        );
-        assert!(
-            !formatted.contains("// comment"),
-            "No line comment: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    items: [/* comment */ 1],\n)\n");
     }
 
     #[test]
@@ -2046,10 +1952,7 @@ mod tests {
 )";
         let formatted = format_with(source, &config);
         // Hard compaction converts line comment to block
-        assert!(
-            formatted.contains("/* comment */"),
-            "Line → block: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(\n    items: [/* comment */ 1],\n)\n");
     }
 
     #[test]
@@ -2065,13 +1968,9 @@ mod tests {
     ],
 )";
         let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("/* first */"),
-            "First comment: {formatted:?}"
-        );
-        assert!(
-            formatted.contains("/* second */"),
-            "Second comment: {formatted:?}"
+        assert_eq!(
+            formatted,
+            "Config(\n    items: [/* first */ 1, /* second */ 2],\n)\n"
         );
     }
 
@@ -2086,10 +1985,7 @@ mod tests {
     ],
 )";
         let formatted = format_with(source, &FormatConfig::minimal());
-        assert!(
-            !formatted.contains("comment"),
-            "No comments in minimal: {formatted:?}"
-        );
+        assert_eq!(formatted, "Config(items:[1])");
     }
 
     #[test]
@@ -2103,9 +1999,9 @@ mod tests {
     ],
 )";
         let formatted = format_with(source, &config);
-        assert!(
-            formatted.contains("/* existing block */"),
-            "Block comment unchanged: {formatted:?}"
+        assert_eq!(
+            formatted,
+            "Config(\n    items: [/* existing block */ 1],\n)\n"
         );
     }
 

@@ -170,6 +170,10 @@ mod tests {
         // Verify it's a validation error
         assert!(err.is_validation_error());
         assert!(!err.is_storage_error());
+        assert_eq!(
+            err.to_string(),
+            "in field 'config' -> map value for 'key1': Unknown field `bad_field`"
+        );
     }
 
     #[test]

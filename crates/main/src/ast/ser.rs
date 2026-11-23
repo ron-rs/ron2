@@ -620,9 +620,8 @@ Config(
             panic!("expected seq");
         };
         seq.items[1].leading.comments.clear();
-        let output = serialize_document(&doc).unwrap();
-        assert!(!output.contains("one"), "{output:?}");
-        assert!(parse_document(&output).is_ok(), "{output:?}");
+        // The comment is gone; the trivia's own whitespace remains.
+        assert_eq!(serialize_document(&doc).unwrap(), "[1, \n2]");
     }
 
     #[test]

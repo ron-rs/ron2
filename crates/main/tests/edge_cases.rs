@@ -2,7 +2,7 @@
 //!
 //! These tests cover boundary conditions, error cases, and unusual inputs.
 
-use ron2::{Map, NamedContent, Number, ToRon, Value, fmt::FormatConfig};
+use ron2::{Map, NamedContent, Number, ToRon, Value, fmt::FormatConfig, value::F64};
 
 // =============================================================================
 // Number Boundaries
@@ -583,39 +583,27 @@ fn edge_hex_with_underscores() {
 #[test]
 fn edge_float_zero() {
     let value: Value = "0.0".parse().unwrap();
-    match value {
-        Value::Number(Number::F32(f)) if f.get() == 0.0 => {}
-        Value::Number(Number::F64(f)) if f.get() == 0.0 => {}
-        _ => panic!("Expected 0.0, got {value:?}"),
-    }
+    assert_eq!(value, Value::Number(Number::F64(F64::from(0.0))));
 }
 
 #[test]
 fn edge_float_negative_zero() {
     let value: Value = "-0.0".parse().unwrap();
-    match value {
-        Value::Number(Number::F32(f)) if f.get() == 0.0 => {}
-        Value::Number(Number::F64(f)) if f.get() == 0.0 => {}
-        _ => panic!("Expected -0.0, got {value:?}"),
-    }
+    // Floats compare by total order, so this also checks the sign.
+    assert_eq!(value, Value::Number(Number::F64(F64::from(-0.0))));
+    assert_ne!(value, Value::Number(Number::F64(F64::from(0.0))));
 }
 
 #[test]
 fn edge_float_very_small() {
     let value: Value = "1e-100".parse().unwrap();
-    match value {
-        Value::Number(Number::F32(_) | Number::F64(_)) => {}
-        _ => panic!("Expected float, got {value:?}"),
-    }
+    assert_eq!(value, Value::Number(Number::F64(F64::from(1e-100))));
 }
 
 #[test]
 fn edge_float_very_large() {
     let value: Value = "1e100".parse().unwrap();
-    match value {
-        Value::Number(Number::F32(_) | Number::F64(_)) => {}
-        _ => panic!("Expected float, got {value:?}"),
-    }
+    assert_eq!(value, Value::Number(Number::F64(F64::from(1e100))));
 }
 
 // =============================================================================
@@ -629,14 +617,24 @@ fn edge_deeply_nested_seq() {
         input = format!("[{input}]");
     }
     let value: Value = input.parse().unwrap();
-    // Just verify it parses without stack overflow
-    assert!(matches!(value, Value::Seq(_)));
+    let mut expected = Value::Number(Number::U8(1));
+    for _ in 0..50 {
+        expected = Value::Seq(vec![expected]);
+    }
+    assert_eq!(value, expected);
 }
 
 #[test]
 fn edge_deeply_nested_named() {
     let value: Value = "A(B(C(D(E(1)))))".parse().unwrap();
-    assert!(matches!(value, Value::Named { .. }));
+    let mut expected = Value::Number(Number::U8(1));
+    for name in ["E", "D", "C", "B", "A"] {
+        expected = Value::Named {
+            name: String::from(name),
+            content: NamedContent::Tuple(vec![expected]),
+        };
+    }
+    assert_eq!(value, expected);
 }
 
 #[test]
@@ -644,10 +642,8 @@ fn edge_wide_seq() {
     let elements: Vec<_> = (0..100).map(|i| i.to_string()).collect();
     let input = format!("[{}]", elements.join(", "));
     let value: Value = input.parse().unwrap();
-    match value {
-        Value::Seq(seq) => assert_eq!(seq.len(), 100),
-        _ => panic!("Expected seq"),
-    }
+    let expected = (0..100).map(|i| Value::Number(Number::U8(i))).collect();
+    assert_eq!(value, Value::Seq(expected));
 }
 
 // =============================================================================
@@ -714,17 +710,14 @@ fn edge_serialize_bytes_non_printable() {
     let value = Value::Bytes(vec![0, 1, 2, 127, 128, 255]);
     let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
     // Should use hex escapes for non-printable bytes
-    assert!(serialized.starts_with("b\""));
-    assert!(serialized.contains("\\x"));
+    assert_eq!(serialized, r#"b"\0\x01\x02\x7f\x80\xff""#);
+    assert_eq!(serialized.parse::<Value>().unwrap(), value);
 }
 
 #[test]
 fn edge_serialize_float_whole_number() {
     // Float that looks like an integer should still have decimal point
-    let value = Value::Number(Number::F64(ron2::value::F64::from(42.0)));
+    let value = Value::Number(Number::F64(F64::from(42.0)));
     let serialized = value.to_ron_with(&FormatConfig::minimal()).unwrap();
-    assert!(
-        serialized.contains('.'),
-        "Float should have decimal point: {serialized}"
-    );
+    assert_eq!(serialized, "42.0");
 }

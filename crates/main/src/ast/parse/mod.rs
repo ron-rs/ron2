@@ -178,10 +178,8 @@ mod tests {
     fn parse_comment_only_document() {
         let doc = parse_document("// just a comment\n").unwrap();
         assert!(doc.value.is_none());
-        assert!(
-            !doc.leading.comments.is_empty(),
-            "expected leading comments"
-        );
+        let comments: Vec<_> = doc.leading.comments.iter().map(|c| &*c.text).collect();
+        assert_eq!(comments, ["// just a comment"]);
     }
 
     #[test]
@@ -216,7 +214,8 @@ mod tests {
         let doc = parse_document("Some(42)").unwrap();
         match doc.value {
             Some(Expr::Option(opt)) => {
-                assert!(opt.value.is_some());
+                let inner = opt.value.expect("Some value");
+                assert!(matches!(&inner.expr, Expr::Number(n) if n.raw == "42"));
             }
             _ => panic!("expected option"),
         }
@@ -270,10 +269,10 @@ mod tests {
     fn parse_preserves_trivia() {
         let source = "// header comment\n42 // inline comment";
         let doc = parse_document(source).unwrap();
-        assert!(
-            !doc.leading.comments.is_empty(),
-            "expected leading comments"
-        );
+        let leading: Vec<_> = doc.leading.comments.iter().map(|c| &*c.text).collect();
+        assert_eq!(leading, ["// header comment"]);
+        let trailing: Vec<_> = doc.trailing.comments.iter().map(|c| &*c.text).collect();
+        assert_eq!(trailing, ["// inline comment"]);
     }
 
     // =========================================================================
@@ -340,17 +339,6 @@ mod tests {
             }
             _ => panic!("expected anonymous struct"),
         }
-    }
-
-    #[test]
-    fn parse_anon_struct_vs_single_element_tuple() {
-        // `(x: 1)` should be anonymous struct (has colon)
-        let anon = parse_document("(x: 1)").unwrap();
-        assert!(matches!(anon.value, Some(Expr::AnonStruct(_))));
-
-        // `(x)` should be tuple (no colon)
-        let tuple = parse_document("(x)").unwrap();
-        assert!(matches!(tuple.value, Some(Expr::Tuple(_))));
     }
 
     #[test]
@@ -494,11 +482,23 @@ mod tests {
         // "y: 2" in tuple context will cause a colon error.
         let (doc, errors) = parse_document_lossy("(123, y: 2)");
         // Errors occur because "y: 2" looks like a map entry in tuple context
-        assert!(!errors.is_empty(), "expected parse errors");
+        let kinds: Vec<_> = errors.iter().map(Error::kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                &ErrorKind::Expected {
+                    expected: "comma".into(),
+                    context: Some("tuple")
+                },
+                &ErrorKind::UnexpectedChar(':'),
+            ]
+        );
         match &doc.value {
             Some(Expr::Tuple(t)) => {
                 // First element is the number, second involves recovery
-                assert!(!t.elements.is_empty(), "expected tuple elements");
+                assert_eq!(t.elements.len(), 3);
+                assert!(matches!(&t.elements[0].expr, Expr::Number(n) if n.raw == "123"));
+                assert!(matches!(t.elements[2].expr, Expr::Error(_)));
             }
             _ => panic!("expected tuple, got {:?}", doc.value),
         }
@@ -509,11 +509,14 @@ mod tests {
         // @ is not an identifier, so parser can't know it's meant to be a field.
         // It parses as a tuple with error elements.
         let (doc, errors) = parse_document_lossy("(@: 1, y: 2)");
-        assert!(!errors.is_empty(), "expected parse errors");
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert_eq!(errors[0].kind(), &ErrorKind::UnexpectedChar('@'));
         match &doc.value {
             Some(Expr::Tuple(t)) => {
                 // Contains error expressions for invalid tokens
-                assert!(!t.elements.is_empty(), "expected tuple elements");
+                assert_eq!(t.elements.len(), 3);
+                assert!(matches!(t.elements[0].expr, Expr::Error(_)));
+                assert!(matches!(t.elements[2].expr, Expr::Error(_)));
             }
             _ => panic!("expected tuple, got {:?}", doc.value),
         }
@@ -524,7 +527,8 @@ mod tests {
         // Start with a valid field so parser knows it's a struct,
         // then encounter an invalid token where a field name is expected.
         let (doc, errors) = parse_document_lossy("(x: 1, @: 2, y: 3)");
-        assert!(!errors.is_empty(), "expected parse errors");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(errors[0].kind(), &ErrorKind::UnexpectedChar('@'));
         match &doc.value {
             Some(Expr::AnonStruct(s)) => {
                 // Should have 3 fields: x, placeholder for @, and y

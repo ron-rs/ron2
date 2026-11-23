@@ -12,6 +12,7 @@ use std::{env, ffi::OsStr, fs};
 use ron2::{
     FromRon,
     ast::parse_document,
+    error::ErrorKind,
     schema::{
         Field, NoResolver, SCHEMA_DIR_ENV, Schema, TypeKind, ValidationError, Variant, find_schema,
         read_schema, validate, write_schema,
@@ -84,7 +85,13 @@ fn test_complete_workflow_simple_struct() {
 
     // Step 6: Invalid RON should fail validation
     let invalid_ron = r#"(username: "charlie")"#; // missing required 'port'
-    assert!(check(invalid_ron, &loaded_schema).is_err());
+    assert_eq!(
+        check(invalid_ron, &loaded_schema).unwrap_err().kind(),
+        &ErrorKind::MissingField {
+            field: "port".into(),
+            outer: None
+        }
+    );
 }
 
 #[test]
@@ -141,9 +148,18 @@ fn test_complete_workflow_complex_enum() {
     assert!(check(r#"Error(code: 404, message: "Not found")"#, &loaded_schema).is_ok());
 
     // Test invalid variants
-    assert!(check("Unknown", &loaded_schema).is_err());
+    assert!(matches!(
+        check("Unknown", &loaded_schema).unwrap_err().kind(),
+        ErrorKind::UnknownVariant { variant, .. } if variant == "Unknown"
+    ));
     // A string is not an enum variant in RON.
-    assert!(check(r#""Loading""#, &loaded_schema).is_err());
+    assert_eq!(
+        check(r#""Loading""#, &loaded_schema).unwrap_err().kind(),
+        &ErrorKind::TypeMismatch {
+            expected: "enum".into(),
+            found: "string".into()
+        }
+    );
 }
 
 #[test]
@@ -209,7 +225,12 @@ fn test_complete_workflow_nested_structures() {
             (host: "localhost", port: "not a number")
         ]
     )"#;
-    assert!(check(invalid_config, &loaded_schema).is_err());
+    assert_eq!(
+        check(invalid_config, &loaded_schema)
+            .unwrap_err()
+            .to_string(),
+        "4:39-4:53: in field 'servers' -> element 0 -> field 'port': expected u16 but found string"
+    );
 }
 
 // ============================================================================
@@ -392,7 +413,8 @@ fn test_schema_file_is_valid_ron() {
     let value: ron2::Value = content
         .parse::<ron2::Value>()
         .expect("Schema file should be valid RON");
-    let _schema = Schema::from_ron_value(value).expect("Schema file should parse as Schema");
+    let parsed = Schema::from_ron_value(value).expect("Schema file should parse as Schema");
+    assert_eq!(parsed, schema);
 }
 
 #[test]
@@ -462,10 +484,9 @@ fn test_validation_error_provides_useful_context() {
     let error_message = format!("{}", error);
 
     // The error should mention the field path
-    assert!(
-        error_message.contains("items"),
-        "Error should mention 'items' field: {}",
-        error_message
+    assert_eq!(
+        error_message,
+        "4:18-4:30: in field 'items' -> element 1 -> field 'id': expected i32 but found string"
     );
 }
 

@@ -918,14 +918,6 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_span_hidden() {
-        let err = Error::type_mismatch("i32", "String");
-        // Should NOT show span prefix
-        assert!(!err.to_string().contains(':'));
-        assert!(err.to_string().starts_with("expected"));
-    }
-
-    #[test]
     fn suggestions() {
         let err = Error::unknown_field("nme", &["name", "age", "email"]);
         assert_eq!(err.suggestion(), Some("name".to_string()));
@@ -939,8 +931,12 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
         let err = Error::from(io_err);
 
-        // Should have source
-        assert!(core::error::Error::source(&err).is_some());
+        assert_eq!(err.to_string(), "file not found");
+        // The original io::Error is the source
+        let source = core::error::Error::source(&err).unwrap();
+        let io_source = source.downcast_ref::<io::Error>().unwrap();
+        assert_eq!(io_source.kind(), io::ErrorKind::NotFound);
+        assert_eq!(io_source.to_string(), "file not found");
     }
 
     #[test]

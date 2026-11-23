@@ -508,7 +508,10 @@ mod value_comparison {
     where
         T: Serialize + ToRon,
     {
-        let ron_output = ron::to_string(value).expect("ron should serialize");
+        // ron2 writes struct names, so ask ron for them too.
+        let ron_output =
+            ron::ser::to_string_pretty(value, ron::ser::PrettyConfig::new().struct_names(true))
+                .expect("ron should serialize");
         let ron2_output = value.to_ron().expect("ron2 should serialize");
 
         let ron_value: Value = ron_output
@@ -518,15 +521,10 @@ mod value_comparison {
             .parse::<ron2::Value>()
             .expect("ron2 should parse ron2 output");
 
-        // Values may differ in representation but should be semantically equivalent
-        // For now, just verify both parse successfully
-        assert!(
-            !format!("{:?}", ron_value).is_empty(),
-            "ron output should produce valid Value"
-        );
-        assert!(
-            !format!("{:?}", ron2_value).is_empty(),
-            "ron2 output should produce valid Value"
+        // The text differs in layout but must be semantically equivalent.
+        assert_eq!(
+            ron_value, ron2_value,
+            "ron: {ron_output}\nron2: {ron2_output}"
         );
     }
 
@@ -721,25 +719,11 @@ mod struct_syntax {
 
         // Check ron crate output uses parentheses
         let ron_out = ron::to_string(&point).unwrap();
-        assert!(
-            ron_out.contains('(') && ron_out.contains(')'),
-            "ron crate should use parentheses: {ron_out}"
-        );
-        assert!(
-            !ron_out.starts_with("Point{") && !ron_out.contains("Point {"),
-            "ron crate should not use braces for struct fields: {ron_out}"
-        );
+        assert_eq!(ron_out, "(x:1,y:2)");
 
         // Check ron2 crate output uses parentheses
         let ron2_out = point.to_ron().unwrap();
-        assert!(
-            ron2_out.contains('(') && ron2_out.contains(')'),
-            "ron2 crate should use parentheses: {ron2_out}"
-        );
-        assert!(
-            !ron2_out.starts_with("Point{") && !ron2_out.contains("Point {"),
-            "ron2 crate should not use braces for struct fields: {ron2_out}"
-        );
+        assert_eq!(ron2_out, "Point(\n    x: 1,\n    y: 2,\n)");
     }
 
     /// Verify the exact output format matches expected RON syntax.

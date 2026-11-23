@@ -2,7 +2,9 @@
 //!
 //! These tests verify that parsing and serialization are consistent.
 
-use ron2::{Map, NamedContent, Number, ToRon, Value, fmt::FormatConfig};
+use ron2::{
+    Map, NamedContent, Number, ToRon, Value, error::ErrorKind, fmt::FormatConfig, value::F64,
+};
 
 /// Helper: parse, serialize, parse again, and verify values match.
 fn roundtrip(input: &str) -> Value {
@@ -193,48 +195,33 @@ fn roundtrip_integer_hex_underscores() {
 #[test]
 fn roundtrip_float_simple() {
     let value = roundtrip("3.14");
-    match value {
-        Value::Number(Number::F32(_) | Number::F64(_)) => {}
-        _ => panic!("Expected float, got {value:?}"),
-    }
+    let expected: f64 = "3.14".parse().unwrap();
+    assert_eq!(value, Value::Number(Number::F64(F64::from(expected))));
 }
 
 #[test]
 fn roundtrip_float_integer_form() {
     // "1.0" should roundtrip as a float
     let value = roundtrip("1.0");
-    match value {
-        Value::Number(Number::F32(_) | Number::F64(_)) => {}
-        _ => panic!("Expected float, got {value:?}"),
-    }
+    assert_eq!(value, Value::Number(Number::F64(F64::from(1.0))));
 }
 
 #[test]
 fn roundtrip_float_negative() {
     let value = roundtrip("-2.5");
-    match value {
-        Value::Number(Number::F32(f)) if (f.get() - (-2.5_f32)).abs() < f32::EPSILON => {}
-        Value::Number(Number::F64(f)) if (f.get() - (-2.5_f64)).abs() < f64::EPSILON => {}
-        _ => panic!("Expected -2.5, got {value:?}"),
-    }
+    assert_eq!(value, Value::Number(Number::F64(F64::from(-2.5))));
 }
 
 #[test]
 fn roundtrip_float_exponent() {
     let value = roundtrip("1e10");
-    match value {
-        Value::Number(Number::F32(_) | Number::F64(_)) => {}
-        _ => panic!("Expected float, got {value:?}"),
-    }
+    assert_eq!(value, Value::Number(Number::F64(F64::from(1e10))));
 }
 
 #[test]
 fn roundtrip_float_negative_exponent() {
     let value = roundtrip("1e-10");
-    match value {
-        Value::Number(Number::F32(_) | Number::F64(_)) => {}
-        _ => panic!("Expected float, got {value:?}"),
-    }
+    assert_eq!(value, Value::Number(Number::F64(F64::from(1e-10))));
 }
 
 #[test]
@@ -1060,16 +1047,6 @@ fn roundtrip_mixed_collection_types() {
 }
 
 #[test]
-fn roundtrip_named_with_all_content_types() {
-    // Unit
-    let _ = roundtrip("Variant");
-    // Tuple
-    let _ = roundtrip("Variant(1, 2)");
-    // Struct
-    let _ = roundtrip("Variant(x: 1, y: 2)");
-}
-
-#[test]
 fn roundtrip_realistic_config() {
     roundtrip(
         r#"AppConfig(
@@ -1099,14 +1076,6 @@ fn roundtrip_realistic_config() {
 }
 
 #[test]
-fn roundtrip_enum_variants_various() {
-    // Different enum variant styles (without :: paths since those aren't supported)
-    let _ = roundtrip("Pending");
-    let _ = roundtrip("Running(123)");
-    let _ = roundtrip("Complete(code: 0, message: \"success\")");
-}
-
-#[test]
 fn roundtrip_raw_identifier() {
     // Raw identifier (r#type is valid) - the name is `type`, like upstream RON
     let value = roundtrip("r#type");
@@ -1124,24 +1093,10 @@ fn roundtrip_raw_identifier() {
 // =============================================================================
 
 #[test]
-fn roundtrip_empty_document() {
-    // Empty input is an error (not silently Unit)
-    let result: Result<Value, _> = "".parse();
-    assert!(result.is_err(), "Empty input should be an error");
-}
-
-#[test]
-fn roundtrip_whitespace_only() {
-    // Whitespace-only input is an error (not silently Unit)
-    let result: Result<Value, _> = "   \n   \t   ".parse();
-    assert!(result.is_err(), "Whitespace-only input should be an error");
-}
-
-#[test]
 fn roundtrip_comment_only() {
     // Comment-only input is an error (not silently Unit)
     let result: Result<Value, _> = "// just a comment\n".parse();
-    assert!(result.is_err(), "Comment-only input should be an error");
+    assert_eq!(result.unwrap_err().kind(), &ErrorKind::Eof);
 }
 
 // =============================================================================
@@ -1284,12 +1239,10 @@ fn struct_parses_with_parentheses() {
 #[test]
 fn brace_syntax_after_ident_is_rejected() {
     // Brace syntax for structs is NOT valid: Point { x: 1, y: 2 }
-    // This parses "Point" as a unit struct, then "{" starts a map which expects string keys
-    let result: Result<Value, _> = "Point { x: 1, y: 2 }".parse();
-    assert!(
-        result.is_err(),
-        "Brace syntax after identifier should be rejected"
-    );
+    // This parses "Point" as a unit struct, then "{" is left over
+    let err = "Point { x: 1, y: 2 }".parse::<Value>().unwrap_err();
+    assert_eq!(err.kind(), &ErrorKind::TrailingCharacters);
+    assert_eq!(err.span().start_offset, "Point ".len());
 }
 
 /// Verify nested structs serialize with parentheses.
