@@ -1,372 +1,389 @@
-//! Core markdown documentation generation.
+//! Markdown documentation generation.
 
-use ahash::HashMap;
 use ron2::schema::{Field, Schema, TypeKind, Variant, VariantKind};
 
 use crate::{
-    config::{DocConfig, OutputFormat, OutputMode},
+    config::{DocConfig, OutputFormat},
     discovery::DiscoveredSchema,
-    example::{build_schema_map, generate_example},
-    link::{LinkResolver, type_path_short_name},
+    example::generate_example,
+    link::{LinkFrom, LinkResolver, type_anchor, type_path_short_name, type_path_to_md_path},
 };
 
-/// Link mode for type formatting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinkMode {
-    /// Generate links to separate markdown files
-    File,
-    /// Generate anchor links within the same page
-    Anchor,
-}
-
-impl From<OutputMode> for LinkMode {
-    fn from(mode: OutputMode) -> Self {
-        match mode {
-            OutputMode::MultiPage => LinkMode::File,
-            OutputMode::SinglePage => LinkMode::Anchor,
-        }
-    }
-}
-
-/// Generate markdown documentation for a schema.
-pub fn generate_markdown(
-    schema: &DiscoveredSchema,
-    config: &DocConfig,
-    all_schemas: &[DiscoveredSchema],
-) -> String {
-    let mut output = String::new();
-    let short_name = type_path_short_name(&schema.type_path);
-    let resolver = LinkResolver::new(all_schemas, config.base_url.as_deref());
-    let link_mode = LinkMode::from(config.output_mode);
-
-    // Header (frontmatter for Starlight)
-    write_header(&mut output, short_name, &schema.schema, config.format);
-
-    // Type description
-    if let Some(doc) = &schema.schema.doc {
-        output.push_str(doc);
-        output.push_str("\n\n");
-    }
-
-    // Main content based on TypeKind (level 2 headings for multi-page)
-    match &schema.schema.kind {
-        TypeKind::Struct { fields } => {
-            write_struct_docs(&mut output, fields, &resolver, link_mode, 2);
-        }
-        TypeKind::Enum { variants } => {
-            write_enum_docs(&mut output, variants, &resolver, link_mode, 2);
-        }
-        _ => {
-            // For primitives, options, etc., just show the type
-            output.push_str("## Type\n\n");
-            output.push_str(&format_type(&resolver, &schema.schema.kind, link_mode));
-            output.push_str("\n\n");
-        }
-    }
-
-    // RON example
-    let schema_map = build_schema_map(all_schemas);
-    write_example(
-        &mut output,
-        &schema.schema,
-        config.example_depth,
-        &schema_map,
-    );
-
-    output
-}
-
-/// Generate type content for a schema (description + fields/variants).
-/// Used by single-page generator to embed type docs.
+/// Generates documentation pages for a set of discovered schemas.
 ///
-/// `heading_level` is the level for section headings (Fields, Variants).
-/// - For multi-page mode: use 2 (## Fields)
-/// - For single-page mode: use 4 (#### Fields) since type is at level 3
-pub fn generate_type_content(
-    schema: &DiscoveredSchema,
-    resolver: &LinkResolver,
-    link_mode: LinkMode,
-    heading_level: u8,
-) -> String {
-    let mut output = String::new();
+/// Build it once per run; it indexes the schemas for link resolution.
+pub struct DocGenerator<'a> {
+    pub(crate) schemas: &'a [DiscoveredSchema],
+    pub(crate) config: &'a DocConfig,
+    pub(crate) links: LinkResolver<'a>,
+}
 
-    // Type description
-    if let Some(doc) = &schema.schema.doc {
-        output.push_str(doc);
-        output.push_str("\n\n");
-    }
-
-    // Main content based on TypeKind
-    match &schema.schema.kind {
-        TypeKind::Struct { fields } => {
-            write_struct_docs(&mut output, fields, resolver, link_mode, heading_level);
-        }
-        TypeKind::Enum { variants } => {
-            write_enum_docs(&mut output, variants, resolver, link_mode, heading_level);
-        }
-        _ => {
-            output.push_str("**Type:** ");
-            output.push_str(&format_type(resolver, &schema.schema.kind, link_mode));
-            output.push_str("\n\n");
+impl<'a> DocGenerator<'a> {
+    pub fn new(schemas: &'a [DiscoveredSchema], config: &'a DocConfig) -> Self {
+        Self {
+            schemas,
+            config,
+            links: LinkResolver::new(schemas, config.base_url.as_deref(), config.format),
         }
     }
 
-    output
-}
+    /// The path of a type's page, relative to the output directory.
+    pub fn page_path(&self, schema: &DiscoveredSchema) -> String {
+        type_path_to_md_path(&schema.type_path)
+    }
 
-/// Generate a markdown heading at the given level.
-fn heading(level: u8, text: &str) -> String {
-    let hashes = "#".repeat(level as usize);
-    format!("{} {}\n\n", hashes, text)
-}
+    /// The Markdown page for one type (multi-page mode).
+    pub fn type_page(&self, schema: &DiscoveredSchema) -> String {
+        let mut out = String::new();
+        let name = type_path_short_name(&schema.type_path);
+        write_header(
+            &mut out,
+            name,
+            schema.schema.doc.as_deref(),
+            self.config.format,
+        );
+        self.write_type_content(&mut out, schema, LinkFrom::Type(&schema.type_path), 2);
+        out.push_str("## Example\n\n");
+        out.push_str(&self.example(&schema.schema));
+        out
+    }
 
-/// Generate a RON example for a schema.
-pub fn generate_type_example(
-    schema: &Schema,
-    max_depth: usize,
-    all_schemas: &[DiscoveredSchema],
-) -> String {
-    let schema_map = build_schema_map(all_schemas);
-    let mut output = String::new();
-    output.push_str("```ron\n");
-    output.push_str(&generate_example(schema, max_depth, &schema_map));
-    output.push_str("\n```\n");
-    output
-}
+    /// Description and field/variant documentation of a type.
+    ///
+    /// `level` is the heading level of the sections (Fields, Variants, Type).
+    pub(crate) fn write_type_content(
+        &self,
+        out: &mut String,
+        schema: &DiscoveredSchema,
+        from: LinkFrom<'_>,
+        level: usize,
+    ) {
+        if let Some(doc) = &schema.schema.doc {
+            out.push_str(doc);
+            out.push_str("\n\n");
+        }
 
-fn write_header(output: &mut String, name: &str, schema: &Schema, format: OutputFormat) {
-    match format {
-        OutputFormat::Starlight => {
-            output.push_str("---\n");
-            output.push_str(&format!("title: {}\n", name));
-            if let Some(doc) = &schema.doc {
-                let first_line = doc.lines().next().unwrap_or("");
-                let escaped = first_line.replace('"', "\\\"");
-                output.push_str(&format!("description: \"{}\"\n", escaped));
+        match &schema.schema.kind {
+            TypeKind::Struct { fields } if fields.is_empty() => {
+                out.push_str("This is a unit struct with no fields.\n\n");
             }
-            output.push_str("---\n\n");
+            TypeKind::Struct { fields } => {
+                out.push_str(&heading(level, "Fields"));
+                self.write_fields_table(out, fields, from);
+            }
+            TypeKind::Enum { variants } => {
+                self.write_enum_docs(out, &schema.type_path, variants, from, level);
+            }
+            kind => {
+                out.push_str(&heading(level, "Type"));
+                out.push_str(&self.links.type_to_markdown(kind, from));
+                out.push_str("\n\n");
+            }
         }
-        OutputFormat::Plain => {
-            output.push_str(&format!("# {}\n\n", name));
-        }
-    }
-}
-
-/// Format a type based on the link mode.
-fn format_type(resolver: &LinkResolver, ty: &TypeKind, link_mode: LinkMode) -> String {
-    match link_mode {
-        LinkMode::File => resolver.type_to_markdown(ty),
-        LinkMode::Anchor => resolver.type_to_markdown_anchor(ty),
-    }
-}
-
-fn write_struct_docs(
-    output: &mut String,
-    fields: &[Field],
-    resolver: &LinkResolver,
-    link_mode: LinkMode,
-    heading_level: u8,
-) {
-    if fields.is_empty() {
-        output.push_str("This is a unit struct with no fields.\n\n");
-        return;
     }
 
-    output.push_str(&heading(heading_level, "Fields"));
-    output.push_str("| Field | Type | Required | Description |\n");
-    output.push_str("|-------|------|----------|-------------|\n");
-
-    for field in fields {
-        let type_str = format_type(resolver, &field.ty, link_mode);
-        let required = if field.optional { "No" } else { "Yes" };
-        let doc = field.doc.as_deref().unwrap_or("—");
-        // Escape pipe characters in doc and replace newlines
-        let doc_escaped = doc.replace('|', "\\|").replace('\n', " ");
-
-        let flattened_note = if field.flattened {
-            " *(flattened)*"
-        } else {
-            ""
-        };
-
-        output.push_str(&format!(
-            "| `{}` | {} | {} | {}{} |\n",
-            field.name, type_str, required, doc_escaped, flattened_note
-        ));
+    /// A fenced RON example for a schema.
+    pub(crate) fn example(&self, schema: &Schema) -> String {
+        format!(
+            "```ron\n{}\n```\n",
+            generate_example(schema, self.config.example_depth, &self.links)
+        )
     }
 
-    output.push('\n');
-}
-
-fn write_enum_docs(
-    output: &mut String,
-    variants: &[Variant],
-    resolver: &LinkResolver,
-    link_mode: LinkMode,
-    heading_level: u8,
-) {
-    if variants.is_empty() {
-        output.push_str("This enum has no variants.\n\n");
-        return;
-    }
-
-    output.push_str(&heading(heading_level, "Variants"));
-
-    // Check if all variants are unit variants (simple enum)
-    let all_unit = variants.iter().all(|v| matches!(v.kind, VariantKind::Unit));
-    let has_complex = variants
-        .iter()
-        .any(|v| !matches!(v.kind, VariantKind::Unit));
-
-    if all_unit {
-        // Compact table for unit-only enums
-        output.push_str("| Variant | Description |\n");
-        output.push_str("|---------|-------------|\n");
-
-        for variant in variants {
-            let doc = variant.doc.as_deref().unwrap_or("—");
-            let doc_escaped = doc.replace('|', "\\|").replace('\n', " ");
-            output.push_str(&format!("| `{}` | {} |\n", variant.name, doc_escaped));
-        }
-        output.push('\n');
-    } else {
-        // Overview table with links to complex variant sections
-        output.push_str("| Variant | Kind | Description |\n");
-        output.push_str("|---------|------|-------------|\n");
-
-        for variant in variants {
-            let doc = variant
-                .doc
-                .as_ref()
-                .map(|d| d.lines().next().unwrap_or(""))
-                .unwrap_or("—");
-            let doc_escaped = doc.replace('|', "\\|");
-
-            let kind_label = match &variant.kind {
-                VariantKind::Unit => "Unit",
-                VariantKind::Tuple(_) => "Tuple",
-                VariantKind::Struct(_) => "Struct",
-            };
-
-            // Link to section for complex variants
-            let variant_cell = if matches!(variant.kind, VariantKind::Unit) {
-                format!("`{}`", variant.name)
+    fn write_fields_table(&self, out: &mut String, fields: &[Field], from: LinkFrom<'_>) {
+        out.push_str("| Field | Type | Required | Description |\n");
+        out.push_str("|-------|------|----------|-------------|\n");
+        for field in fields {
+            let required = if field.optional { "No" } else { "Yes" };
+            let flattened = if field.flattened {
+                " *(flattened)*"
             } else {
-                let anchor = variant.name.to_lowercase();
-                format!("[`{}`](#{})", variant.name, anchor)
+                ""
             };
-
-            output.push_str(&format!(
-                "| {} | {} | {} |\n",
-                variant_cell, kind_label, doc_escaped
+            out.push_str(&format!(
+                "| `{}` | {} | {} | {}{} |\n",
+                field.name,
+                self.links.type_to_markdown(&field.ty, from),
+                required,
+                table_cell(field.doc.as_deref().unwrap_or("—")),
+                flattened
             ));
         }
-        output.push('\n');
+        out.push('\n');
+    }
 
-        // Detailed sections only for complex variants (one level deeper)
-        let variant_heading_level = heading_level + 1;
-        if has_complex {
+    fn write_enum_docs(
+        &self,
+        out: &mut String,
+        type_path: &str,
+        variants: &[Variant],
+        from: LinkFrom<'_>,
+        level: usize,
+    ) {
+        if variants.is_empty() {
+            out.push_str("This enum has no variants.\n\n");
+            return;
+        }
+        out.push_str(&heading(level, "Variants"));
+
+        let first_line = |v: &Variant| {
+            table_cell(
+                v.doc
+                    .as_deref()
+                    .and_then(|d| d.lines().next())
+                    .unwrap_or("—"),
+            )
+        };
+
+        if variants.iter().all(|v| matches!(v.kind, VariantKind::Unit)) {
+            out.push_str("| Variant | Description |\n");
+            out.push_str("|---------|-------------|\n");
             for variant in variants {
-                match &variant.kind {
-                    VariantKind::Unit => {
-                        // Skip unit variants - already in table
-                    }
-                    VariantKind::Tuple(types) => {
-                        output.push_str(&heading(
-                            variant_heading_level,
-                            &format!("`{}`", variant.name),
-                        ));
-                        if let Some(doc) = &variant.doc {
-                            output.push_str(doc);
-                            output.push_str("\n\n");
-                        }
-                        let type_strs: Vec<_> = types
-                            .iter()
-                            .map(|t| format_type(resolver, t, link_mode))
-                            .collect();
-                        output.push_str(&format!("**Type:** `({})`\n\n", type_strs.join(", ")));
-                    }
-                    VariantKind::Struct(fields) => {
-                        output.push_str(&heading(
-                            variant_heading_level,
-                            &format!("`{}`", variant.name),
-                        ));
-                        if let Some(doc) = &variant.doc {
-                            output.push_str(doc);
-                            output.push_str("\n\n");
-                        }
-                        output.push_str("**Fields:**\n\n");
-                        output.push_str("| Field | Type | Required | Description |\n");
-                        output.push_str("|-------|------|----------|-------------|\n");
+                out.push_str(&format!(
+                    "| `{}` | {} |\n",
+                    variant.name,
+                    first_line(variant)
+                ));
+            }
+            out.push('\n');
+            return;
+        }
 
-                        for field in fields {
-                            let type_str = format_type(resolver, &field.ty, link_mode);
-                            let required = if field.optional { "No" } else { "Yes" };
-                            let doc = field.doc.as_deref().unwrap_or("—");
-                            let doc_escaped = doc.replace('|', "\\|").replace('\n', " ");
+        // Overview table linking to a section per tuple or struct variant.
+        out.push_str("| Variant | Kind | Description |\n");
+        out.push_str("|---------|------|-------------|\n");
+        for variant in variants {
+            let (cell, kind) = match variant.kind {
+                VariantKind::Unit => (format!("`{}`", variant.name), "Unit"),
+                VariantKind::Tuple(_) => (variant_link(type_path, variant), "Tuple"),
+                VariantKind::Struct(_) => (variant_link(type_path, variant), "Struct"),
+            };
+            out.push_str(&format!(
+                "| {} | {} | {} |\n",
+                cell,
+                kind,
+                first_line(variant)
+            ));
+        }
+        out.push('\n');
 
-                            output.push_str(&format!(
-                                "| `{}` | {} | {} | {} |\n",
-                                field.name, type_str, required, doc_escaped
-                            ));
-                        }
-                        output.push('\n');
-                    }
+        for variant in variants {
+            if matches!(variant.kind, VariantKind::Unit) {
+                continue;
+            }
+            out.push_str(&heading(
+                level + 1,
+                &format!(
+                    "<a id=\"{}\"></a>`{}`",
+                    variant_anchor(type_path, variant),
+                    variant.name
+                ),
+            ));
+            if let Some(doc) = &variant.doc {
+                out.push_str(doc);
+                out.push_str("\n\n");
+            }
+            match &variant.kind {
+                VariantKind::Tuple(types) => {
+                    let types: Vec<_> = types
+                        .iter()
+                        .map(|t| self.links.type_to_markdown(t, from))
+                        .collect();
+                    out.push_str(&format!("**Type:** ({})\n\n", types.join(", ")));
                 }
+                VariantKind::Struct(fields) if fields.is_empty() => {
+                    out.push_str("This variant has no fields.\n\n");
+                }
+                VariantKind::Struct(fields) => self.write_fields_table(out, fields, from),
+                VariantKind::Unit => {}
             }
         }
     }
 }
 
-fn write_example(
-    output: &mut String,
-    schema: &Schema,
-    max_depth: usize,
-    schemas: &HashMap<&str, &Schema>,
+/// Anchor of a variant section, qualified by its type so it is unique on a single page.
+fn variant_anchor(type_path: &str, variant: &Variant) -> String {
+    format!("{}-{}", type_anchor(type_path), variant.name.to_lowercase())
+}
+
+fn variant_link(type_path: &str, variant: &Variant) -> String {
+    format!(
+        "[`{}`](#{})",
+        variant.name,
+        variant_anchor(type_path, variant)
+    )
+}
+
+/// A Markdown heading at the given level.
+pub(crate) fn heading(level: usize, text: &str) -> String {
+    format!("{} {}\n\n", "#".repeat(level), text)
+}
+
+/// Make text safe for a single Markdown table cell.
+fn table_cell(text: &str) -> String {
+    text.replace('|', "\\|").replace('\n', " ")
+}
+
+/// Write the page header: Starlight frontmatter or a Markdown title.
+pub(crate) fn write_header(
+    out: &mut String,
+    title: &str,
+    description: Option<&str>,
+    format: OutputFormat,
 ) {
-    output.push_str("## Example\n\n");
-    output.push_str("```ron\n");
-    output.push_str(&generate_example(schema, max_depth, schemas));
-    output.push_str("\n```\n");
+    match format {
+        OutputFormat::Starlight => {
+            // JSON strings are valid YAML double-quoted scalars, with all escapes YAML understands.
+            out.push_str("---\n");
+            out.push_str(&format!("title: {}\n", yaml_string(title)));
+            if let Some(first_line) = description.and_then(|d| d.lines().next()) {
+                out.push_str(&format!("description: {}\n", yaml_string(first_line)));
+            }
+            out.push_str("---\n\n");
+        }
+        OutputFormat::Plain => out.push_str(&heading(1, title)),
+    }
+}
+
+fn yaml_string(text: &str) -> String {
+    serde_json::Value::String(text.to_string()).to_string()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+    use crate::config::OutputMode;
+
+    fn config(format: OutputFormat) -> DocConfig {
+        DocConfig {
+            input: PathBuf::from("in"),
+            output: PathBuf::from("out"),
+            base_url: None,
+            format,
+            output_mode: OutputMode::MultiPage,
+            example_depth: 2,
+            generate_index: true,
+        }
+    }
+
+    fn discovered(type_path: &str, schema: Schema) -> DiscoveredSchema {
+        DiscoveredSchema {
+            path: PathBuf::from("test.schema.ron"),
+            type_path: type_path.to_string(),
+            schema,
+        }
+    }
 
     #[test]
     fn test_write_header_plain() {
         let mut output = String::new();
-        let schema = Schema::with_doc("Test description", TypeKind::Unit);
-        write_header(&mut output, "TestType", &schema, OutputFormat::Plain);
+        write_header(
+            &mut output,
+            "TestType",
+            Some("Test description"),
+            OutputFormat::Plain,
+        );
         assert_eq!(output, "# TestType\n\n");
     }
 
     #[test]
     fn test_write_header_starlight() {
         let mut output = String::new();
-        let schema = Schema::with_doc("Test description", TypeKind::Unit);
-        write_header(&mut output, "TestType", &schema, OutputFormat::Starlight);
-        assert!(output.contains("---"));
-        assert!(output.contains("title: TestType"));
-        assert!(output.contains("description: \"Test description\""));
+        write_header(
+            &mut output,
+            "TestType",
+            Some("Test description"),
+            OutputFormat::Starlight,
+        );
+        assert_eq!(
+            output,
+            "---\ntitle: \"TestType\"\ndescription: \"Test description\"\n---\n\n"
+        );
     }
 
     #[test]
-    fn test_write_struct_docs() {
+    fn starlight_description_escapes_backslashes() {
         let mut output = String::new();
-        let fields = vec![
-            Field::new("name", TypeKind::String).with_doc("The name"),
-            Field::optional("age", TypeKind::I32).with_doc("The age"),
-        ];
-        let schemas = vec![];
-        let resolver = LinkResolver::new(&schemas, None);
-        write_struct_docs(&mut output, &fields, &resolver, LinkMode::File, 2);
+        write_header(
+            &mut output,
+            "T",
+            Some("Saved to C:\\temp, \"quoted\""),
+            OutputFormat::Starlight,
+        );
+        assert!(
+            output.contains(r#"description: "Saved to C:\\temp, \"quoted\"""#),
+            "{output}"
+        );
+    }
 
-        assert!(output.contains("## Fields"));
-        assert!(output.contains("| `name` |"));
-        assert!(output.contains("| Yes |"));
-        assert!(output.contains("| `age` |"));
-        assert!(output.contains("| No |"));
+    #[test]
+    fn test_struct_docs() {
+        let schemas = vec![discovered(
+            "my::Person",
+            Schema::new(TypeKind::Struct {
+                fields: vec![
+                    Field::new("name", TypeKind::String).with_doc("The name"),
+                    Field::optional("age", TypeKind::I32).with_doc("The age"),
+                ],
+            }),
+        )];
+        let config = config(OutputFormat::Plain);
+        let page = DocGenerator::new(&schemas, &config).type_page(&schemas[0]);
+
+        assert!(page.starts_with("# Person\n\n"));
+        assert!(page.contains("## Fields"));
+        assert!(page.contains("| `name` | `String` | Yes | The name |"));
+        assert!(page.contains("| `age` | `i32` | No | The age |"));
+        assert!(page.contains("## Example\n\n```ron\n(\n    name: \"...\",\n)\n```"));
+    }
+
+    #[test]
+    fn variant_sections_have_type_qualified_anchors_and_shared_tables() {
+        let schemas = vec![
+            discovered(
+                "my::Shape",
+                Schema::new(TypeKind::Enum {
+                    variants: vec![
+                        Variant::unit("Empty"),
+                        Variant::tuple(
+                            "Point",
+                            vec![TypeKind::I32, TypeKind::TypeRef("my::Unit".into())],
+                        ),
+                        Variant::struct_variant(
+                            "Rect",
+                            vec![Field::flattened(
+                                "size",
+                                TypeKind::TypeRef("my::Size".into()),
+                            )],
+                        ),
+                    ],
+                }),
+            ),
+            discovered("my::Unit", Schema::new(TypeKind::Unit)),
+            discovered("my::Size", Schema::new(TypeKind::Struct { fields: vec![] })),
+        ];
+        let config = config(OutputFormat::Plain);
+        let page = DocGenerator::new(&schemas, &config).type_page(&schemas[0]);
+
+        assert!(
+            page.contains("| [`Point`](#my-shape-point) | Tuple |"),
+            "{page}"
+        );
+        assert!(
+            page.contains("### <a id=\"my-shape-point\"></a>`Point`"),
+            "{page}"
+        );
+        // Tuple types are not wrapped in an extra pair of backticks.
+        assert!(
+            page.contains("**Type:** (`i32`, [`Unit`](./Unit.md))"),
+            "{page}"
+        );
+        // Struct variants use the same table as structs, including the flattened note.
+        assert!(
+            page.contains("| `size` | [`Size`](./Size.md) | Yes | — *(flattened)* |"),
+            "{page}"
+        );
     }
 }

@@ -1,246 +1,317 @@
 //! RON example generation from schemas.
+//!
+//! Examples are skeletons with placeholder values. They are always valid RON
+//! syntax; when `TypeRef` expansion stops at the depth limit, a shallow
+//! placeholder value with a comment naming the type is used instead.
 
-use ahash::HashMap;
-use ron2::schema::{Schema, TypeKind, Variant, VariantKind};
+use ron2::schema::{Field, Schema, TypeKind, Variant, VariantKind};
 
-use crate::discovery::DiscoveredSchema;
+use crate::link::{LinkResolver, type_path_short_name};
+
+const INDENT: &str = "    ";
 
 /// Generate a skeleton RON example from a schema.
-pub fn generate_example(
-    schema: &Schema,
-    max_depth: usize,
-    schemas: &HashMap<&str, &Schema>,
-) -> String {
-    generate_type_example(&schema.kind, max_depth, schemas, 0, 0)
+///
+/// `max_depth` limits how many nested `TypeRef`s are expanded; `links`
+/// resolves them to the discovered schemas.
+pub fn generate_example(schema: &Schema, max_depth: usize, links: &LinkResolver<'_>) -> String {
+    Example { links, max_depth }.value(&schema.kind, 0, 0)
 }
 
-fn generate_type_example(
-    kind: &TypeKind,
+struct Example<'l, 'a> {
+    links: &'l LinkResolver<'a>,
     max_depth: usize,
-    schemas: &HashMap<&str, &Schema>,
-    current_depth: usize,
-    indent_level: usize,
-) -> String {
-    let indent = "    ".repeat(indent_level);
-    let inner_indent = "    ".repeat(indent_level + 1);
+}
 
+impl Example<'_, '_> {
+    /// An example value of `kind`. `depth` counts expanded `TypeRef`s and
+    /// `indent` is the nesting level of the line the value starts on.
+    fn value(&self, kind: &TypeKind, depth: usize, indent: usize) -> String {
+        match kind {
+            TypeKind::Option(inner) => format!("Some({})", self.value(inner, depth, indent)),
+            TypeKind::List(inner) => format!("[{}]", self.value(inner, depth, indent)),
+            TypeKind::Map { key, value } => format!(
+                "{{{}: {}}}",
+                self.value(key, depth, indent),
+                self.value(value, depth, indent)
+            ),
+            TypeKind::Tuple(types) => {
+                let items: Vec<_> = types.iter().map(|t| self.value(t, depth, indent)).collect();
+                format!("({})", items.join(", "))
+            }
+            TypeKind::Struct { fields } => self.struct_body("", fields, depth, indent),
+            TypeKind::Enum { variants } => match variants.first() {
+                Some(variant) => self.variant(variant, depth, indent),
+                None => "/* no variants */ ()".to_string(),
+            },
+            TypeKind::TypeRef(path) => {
+                let name = type_path_short_name(path);
+                match self.links.resolve(path) {
+                    Some(target) if depth < self.max_depth => {
+                        self.value(&target.schema.kind, depth + 1, indent)
+                    }
+                    Some(target) => placeholder(&target.schema.kind, name),
+                    None => format!("/* {name} */ ()"),
+                }
+            }
+            primitive => primitive_example(primitive),
+        }
+    }
+
+    fn variant(&self, variant: &Variant, depth: usize, indent: usize) -> String {
+        match &variant.kind {
+            VariantKind::Unit => variant.name.clone(),
+            VariantKind::Tuple(types) => {
+                let items: Vec<_> = types.iter().map(|t| self.value(t, depth, indent)).collect();
+                format!("{}({})", variant.name, items.join(", "))
+            }
+            VariantKind::Struct(fields) => self.struct_body(&variant.name, fields, depth, indent),
+        }
+    }
+
+    /// `name(field: value, ...)` with the required fields, flattened fields inlined.
+    fn struct_body(&self, name: &str, fields: &[Field], depth: usize, indent: usize) -> String {
+        let mut entries = Vec::new();
+        self.required_fields(fields, depth, indent + 1, &mut Vec::new(), &mut entries);
+        if entries.is_empty() {
+            return format!("{name}()");
+        }
+        let inner = INDENT.repeat(indent + 1);
+        let body: String = entries
+            .iter()
+            .map(|(field, value)| format!("{inner}{field}: {value},\n"))
+            .collect();
+        format!("{name}(\n{body}{})", INDENT.repeat(indent))
+    }
+
+    fn required_fields(
+        &self,
+        fields: &[Field],
+        depth: usize,
+        indent: usize,
+        // `TypeRef`s being flattened, to stop on self-flattening schemas.
+        flattening: &mut Vec<String>,
+        out: &mut Vec<(String, String)>,
+    ) {
+        for field in fields {
+            if !field.flattened {
+                if !field.optional {
+                    out.push((field.name.clone(), self.value(&field.ty, depth, indent)));
+                }
+                continue;
+            }
+            // A flattened struct contributes its fields; a flattened map contributes none.
+            let (kind, type_ref) = match &field.ty {
+                TypeKind::TypeRef(path) => match self.links.resolve(path) {
+                    Some(target) if !flattening.contains(path) => (&target.schema.kind, Some(path)),
+                    _ => continue,
+                },
+                kind => (kind, None),
+            };
+            if let TypeKind::Struct { fields } = kind {
+                flattening.extend(type_ref.cloned());
+                self.required_fields(fields, depth, indent, flattening, out);
+                if type_ref.is_some() {
+                    flattening.pop();
+                }
+            }
+        }
+    }
+}
+
+/// A valid value for a type whose expansion stopped at the depth limit.
+///
+/// Never follows `TypeRef`s, so it terminates for recursive schemas.
+fn placeholder(kind: &TypeKind, name: &str) -> String {
     match kind {
-        // Primitives with placeholder values
-        TypeKind::Bool => "true".to_string(),
-        TypeKind::String => "\"...\"".to_string(),
-        TypeKind::Char => "'?'".to_string(),
-        TypeKind::I8 | TypeKind::I16 | TypeKind::I32 | TypeKind::I64 | TypeKind::I128 => {
-            "0".to_string()
+        TypeKind::Option(_) => "None".to_string(),
+        TypeKind::List(_) => "[]".to_string(),
+        TypeKind::Map { .. } => "{}".to_string(),
+        TypeKind::Enum { variants } => match variants.first() {
+            Some(Variant {
+                name,
+                kind: VariantKind::Unit,
+                ..
+            }) => name.clone(),
+            Some(variant) => format!("{}(/* ... */)", variant.name),
+            None => "/* no variants */ ()".to_string(),
+        },
+        TypeKind::Struct { .. } | TypeKind::Tuple(_) | TypeKind::TypeRef(_) => {
+            format!("(/* {name} */)")
         }
-        TypeKind::U8 | TypeKind::U16 | TypeKind::U32 | TypeKind::U64 | TypeKind::U128 => {
-            "0".to_string()
-        }
-        TypeKind::F32 | TypeKind::F64 => "0.0".to_string(),
-        TypeKind::Unit => "()".to_string(),
-
-        // Compound types
-        TypeKind::Option(inner) => {
-            let inner_example =
-                generate_type_example(inner, max_depth, schemas, current_depth, indent_level);
-            format!("Some({})", inner_example)
-        }
-        TypeKind::List(inner) => {
-            let inner_example =
-                generate_type_example(inner, max_depth, schemas, current_depth, indent_level);
-            format!("[{}]", inner_example)
-        }
-        TypeKind::Map { key, value } => {
-            let key_example =
-                generate_type_example(key, max_depth, schemas, current_depth, indent_level);
-            let value_example =
-                generate_type_example(value, max_depth, schemas, current_depth, indent_level);
-            format!("{{ {}: {} }}", key_example, value_example)
-        }
-        TypeKind::Tuple(types) => {
-            let items: Vec<_> = types
-                .iter()
-                .map(|t| generate_type_example(t, max_depth, schemas, current_depth, indent_level))
-                .collect();
-            format!("({})", items.join(", "))
-        }
-
-        // Struct: show all required fields
-        TypeKind::Struct { fields } => {
-            let required_fields: Vec<_> = fields.iter().filter(|f| !f.optional).collect();
-
-            if required_fields.is_empty() {
-                return "()".to_string();
-            }
-
-            let field_examples: Vec<_> = required_fields
-                .iter()
-                .map(|f| {
-                    let value = generate_type_example(
-                        &f.ty,
-                        max_depth,
-                        schemas,
-                        current_depth + 1,
-                        indent_level + 1,
-                    );
-                    format!("{}{}: {}", inner_indent, f.name, value)
-                })
-                .collect();
-
-            format!("(\n{},\n{})", field_examples.join(",\n"), indent)
-        }
-
-        // Enum: show first variant
-        TypeKind::Enum { variants } => {
-            if let Some(variant) = variants.first() {
-                generate_variant_example(variant, max_depth, schemas, current_depth, indent_level)
-            } else {
-                "/* no variants */".to_string()
-            }
-        }
-
-        // TypeRef: resolve or use placeholder
-        TypeKind::TypeRef(path) => {
-            if current_depth < max_depth
-                && let Some(resolved) = schemas.get(path.as_str())
-            {
-                return generate_type_example(
-                    &resolved.kind,
-                    max_depth,
-                    schemas,
-                    current_depth + 1,
-                    indent_level,
-                );
-            }
-            // Use short name as placeholder
-            let short_name = path.split("::").last().unwrap_or(path);
-            format!("/* {} */", short_name)
-        }
+        primitive => primitive_example(primitive),
     }
 }
 
-fn generate_variant_example(
-    variant: &Variant,
-    max_depth: usize,
-    schemas: &HashMap<&str, &Schema>,
-    current_depth: usize,
-    indent_level: usize,
-) -> String {
-    match &variant.kind {
-        VariantKind::Unit => variant.name.clone(),
-        VariantKind::Tuple(types) => {
-            let items: Vec<_> = types
-                .iter()
-                .map(|t| generate_type_example(t, max_depth, schemas, current_depth, indent_level))
-                .collect();
-            format!("{}({})", variant.name, items.join(", "))
-        }
-        VariantKind::Struct(fields) => {
-            let inner_indent = "    ".repeat(indent_level + 1);
-            let field_examples: Vec<_> = fields
-                .iter()
-                .filter(|f| !f.optional)
-                .map(|f| {
-                    let value = generate_type_example(
-                        &f.ty,
-                        max_depth,
-                        schemas,
-                        current_depth + 1,
-                        indent_level + 1,
-                    );
-                    format!("{}{}: {}", inner_indent, f.name, value)
-                })
-                .collect();
-
-            if field_examples.is_empty() {
-                format!("{} {{}}", variant.name)
-            } else {
-                let indent = "    ".repeat(indent_level);
-                format!(
-                    "{}(\n{},\n{})",
-                    variant.name,
-                    field_examples.join(",\n"),
-                    indent
-                )
-            }
-        }
+fn primitive_example(kind: &TypeKind) -> String {
+    match kind {
+        TypeKind::Bool => "true",
+        TypeKind::String => "\"...\"",
+        TypeKind::Char => "'?'",
+        TypeKind::F32 | TypeKind::F64 => "0.0",
+        TypeKind::Unit => "()",
+        _ => "0",
     }
-}
-
-/// Build a lookup map from type path to schema.
-pub fn build_schema_map(schemas: &[DiscoveredSchema]) -> HashMap<&str, &Schema> {
-    schemas
-        .iter()
-        .map(|s| (s.type_path.as_str(), &s.schema))
-        .collect()
+    .to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use ahash::HashMapExt;
+    use std::path::PathBuf;
+
     use ron2::schema::Field;
 
     use super::*;
+    use crate::{config::OutputFormat, discovery::DiscoveredSchema};
+
+    fn discovered(type_path: &str, kind: TypeKind) -> DiscoveredSchema {
+        DiscoveredSchema {
+            path: PathBuf::from("test.schema.ron"),
+            type_path: type_path.to_string(),
+            schema: Schema::new(kind),
+        }
+    }
+
+    fn example(kind: TypeKind, schemas: &[DiscoveredSchema], max_depth: usize) -> String {
+        let links = LinkResolver::new(schemas, None, OutputFormat::Plain);
+        let example = generate_example(&Schema::new(kind), max_depth, &links);
+        if let Err(err) = ron2::ast::parse_document(&example) {
+            panic!("example is not valid RON ({err}):\n{example}");
+        }
+        example
+    }
+
+    fn type_ref(path: &str) -> TypeKind {
+        TypeKind::TypeRef(path.to_string())
+    }
 
     #[test]
     fn test_generate_primitive_examples() {
-        let schemas = HashMap::new();
-        assert_eq!(
-            generate_type_example(&TypeKind::Bool, 2, &schemas, 0, 0),
-            "true"
-        );
-        assert_eq!(
-            generate_type_example(&TypeKind::String, 2, &schemas, 0, 0),
-            "\"...\""
-        );
-        assert_eq!(
-            generate_type_example(&TypeKind::I32, 2, &schemas, 0, 0),
-            "0"
-        );
+        assert_eq!(example(TypeKind::Bool, &[], 2), "true");
+        assert_eq!(example(TypeKind::String, &[], 2), "\"...\"");
+        assert_eq!(example(TypeKind::I32, &[], 2), "0");
     }
 
     #[test]
     fn test_generate_compound_examples() {
-        let schemas = HashMap::new();
-
         let option_string = TypeKind::Option(Box::new(TypeKind::String));
+        assert_eq!(example(option_string, &[], 2), "Some(\"...\")");
         assert_eq!(
-            generate_type_example(&option_string, 2, &schemas, 0, 0),
-            "Some(\"...\")"
+            example(TypeKind::List(Box::new(TypeKind::I32)), &[], 2),
+            "[0]"
         );
-
-        let list_i32 = TypeKind::List(Box::new(TypeKind::I32));
-        assert_eq!(generate_type_example(&list_i32, 2, &schemas, 0, 0), "[0]");
     }
 
     #[test]
     fn test_generate_struct_example() {
-        let schemas = HashMap::new();
-
         let struct_kind = TypeKind::Struct {
             fields: vec![
                 Field::new("name", TypeKind::String),
                 Field::new("age", TypeKind::I32),
+                Field::optional("nick", TypeKind::String),
             ],
         };
-
-        let example = generate_type_example(&struct_kind, 2, &schemas, 0, 0);
-        assert!(example.contains("name: \"...\""));
-        assert!(example.contains("age: 0"));
+        assert_eq!(
+            example(struct_kind, &[], 2),
+            "(\n    name: \"...\",\n    age: 0,\n)"
+        );
     }
 
     #[test]
     fn test_generate_enum_example() {
-        let schemas = HashMap::new();
-
         let enum_kind = TypeKind::Enum {
-            variants: vec![
-                Variant::unit("Low"),
-                Variant::unit("Medium"),
-                Variant::unit("High"),
-            ],
+            variants: vec![Variant::unit("Low"), Variant::unit("High")],
         };
+        assert_eq!(example(enum_kind, &[], 2), "Low");
+    }
 
-        let example = generate_type_example(&enum_kind, 2, &schemas, 0, 0);
-        assert_eq!(example, "Low");
+    #[test]
+    fn struct_variant_without_required_fields_uses_parentheses() {
+        let enum_kind = TypeKind::Enum {
+            variants: vec![Variant::struct_variant(
+                "Empty",
+                vec![Field::optional("x", TypeKind::I32)],
+            )],
+        };
+        assert_eq!(example(enum_kind, &[], 2), "Empty()");
+    }
+
+    #[test]
+    fn depth_cutoff_emits_valid_placeholders() {
+        let schemas = vec![
+            discovered(
+                "t::Tree",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("child", type_ref("t::Tree")),
+                        Field::new("kind", type_ref("t::Kind")),
+                    ],
+                },
+            ),
+            discovered(
+                "t::Kind",
+                TypeKind::Enum {
+                    variants: vec![Variant::tuple("Leaf", vec![TypeKind::I32])],
+                },
+            ),
+        ];
+        let out = example(type_ref("t::Tree"), &schemas, 1);
+        assert!(out.contains("child: (/* Tree */)"), "{out}");
+        assert!(out.contains("kind: Leaf(/* ... */)"), "{out}");
+        // Unknown types still produce a value.
+        assert_eq!(
+            example(type_ref("t::Unknown"), &schemas, 2),
+            "/* Unknown */ ()"
+        );
+    }
+
+    #[test]
+    fn flattened_fields_are_inlined() {
+        let schemas = vec![
+            discovered(
+                "t::Outer",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("a", TypeKind::I32),
+                        Field::flattened("inner", type_ref("t::Inner")),
+                        Field::flattened(
+                            "extra",
+                            TypeKind::Map {
+                                key: Box::new(TypeKind::String),
+                                value: Box::new(TypeKind::String),
+                            },
+                        ),
+                    ],
+                },
+            ),
+            discovered(
+                "t::Inner",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("b", TypeKind::Bool),
+                        Field::flattened("again", type_ref("t::Inner")),
+                    ],
+                },
+            ),
+        ];
+        assert_eq!(
+            example(type_ref("t::Outer"), &schemas, 2),
+            "(\n    a: 0,\n    b: true,\n)"
+        );
+    }
+
+    #[test]
+    fn typeref_lookup_matches_link_resolution() {
+        // Discovered under a shorter path than the TypeRef uses.
+        let schemas = vec![discovered(
+            "Config",
+            TypeKind::Struct {
+                fields: vec![Field::new("port", TypeKind::U16)],
+            },
+        )];
+        assert_eq!(
+            example(type_ref("my_crate::Config"), &schemas, 2),
+            "(\n    port: 0,\n)"
+        );
     }
 }

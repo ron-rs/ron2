@@ -1079,6 +1079,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "clap",
+ "example-showcase",
  "ron2",
  "serde_json",
  "tempfile",

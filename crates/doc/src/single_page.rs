@@ -1,122 +1,61 @@
 //! Single-page documentation generator.
 
-use std::collections::BTreeMap;
-
 use crate::{
-    config::DocConfig,
-    discovery::DiscoveredSchema,
-    generator::{LinkMode, generate_type_content, generate_type_example},
-    link::LinkResolver,
+    generator::{DocGenerator, heading, write_header},
+    index::group_by_module,
+    link::{LinkFrom, type_anchor},
 };
 
-/// Generate a single markdown document containing all type documentation.
-pub fn generate_single_page(schemas: &[DiscoveredSchema], config: &DocConfig) -> String {
-    let mut output = String::new();
-    let resolver = LinkResolver::new(schemas, None);
+impl DocGenerator<'_> {
+    /// One Markdown document with a table of contents and every type.
+    ///
+    /// Types carry explicit `<a id>` anchors qualified by their full path, so
+    /// links work on GitHub and other CommonMark renderers and never collide.
+    pub fn single_page(&self) -> String {
+        let mut out = String::new();
+        write_header(&mut out, "API Reference", None, self.config.format);
 
-    // Title
-    output.push_str("# API Reference\n\n");
+        let grouped = group_by_module(self.schemas);
 
-    // Group schemas by module (first segment of type path)
-    let grouped = group_by_module(schemas);
-
-    // Generate table of contents
-    write_toc(&mut output, &grouped, &resolver);
-
-    output.push_str("---\n\n");
-
-    // Generate content for each module group
-    for (module, module_schemas) in &grouped {
-        output.push_str(&format!("## {}\n\n", module));
-
-        for schema in module_schemas {
-            let display_name = resolver.display_name(&schema.type_path);
-            let anchor = LinkResolver::type_path_to_anchor(&schema.type_path);
-
-            // Type heading with explicit anchor
-            output.push_str(&format!("### {} {{#{}}}\n\n", display_name, anchor));
-
-            // Type content (description + fields/variants, heading level 4)
-            output.push_str(&generate_type_content(
-                schema,
-                &resolver,
-                LinkMode::Anchor,
-                4,
-            ));
-
-            // Example
-            output.push_str("**Example:**\n\n");
-            output.push_str(&generate_type_example(
-                &schema.schema,
-                config.example_depth,
-                schemas,
-            ));
-
-            output.push('\n');
+        out.push_str(&heading(2, "Table of Contents"));
+        for (module, schemas) in &grouped {
+            out.push_str(&heading(3, module));
+            for schema in schemas {
+                let entry = format!(
+                    "- [`{}`](#{})",
+                    self.links.display_name(&schema.type_path),
+                    type_anchor(&schema.type_path)
+                );
+                match schema.schema.doc.as_deref().and_then(|d| d.lines().next()) {
+                    Some(line) if !line.is_empty() => {
+                        out.push_str(&format!("{entry} — {line}\n"));
+                    }
+                    _ => out.push_str(&format!("{entry}\n")),
+                }
+            }
+            out.push('\n');
         }
-    }
+        out.push_str("---\n\n");
 
-    output
-}
-
-/// Group schemas by their first module segment.
-fn group_by_module(schemas: &[DiscoveredSchema]) -> BTreeMap<String, Vec<&DiscoveredSchema>> {
-    let mut grouped: BTreeMap<String, Vec<&DiscoveredSchema>> = BTreeMap::new();
-
-    for schema in schemas {
-        let module = schema
-            .type_path
-            .split("::")
-            .next()
-            .unwrap_or(&schema.type_path)
-            .to_string();
-        grouped.entry(module).or_default().push(schema);
-    }
-
-    // Sort schemas within each group by short name
-    for schemas in grouped.values_mut() {
-        schemas.sort_by(|a, b| {
-            let a_name = a.type_path.split("::").last().unwrap_or(&a.type_path);
-            let b_name = b.type_path.split("::").last().unwrap_or(&b.type_path);
-            a_name.cmp(b_name)
-        });
-    }
-
-    grouped
-}
-
-/// Write the table of contents.
-fn write_toc(
-    output: &mut String,
-    grouped: &BTreeMap<String, Vec<&DiscoveredSchema>>,
-    resolver: &LinkResolver,
-) {
-    output.push_str("## Table of Contents\n\n");
-
-    for (module, schemas) in grouped {
-        output.push_str(&format!("### {}\n\n", module));
-
-        for schema in schemas {
-            let display_name = resolver.display_name(&schema.type_path);
-            let anchor = LinkResolver::type_path_to_anchor(&schema.type_path);
-            let doc_first_line = schema
-                .schema
-                .doc
-                .as_ref()
-                .and_then(|d| d.lines().next())
-                .unwrap_or("");
-
-            if doc_first_line.is_empty() {
-                output.push_str(&format!("- [`{}`](#{})\n", display_name, anchor));
-            } else {
-                output.push_str(&format!(
-                    "- [`{}`](#{}) — {}\n",
-                    display_name, anchor, doc_first_line
+        for (module, schemas) in &grouped {
+            out.push_str(&heading(2, module));
+            for schema in schemas {
+                out.push_str(&heading(
+                    3,
+                    &format!(
+                        "<a id=\"{}\"></a>{}",
+                        type_anchor(&schema.type_path),
+                        self.links.display_name(&schema.type_path)
+                    ),
                 ));
+                self.write_type_content(&mut out, schema, LinkFrom::SamePage, 4);
+                out.push_str("**Example:**\n\n");
+                out.push_str(&self.example(&schema.schema));
+                out.push('\n');
             }
         }
 
-        output.push('\n');
+        out
     }
 }
 
@@ -124,15 +63,18 @@ fn write_toc(
 mod tests {
     use std::path::PathBuf;
 
-    use ron2::schema::{Schema, TypeKind};
+    use ron2::schema::{Schema, TypeKind, Variant};
 
     use super::*;
+    use crate::{
+        config::{DocConfig, OutputFormat, OutputMode},
+        discovery::DiscoveredSchema,
+    };
 
     fn make_schema(type_path: &str, doc: Option<&str>) -> DiscoveredSchema {
-        let schema = if let Some(d) = doc {
-            Schema::with_doc(d, TypeKind::Unit)
-        } else {
-            Schema::new(TypeKind::Unit)
+        let schema = match doc {
+            Some(d) => Schema::with_doc(d, TypeKind::Unit),
+            None => Schema::new(TypeKind::Unit),
         };
         DiscoveredSchema {
             path: PathBuf::from("test.schema.ron"),
@@ -141,67 +83,57 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_group_by_module() {
-        let schemas = vec![
-            make_schema("crate_a::Config", None),
-            make_schema("crate_a::Server", None),
-            make_schema("crate_b::Client", None),
-        ];
-        let grouped = group_by_module(&schemas);
-
-        assert_eq!(grouped.len(), 2);
-        assert_eq!(grouped.get("crate_a").map(|v| v.len()), Some(2));
-        assert_eq!(grouped.get("crate_b").map(|v| v.len()), Some(1));
-    }
-
-    #[test]
-    fn test_single_page_generation() {
-        let schemas = vec![
-            make_schema("my_crate::Config", Some("Main configuration.")),
-            make_schema("my_crate::Server", Some("Server settings.")),
-        ];
+    fn single_page(schemas: &[DiscoveredSchema]) -> String {
         let config = DocConfig {
             input: PathBuf::from("test"),
             output: PathBuf::from("test"),
             base_url: None,
-            format: crate::config::OutputFormat::Plain,
-            output_mode: crate::config::OutputMode::SinglePage,
+            format: OutputFormat::Plain,
+            output_mode: OutputMode::SinglePage,
             example_depth: 2,
             generate_index: false,
         };
+        DocGenerator::new(schemas, &config).single_page()
+    }
 
-        let output = generate_single_page(&schemas, &config);
+    #[test]
+    fn test_single_page_generation() {
+        let output = single_page(&[
+            make_schema("my_crate::Config", Some("Main configuration.")),
+            make_schema("my_crate::Server", Some("Server settings.")),
+        ]);
 
         assert!(output.contains("# API Reference"));
         assert!(output.contains("## Table of Contents"));
         assert!(output.contains("### my_crate"));
         assert!(output.contains("[`Config`](#my_crate-config)"));
         assert!(output.contains("[`Server`](#my_crate-server)"));
-        assert!(output.contains("### Config {#my_crate-config}"));
+        assert!(output.contains("### <a id=\"my_crate-config\"></a>Config\n"));
+        assert!(!output.contains("{#"), "no Pandoc-only heading attributes");
         assert!(output.contains("Main configuration."));
     }
 
     #[test]
     fn test_single_page_with_collision() {
-        let schemas = vec![
+        let output = single_page(&[
             make_schema("crate_a::Config", Some("Config A")),
             make_schema("crate_b::Config", Some("Config B")),
-        ];
-        let config = DocConfig {
-            input: PathBuf::from("test"),
-            output: PathBuf::from("test"),
-            base_url: None,
-            format: crate::config::OutputFormat::Plain,
-            output_mode: crate::config::OutputMode::SinglePage,
-            example_depth: 2,
-            generate_index: false,
-        };
-
-        let output = generate_single_page(&schemas, &config);
-
-        // With collision, should show full paths
+        ]);
         assert!(output.contains("[`crate_a::Config`](#crate_a-config)"));
         assert!(output.contains("[`crate_b::Config`](#crate_b-config)"));
+    }
+
+    #[test]
+    fn variant_anchors_do_not_collide_across_types() {
+        let enum_schema = |path: &str| DiscoveredSchema {
+            path: PathBuf::from("test.schema.ron"),
+            type_path: path.to_string(),
+            schema: Schema::new(TypeKind::Enum {
+                variants: vec![Variant::tuple("Custom", vec![TypeKind::I32])],
+            }),
+        };
+        let output = single_page(&[enum_schema("app::Color"), enum_schema("app::Size")]);
+        assert!(output.contains("<a id=\"app-color-custom\"></a>"));
+        assert!(output.contains("<a id=\"app-size-custom\"></a>"));
     }
 }

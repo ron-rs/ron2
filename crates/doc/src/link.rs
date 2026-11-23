@@ -1,280 +1,197 @@
-//! Cross-reference link resolution for TypeRef.
+//! `TypeRef` resolution and cross-reference links.
 
 use ahash::{HashMap, HashMapExt};
 use ron2::schema::TypeKind;
 
-use crate::discovery::DiscoveredSchema;
+use crate::{config::OutputFormat, discovery::DiscoveredSchema};
 
-/// A resolver for TypeRef paths to markdown file paths.
+/// The page a link is written on, which decides how its target is addressed.
+#[derive(Debug, Clone, Copy)]
+pub enum LinkFrom<'p> {
+    /// Single-page output: link to anchors on the same page.
+    SamePage,
+    /// The index page at the root of the output directory.
+    Index,
+    /// The page of the type with this path.
+    Type(&'p str),
+}
+
+/// Resolves `TypeRef` paths to discovered schemas and renders links to them.
+///
+/// Build it once per run: construction indexes all schemas, and lookups are
+/// hash-map based.
 pub struct LinkResolver<'a> {
-    /// Map from TypeRef path to the discovered schema's type_path
-    type_ref_to_path: HashMap<&'a str, &'a str>,
-    /// Map from short name to type_path for fallback matching
-    short_name_to_path: HashMap<&'a str, &'a str>,
-    /// Map from short name to count of types with that name (for collision detection)
-    short_name_counts: HashMap<&'a str, usize>,
-    /// Base URL for links
+    by_path: HashMap<&'a str, &'a DiscoveredSchema>,
+    by_short_name: HashMap<&'a str, Vec<&'a DiscoveredSchema>>,
     base_url: Option<&'a str>,
+    format: OutputFormat,
 }
 
 impl<'a> LinkResolver<'a> {
-    /// Create a new link resolver from discovered schemas.
-    pub fn new(schemas: &'a [DiscoveredSchema], base_url: Option<&'a str>) -> Self {
-        let mut type_ref_to_path = HashMap::new();
-        let mut short_name_to_path = HashMap::new();
-        let mut short_name_counts: HashMap<&str, usize> = HashMap::new();
-
+    /// Index the discovered schemas.
+    ///
+    /// `base_url` makes links absolute (e.g. `/docs/types`); `format` selects
+    /// between Markdown file links and Starlight routes.
+    pub fn new(
+        schemas: &'a [DiscoveredSchema],
+        base_url: Option<&'a str>,
+        format: OutputFormat,
+    ) -> Self {
+        let mut by_path = HashMap::with_capacity(schemas.len());
+        let mut by_short_name: HashMap<&str, Vec<&DiscoveredSchema>> =
+            HashMap::with_capacity(schemas.len());
         for schema in schemas {
-            // Map the full type path to itself
-            type_ref_to_path.insert(schema.type_path.as_str(), schema.type_path.as_str());
-
-            // Also map short name for fallback resolution and track collision counts
-            let short_name = type_path_short_name(&schema.type_path);
-            short_name_to_path.insert(short_name, schema.type_path.as_str());
-            *short_name_counts.entry(short_name).or_insert(0) += 1;
-
-            // Also check if any TypeRefs in this schema should map to discovered schemas
-            // This handles cases where TypeRef uses full path but file is at short path
-            collect_type_refs(&schema.schema.kind, &mut |type_ref| {
-                // Try to find a matching schema by short name
-                let ref_short_name = type_path_short_name(type_ref);
-                for s in schemas {
-                    if type_path_short_name(&s.type_path) == ref_short_name {
-                        type_ref_to_path.insert(type_ref, s.type_path.as_str());
-                        break;
-                    }
-                }
-            });
+            by_path.insert(schema.type_path.as_str(), schema);
+            by_short_name
+                .entry(type_path_short_name(&schema.type_path))
+                .or_default()
+                .push(schema);
         }
-
         Self {
-            type_ref_to_path,
-            short_name_to_path,
-            short_name_counts,
+            by_path,
+            by_short_name,
             base_url,
+            format,
         }
     }
 
-    /// Check if a short name has collisions (multiple types with the same short name).
-    pub fn has_collision(&self, short_name: &str) -> bool {
-        self.short_name_counts
-            .get(short_name)
-            .is_some_and(|c| *c > 1)
+    /// Find the discovered schema a `TypeRef` points to.
+    ///
+    /// An exact path match wins. Otherwise the paths may differ in their module
+    /// prefix (for example when schemas were discovered from a subdirectory),
+    /// so a unique schema whose path is a suffix of the `TypeRef` (or the other
+    /// way round) is accepted. Ambiguous references resolve to nothing.
+    pub fn resolve(&self, type_ref: &str) -> Option<&'a DiscoveredSchema> {
+        let type_ref = strip_generics(type_ref);
+        if let Some(schema) = self.by_path.get(type_ref) {
+            return Some(schema);
+        }
+        let mut matches = self
+            .by_short_name
+            .get(type_path_short_name(type_ref))?
+            .iter()
+            .filter(|s| {
+                is_path_suffix(&s.type_path, type_ref) || is_path_suffix(type_ref, &s.type_path)
+            });
+        let first = matches.next()?;
+        matches.next().is_none().then_some(*first)
     }
 
-    /// Get the display name for a type path.
-    /// Returns the short name if unambiguous, otherwise the qualified path.
-    pub fn display_name(&self, type_path: &str) -> String {
-        let short_name = type_path_short_name(type_path);
-        if self.has_collision(short_name) {
-            type_path.to_string()
-        } else {
-            short_name.to_string()
+    /// The name to show for a type: its short name, or the full path when
+    /// several discovered types share that short name.
+    pub fn display_name<'p>(&self, type_path: &'p str) -> &'p str {
+        let short = type_path_short_name(type_path);
+        match self.by_short_name.get(short) {
+            Some(same_name) if same_name.len() > 1 => type_path,
+            _ => short,
         }
     }
 
-    /// Convert a type path to an anchor ID for single-page mode.
-    /// Uses the full path to guarantee uniqueness.
-    pub fn type_path_to_anchor(type_path: &str) -> String {
-        type_path.replace("::", "-").to_lowercase()
+    /// The link target for a type's documentation, as seen from `from`.
+    pub fn href(&self, type_path: &str, from: LinkFrom<'_>) -> String {
+        let starlight = matches!(self.format, OutputFormat::Starlight);
+        let target = self.route_segments(type_path);
+        let trailing = if starlight { "/" } else { "" };
+
+        let from_dir: Vec<String> = match from {
+            LinkFrom::SamePage => return format!("#{}", type_anchor(type_path)),
+            _ if self.base_url.is_some() => {
+                let base = self.base_url.unwrap_or_default().trim_end_matches('/');
+                return format!("{base}/{}{trailing}", target.join("/"));
+            }
+            LinkFrom::Index => Vec::new(),
+            // A Starlight page is served as a directory; a Markdown page lives in one.
+            LinkFrom::Type(path) if starlight => self.route_segments(path),
+            LinkFrom::Type(path) => {
+                let mut segments = self.route_segments(path);
+                segments.pop();
+                segments
+            }
+        };
+
+        let common = from_dir
+            .iter()
+            .zip(&target)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let rest = target[common..].join("/");
+        let up = from_dir.len() - common;
+        match (up, rest.is_empty()) {
+            (0, true) => "./".to_string(),
+            (0, false) => format!("./{rest}{trailing}"),
+            (_, true) => "../".repeat(up),
+            (_, false) => format!("{}{rest}{trailing}", "../".repeat(up)),
+        }
     }
 
-    /// Resolve a TypeRef path to a markdown link path.
-    fn resolve_type_ref(&self, type_ref: &str) -> String {
-        // First try to find in our direct map
-        if let Some(resolved_path) = self.type_ref_to_path.get(type_ref) {
-            return type_path_to_md_path(resolved_path);
-        }
-
-        // Try short name fallback
-        let short_name = type_path_short_name(type_ref);
-        if let Some(resolved_path) = self.short_name_to_path.get(short_name) {
-            return type_path_to_md_path(resolved_path);
-        }
-
-        // Fall back to converting the TypeRef directly
-        type_path_to_md_path(type_ref)
-    }
-
-    /// Format a TypeKind as a markdown string with links for TypeRefs.
-    pub fn type_to_markdown(&self, type_kind: &TypeKind) -> String {
-        match type_kind {
-            // Primitives - just inline code
-            TypeKind::Bool => "`bool`".to_string(),
-            TypeKind::I8 => "`i8`".to_string(),
-            TypeKind::I16 => "`i16`".to_string(),
-            TypeKind::I32 => "`i32`".to_string(),
-            TypeKind::I64 => "`i64`".to_string(),
-            TypeKind::I128 => "`i128`".to_string(),
-            TypeKind::U8 => "`u8`".to_string(),
-            TypeKind::U16 => "`u16`".to_string(),
-            TypeKind::U32 => "`u32`".to_string(),
-            TypeKind::U64 => "`u64`".to_string(),
-            TypeKind::U128 => "`u128`".to_string(),
-            TypeKind::F32 => "`f32`".to_string(),
-            TypeKind::F64 => "`f64`".to_string(),
-            TypeKind::Char => "`char`".to_string(),
-            TypeKind::String => "`String`".to_string(),
-            TypeKind::Unit => "`()`".to_string(),
-
-            // Compound types - format with inner type links
-            TypeKind::Option(inner) => {
-                format!("Option<{}>", self.type_to_markdown(inner))
-            }
-            TypeKind::List(inner) => {
-                format!("List<{}>", self.type_to_markdown(inner))
-            }
-            TypeKind::Map { key, value } => {
-                format!(
-                    "Map<{}, {}>",
-                    self.type_to_markdown(key),
-                    self.type_to_markdown(value)
-                )
-            }
-            TypeKind::Tuple(types) => {
-                let items: Vec<_> = types.iter().map(|t| self.type_to_markdown(t)).collect();
-                format!("({})", items.join(", "))
-            }
-
-            // TypeRef - create a link
-            TypeKind::TypeRef(path) => {
-                let display_name = type_path_short_name(path);
-                let md_path = self.resolve_type_ref(path);
-
-                if let Some(base) = self.base_url {
-                    format!(
-                        "[`{}`]({}/{})",
-                        display_name,
-                        base.trim_end_matches('/'),
-                        md_path
-                    )
-                } else {
-                    format!("[`{}`](./{})", display_name, md_path)
+    /// Path segments of a type's page: Markdown file path, or Starlight route.
+    fn route_segments(&self, type_path: &str) -> Vec<String> {
+        let mut segments: Vec<String> = type_path.split("::").map(str::to_string).collect();
+        match self.format {
+            OutputFormat::Plain => {
+                if let Some(last) = segments.last_mut() {
+                    last.push_str(".md");
                 }
             }
-
-            // Struct and Enum inline - just show the kind
-            TypeKind::Struct { .. } => "`struct`".to_string(),
-            TypeKind::Enum { .. } => "`enum`".to_string(),
+            OutputFormat::Starlight => {
+                for segment in &mut segments {
+                    *segment = slugify(segment);
+                }
+            }
         }
+        segments
     }
 
-    /// Format a TypeKind as markdown with anchor links for single-page mode.
-    pub fn type_to_markdown_anchor(&self, type_kind: &TypeKind) -> String {
-        match type_kind {
-            // Primitives - just inline code
-            TypeKind::Bool => "`bool`".to_string(),
-            TypeKind::I8 => "`i8`".to_string(),
-            TypeKind::I16 => "`i16`".to_string(),
-            TypeKind::I32 => "`i32`".to_string(),
-            TypeKind::I64 => "`i64`".to_string(),
-            TypeKind::I128 => "`i128`".to_string(),
-            TypeKind::U8 => "`u8`".to_string(),
-            TypeKind::U16 => "`u16`".to_string(),
-            TypeKind::U32 => "`u32`".to_string(),
-            TypeKind::U64 => "`u64`".to_string(),
-            TypeKind::U128 => "`u128`".to_string(),
-            TypeKind::F32 => "`f32`".to_string(),
-            TypeKind::F64 => "`f64`".to_string(),
-            TypeKind::Char => "`char`".to_string(),
-            TypeKind::String => "`String`".to_string(),
-            TypeKind::Unit => "`()`".to_string(),
-
-            // Compound types - format with inner type links
-            TypeKind::Option(inner) => {
-                format!("Option<{}>", self.type_to_markdown_anchor(inner))
-            }
-            TypeKind::List(inner) => {
-                format!("List<{}>", self.type_to_markdown_anchor(inner))
-            }
-            TypeKind::Map { key, value } => {
-                format!(
-                    "Map<{}, {}>",
-                    self.type_to_markdown_anchor(key),
-                    self.type_to_markdown_anchor(value)
-                )
-            }
+    /// Format a type as Markdown, linking `TypeRef`s that resolve to a discovered schema.
+    pub fn type_to_markdown(&self, kind: &TypeKind, from: LinkFrom<'_>) -> String {
+        match kind {
+            TypeKind::Option(inner) => format!("Option<{}>", self.type_to_markdown(inner, from)),
+            TypeKind::List(inner) => format!("List<{}>", self.type_to_markdown(inner, from)),
+            TypeKind::Map { key, value } => format!(
+                "Map<{}, {}>",
+                self.type_to_markdown(key, from),
+                self.type_to_markdown(value, from)
+            ),
             TypeKind::Tuple(types) => {
                 let items: Vec<_> = types
                     .iter()
-                    .map(|t| self.type_to_markdown_anchor(t))
+                    .map(|t| self.type_to_markdown(t, from))
                     .collect();
                 format!("({})", items.join(", "))
             }
-
-            // TypeRef - create an anchor link
-            TypeKind::TypeRef(path) => {
-                let resolved = self.resolve_type_ref_path(path);
-                let display = self.display_name(&resolved);
-                let anchor = Self::type_path_to_anchor(&resolved);
-                format!("[`{}`](#{})", display, anchor)
-            }
-
-            // Struct and Enum inline - just show the kind
+            TypeKind::TypeRef(path) => match self.resolve(path) {
+                Some(target) => format!(
+                    "[`{}`]({})",
+                    self.display_name(&target.type_path),
+                    self.href(&target.type_path, from)
+                ),
+                None => format!("`{}`", type_path_short_name(path)),
+            },
             TypeKind::Struct { .. } => "`struct`".to_string(),
             TypeKind::Enum { .. } => "`enum`".to_string(),
+            primitive => format!("`{primitive}`"),
         }
-    }
-
-    /// Resolve a TypeRef path to the actual type_path (for use in anchors).
-    fn resolve_type_ref_path(&self, type_ref: &str) -> String {
-        // First try to find in our direct map
-        if let Some(resolved_path) = self.type_ref_to_path.get(type_ref) {
-            return (*resolved_path).to_string();
-        }
-
-        // Try short name fallback
-        let short_name = type_path_short_name(type_ref);
-        if let Some(resolved_path) = self.short_name_to_path.get(short_name) {
-            return (*resolved_path).to_string();
-        }
-
-        // Fall back to the original path
-        type_ref.to_string()
     }
 }
 
-/// Collect all TypeRef paths from a TypeKind.
-fn collect_type_refs<'a>(kind: &'a TypeKind, collector: &mut impl FnMut(&'a str)) {
-    match kind {
-        TypeKind::TypeRef(path) => collector(path),
-        TypeKind::Option(inner) | TypeKind::List(inner) => collect_type_refs(inner, collector),
-        TypeKind::Map { key, value } => {
-            collect_type_refs(key, collector);
-            collect_type_refs(value, collector);
-        }
-        TypeKind::Tuple(types) => {
-            for t in types {
-                collect_type_refs(t, collector);
-            }
-        }
-        TypeKind::Struct { fields } => {
-            for f in fields {
-                collect_type_refs(&f.ty, collector);
-            }
-        }
-        TypeKind::Enum { variants } => {
-            for v in variants {
-                match &v.kind {
-                    ron2::schema::VariantKind::Tuple(types) => {
-                        for t in types {
-                            collect_type_refs(t, collector);
-                        }
-                    }
-                    ron2::schema::VariantKind::Struct(fields) => {
-                        for f in fields {
-                            collect_type_refs(&f.ty, collector);
-                        }
-                    }
-                    ron2::schema::VariantKind::Unit => {}
-                }
-            }
-        }
-        _ => {}
-    }
+/// The HTML anchor id of a type in single-page output. Unique per type path.
+pub fn type_anchor(type_path: &str) -> String {
+    type_path
+        .split("::")
+        .map(|segment| {
+            segment
+                .chars()
+                .map(|c| match c {
+                    c if c.is_ascii_alphanumeric() || c == '_' => c.to_ascii_lowercase(),
+                    _ => '-',
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
-/// Convert a type path to a markdown file path.
+/// Convert a type path to the Markdown file path of its page.
 ///
 /// Example: `my_crate::config::AppConfig` -> `my_crate/config/AppConfig.md`
 pub fn type_path_to_md_path(type_path: &str) -> String {
@@ -285,7 +202,32 @@ pub fn type_path_to_md_path(type_path: &str) -> String {
 ///
 /// Example: `my_crate::config::AppConfig` -> `AppConfig`
 pub fn type_path_short_name(type_path: &str) -> &str {
-    type_path.split("::").last().unwrap_or(type_path)
+    type_path.rsplit("::").next().unwrap_or(type_path)
+}
+
+/// `my_crate::Wrapper<T>` -> `my_crate::Wrapper`
+fn strip_generics(type_path: &str) -> &str {
+    type_path.split('<').next().unwrap_or(type_path).trim()
+}
+
+/// Whether the `::`-separated segments of `suffix` end `path`.
+fn is_path_suffix(suffix: &str, path: &str) -> bool {
+    path == suffix
+        || path
+            .strip_suffix(suffix)
+            .is_some_and(|prefix| prefix.ends_with("::"))
+}
+
+/// Slugify a path segment the way Astro/Starlight derive routes from file names.
+fn slugify(segment: &str) -> String {
+    segment
+        .chars()
+        .filter_map(|c| match c {
+            c if c.is_alphanumeric() || c == '_' || c == '-' => Some(c.to_ascii_lowercase()),
+            ' ' => Some('-'),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -304,42 +246,50 @@ mod tests {
         }
     }
 
+    fn plain(schemas: &[DiscoveredSchema]) -> LinkResolver<'_> {
+        LinkResolver::new(schemas, None, OutputFormat::Plain)
+    }
+
+    fn type_ref(path: &str) -> TypeKind {
+        TypeKind::TypeRef(path.to_string())
+    }
+
     #[test]
     fn test_link_resolver_primitives() {
         let schemas = vec![make_schema("Config")];
-        let resolver = LinkResolver::new(&schemas, None);
+        let resolver = plain(&schemas);
+        let from = LinkFrom::Index;
 
-        assert_eq!(resolver.type_to_markdown(&TypeKind::Bool), "`bool`");
-        assert_eq!(resolver.type_to_markdown(&TypeKind::String), "`String`");
-        assert_eq!(resolver.type_to_markdown(&TypeKind::I32), "`i32`");
+        assert_eq!(resolver.type_to_markdown(&TypeKind::Bool, from), "`bool`");
+        assert_eq!(
+            resolver.type_to_markdown(&TypeKind::String, from),
+            "`String`"
+        );
+        assert_eq!(resolver.type_to_markdown(&TypeKind::I32, from), "`i32`");
     }
 
     #[test]
     fn test_link_resolver_compound() {
         let schemas = vec![make_schema("Config")];
-        let resolver = LinkResolver::new(&schemas, None);
+        let resolver = plain(&schemas);
+        let from = LinkFrom::Index;
 
         let option_string = TypeKind::Option(Box::new(TypeKind::String));
         assert_eq!(
-            resolver.type_to_markdown(&option_string),
+            resolver.type_to_markdown(&option_string, from),
             "Option<`String`>"
         );
-
         let list_i32 = TypeKind::List(Box::new(TypeKind::I32));
-        assert_eq!(resolver.type_to_markdown(&list_i32), "List<`i32`>");
+        assert_eq!(resolver.type_to_markdown(&list_i32, from), "List<`i32`>");
     }
 
     #[test]
     fn test_link_resolver_typeref_resolves_to_discovered() {
-        // Schema is discovered as "Config" (short path)
-        // but TypeRef uses "my_crate::Config" (full path)
+        // Discovered as "Config" (short path), referenced as "my_crate::Config".
         let schemas = vec![make_schema("Config")];
-        let resolver = LinkResolver::new(&schemas, None);
-
-        let type_ref = TypeKind::TypeRef("my_crate::Config".to_string());
-        // Should resolve to Config.md, not my_crate/Config.md
+        let resolver = plain(&schemas);
         assert_eq!(
-            resolver.type_to_markdown(&type_ref),
+            resolver.type_to_markdown(&type_ref("my_crate::Config"), LinkFrom::Index),
             "[`Config`](./Config.md)"
         );
     }
@@ -347,12 +297,81 @@ mod tests {
     #[test]
     fn test_link_resolver_with_base_url() {
         let schemas = vec![make_schema("Config")];
-        let resolver = LinkResolver::new(&schemas, Some("/docs/types"));
-
-        let type_ref = TypeKind::TypeRef("my_crate::Config".to_string());
+        let resolver = LinkResolver::new(&schemas, Some("/docs/types/"), OutputFormat::Plain);
         assert_eq!(
-            resolver.type_to_markdown(&type_ref),
+            resolver.type_to_markdown(&type_ref("my_crate::Config"), LinkFrom::Type("Config")),
             "[`Config`](/docs/types/Config.md)"
+        );
+    }
+
+    #[test]
+    fn links_between_namespaced_pages_are_relative_to_the_current_page() {
+        let schemas = vec![
+            make_schema("game::GameConfig"),
+            make_schema("game::WindowConfig"),
+            make_schema("game::render::Shader"),
+            make_schema("other::Thing"),
+        ];
+        let resolver = plain(&schemas);
+        let from = LinkFrom::Type("game::GameConfig");
+        assert_eq!(
+            resolver.href("game::WindowConfig", from),
+            "./WindowConfig.md"
+        );
+        assert_eq!(
+            resolver.href("game::render::Shader", from),
+            "./render/Shader.md"
+        );
+        assert_eq!(resolver.href("other::Thing", from), "../other/Thing.md");
+        assert_eq!(
+            resolver.href("game::GameConfig", LinkFrom::Type("game::render::Shader")),
+            "../GameConfig.md"
+        );
+        assert_eq!(
+            resolver.href("game::GameConfig", LinkFrom::Index),
+            "./game/GameConfig.md"
+        );
+    }
+
+    #[test]
+    fn starlight_links_use_routes_without_md_extension() {
+        let schemas = vec![
+            make_schema("game::GameConfig"),
+            make_schema("game::WindowConfig"),
+        ];
+        let resolver = LinkResolver::new(&schemas, None, OutputFormat::Starlight);
+        // Starlight serves game/GameConfig.md at .../game/gameconfig/.
+        assert_eq!(
+            resolver.href("game::WindowConfig", LinkFrom::Type("game::GameConfig")),
+            "../windowconfig/"
+        );
+        assert_eq!(
+            resolver.href("game::WindowConfig", LinkFrom::Index),
+            "./game/windowconfig/"
+        );
+        let with_base = LinkResolver::new(&schemas, Some("/types"), OutputFormat::Starlight);
+        assert_eq!(
+            with_base.href("game::WindowConfig", LinkFrom::Index),
+            "/types/game/windowconfig/"
+        );
+    }
+
+    #[test]
+    fn exact_match_wins_over_short_name() {
+        let schemas = vec![
+            make_schema("crate_a::Config"),
+            make_schema("crate_b::Config"),
+        ];
+        let resolver = plain(&schemas);
+        let resolved = |path: &str| resolver.resolve(path).map(|s| s.type_path.as_str());
+        assert_eq!(resolved("crate_b::Config"), Some("crate_b::Config"));
+        assert_eq!(resolved("crate_a::Config"), Some("crate_a::Config"));
+        // Ambiguous or foreign references do not resolve to an arbitrary type.
+        assert_eq!(resolved("Config"), None);
+        assert_eq!(resolved("crate_c::Config"), None);
+        assert_eq!(
+            resolver.type_to_markdown(&type_ref("crate_c::Config"), LinkFrom::Index),
+            "`Config`"
         );
     }
 
@@ -374,65 +393,35 @@ mod tests {
     }
 
     #[test]
-    fn test_collision_detection_no_collision() {
+    fn test_display_name_with_and_without_collision() {
         let schemas = vec![
             make_schema("crate_a::Config"),
+            make_schema("crate_b::Config"),
             make_schema("crate_b::Server"),
         ];
-        let resolver = LinkResolver::new(&schemas, None);
-
-        assert!(!resolver.has_collision("Config"));
-        assert!(!resolver.has_collision("Server"));
-        assert_eq!(resolver.display_name("crate_a::Config"), "Config");
+        let resolver = plain(&schemas);
+        assert_eq!(resolver.display_name("crate_a::Config"), "crate_a::Config");
         assert_eq!(resolver.display_name("crate_b::Server"), "Server");
     }
 
     #[test]
-    fn test_collision_detection_with_collision() {
-        let schemas = vec![
-            make_schema("crate_a::Config"),
-            make_schema("crate_b::Config"),
-        ];
-        let resolver = LinkResolver::new(&schemas, None);
-
-        assert!(resolver.has_collision("Config"));
-        // When collision exists, display_name returns full path
-        assert_eq!(resolver.display_name("crate_a::Config"), "crate_a::Config");
-        assert_eq!(resolver.display_name("crate_b::Config"), "crate_b::Config");
-    }
-
-    #[test]
-    fn test_type_path_to_anchor() {
+    fn test_type_anchor() {
         assert_eq!(
-            LinkResolver::type_path_to_anchor("my_crate::config::AppConfig"),
+            type_anchor("my_crate::config::AppConfig"),
             "my_crate-config-appconfig"
         );
-        assert_eq!(LinkResolver::type_path_to_anchor("Config"), "config");
+        assert_eq!(type_anchor("Config"), "config");
     }
 
     #[test]
-    fn test_type_to_markdown_anchor() {
-        let schemas = vec![make_schema("Config")];
-        let resolver = LinkResolver::new(&schemas, None);
-
-        let type_ref = TypeKind::TypeRef("Config".to_string());
-        assert_eq!(
-            resolver.type_to_markdown_anchor(&type_ref),
-            "[`Config`](#config)"
-        );
-    }
-
-    #[test]
-    fn test_type_to_markdown_anchor_with_collision() {
+    fn test_same_page_links_use_anchors() {
         let schemas = vec![
             make_schema("crate_a::Config"),
             make_schema("crate_b::Config"),
         ];
-        let resolver = LinkResolver::new(&schemas, None);
-
-        let type_ref = TypeKind::TypeRef("crate_a::Config".to_string());
+        let resolver = plain(&schemas);
         assert_eq!(
-            resolver.type_to_markdown_anchor(&type_ref),
+            resolver.type_to_markdown(&type_ref("crate_a::Config"), LinkFrom::SamePage),
             "[`crate_a::Config`](#crate_a-config)"
         );
     }
