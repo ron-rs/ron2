@@ -68,15 +68,6 @@ pub fn to_value(doc: &Document<'_>) -> Option<Result<Value>> {
 /// instead of cloning them.
 ///
 /// Returns `None` if the document has no value (empty document or comments only).
-///
-/// # Example
-///
-/// ```
-/// use ron2::ast::{parse_document, into_value};
-///
-/// let doc = parse_document("\"hello\"").unwrap();
-/// let value = into_value(doc).unwrap();
-/// ```
 pub fn into_value(doc: Document<'_>) -> Option<Result<Value>> {
     doc.value.map(expr_into_value)
 }
@@ -160,26 +151,21 @@ fn parse_integer(raw: &str) -> Result<Value> {
     }
 }
 
+/// Fit a signed value into the smallest Number variant, falling back to `I128`.
+#[cfg(feature = "integer128")]
+#[allow(clippy::unnecessary_wraps)] // same signature as the non-integer128 variant
+fn fit_signed(val: i128, _raw: &str) -> Result<Value> {
+    Ok(i64::try_from(val).map_or(Value::Number(Number::I128(val)), fit_signed_64))
+}
+
 /// Fit a signed value into the smallest Number variant.
 ///
-/// Returns an error if the value is outside the representable range
-/// (i64 range when `integer128` feature is disabled).
-fn fit_signed(val: i128, #[allow(unused_variables)] raw: &str) -> Result<Value> {
-    #[cfg(feature = "integer128")]
-    {
-        if let Ok(v) = i64::try_from(val) {
-            return Ok(fit_signed_64(v));
-        } else {
-            return Ok(Value::Number(Number::I128(val)));
-        }
-    }
-
-    #[cfg(not(feature = "integer128"))]
-    {
-        i64::try_from(val)
-            .map(fit_signed_64)
-            .map_err(|_| Error::integer_out_of_bounds(raw.to_string(), "i64"))
-    }
+/// Returns an error if the value is outside the `i64` range.
+#[cfg(not(feature = "integer128"))]
+fn fit_signed(val: i128, raw: &str) -> Result<Value> {
+    i64::try_from(val)
+        .map(fit_signed_64)
+        .map_err(|_| Error::integer_out_of_bounds(raw.to_string(), "i64"))
 }
 
 fn fit_signed_64(val: i64) -> Value {
@@ -194,26 +180,21 @@ fn fit_signed_64(val: i64) -> Value {
     }
 }
 
+/// Fit an unsigned value into the smallest Number variant, falling back to `U128`.
+#[cfg(feature = "integer128")]
+#[allow(clippy::unnecessary_wraps)] // same signature as the non-integer128 variant
+fn fit_unsigned(val: u128, _raw: &str) -> Result<Value> {
+    Ok(u64::try_from(val).map_or(Value::Number(Number::U128(val)), fit_unsigned_64))
+}
+
 /// Fit an unsigned value into the smallest Number variant.
 ///
-/// Returns an error if the value is outside the representable range
-/// (u64 range when `integer128` feature is disabled).
-fn fit_unsigned(val: u128, #[allow(unused_variables)] raw: &str) -> Result<Value> {
-    #[cfg(feature = "integer128")]
-    {
-        if let Ok(v) = u64::try_from(val) {
-            return Ok(fit_unsigned_64(v));
-        } else {
-            return Ok(Value::Number(Number::U128(val)));
-        }
-    }
-
-    #[cfg(not(feature = "integer128"))]
-    {
-        u64::try_from(val)
-            .map(fit_unsigned_64)
-            .map_err(|_| Error::integer_out_of_bounds(raw.to_string(), "u64"))
-    }
+/// Returns an error if the value is outside the `u64` range.
+#[cfg(not(feature = "integer128"))]
+fn fit_unsigned(val: u128, raw: &str) -> Result<Value> {
+    u64::try_from(val)
+        .map(fit_unsigned_64)
+        .map_err(|_| Error::integer_out_of_bounds(raw.to_string(), "u64"))
 }
 
 fn fit_unsigned_64(val: u64) -> Value {
@@ -872,15 +853,15 @@ pub fn synthetic_tuple(elements: Vec<Expr<'static>>) -> Expr<'static> {
 /// # Example
 ///
 /// ```
-/// use ron2::ast::{synthetic_struct, synthetic_integer};
+/// use ron2::{ToRon, ast::synthetic_struct, fmt::{FormatConfig, format_expr}};
 /// use std::borrow::Cow;
 ///
 /// let fields = vec![
-///     (Cow::Borrowed("x"), synthetic_integer(10i32)),
-///     (Cow::Borrowed("y"), synthetic_integer(20i32)),
+///     (Cow::Borrowed("x"), 10i32.to_ast().unwrap()),
+///     (Cow::Borrowed("y"), 20i32.to_ast().unwrap()),
 /// ];
 /// let expr = synthetic_struct("Point", fields);
-/// // Results in: Point(x: 10, y: 20)
+/// assert_eq!(format_expr(&expr, &FormatConfig::minimal()), "Point(x:10,y:20)");
 /// ```
 #[must_use]
 pub fn synthetic_struct(
@@ -929,14 +910,11 @@ pub fn synthetic_struct(
 /// # Example
 ///
 /// ```
-/// use ron2::ast::{synthetic_named_tuple, synthetic_integer};
+/// use ron2::{ToRon, ast::synthetic_named_tuple, fmt::{FormatConfig, format_expr}};
 ///
-/// let elements = vec![
-///     synthetic_integer(10i32),
-///     synthetic_integer(20i32),
-/// ];
+/// let elements = vec![10i32.to_ast().unwrap(), 20i32.to_ast().unwrap()];
 /// let expr = synthetic_named_tuple("Point", elements);
-/// // Results in: Point(10, 20)
+/// assert_eq!(format_expr(&expr, &FormatConfig::minimal()), "Point(10,20)");
 /// ```
 #[must_use]
 pub fn synthetic_named_tuple(

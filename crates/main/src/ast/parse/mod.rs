@@ -194,14 +194,21 @@ mod tests {
     fn parse_empty_document() {
         let doc = parse_document("").unwrap();
         assert!(doc.value.is_none());
-        assert!(doc.attributes.is_empty());
+        assert!(
+            doc.attributes.is_empty(),
+            "unexpected attributes: {:?}",
+            doc.attributes
+        );
     }
 
     #[test]
     fn parse_comment_only_document() {
         let doc = parse_document("// just a comment\n").unwrap();
         assert!(doc.value.is_none());
-        assert!(!doc.leading.comments.is_empty());
+        assert!(
+            !doc.leading.comments.is_empty(),
+            "expected leading comments"
+        );
     }
 
     #[test]
@@ -290,7 +297,10 @@ mod tests {
     fn parse_preserves_trivia() {
         let source = "// header comment\n42 // inline comment";
         let doc = parse_document(source).unwrap();
-        assert!(!doc.leading.comments.is_empty());
+        assert!(
+            !doc.leading.comments.is_empty(),
+            "expected leading comments"
+        );
     }
 
     // =========================================================================
@@ -511,11 +521,11 @@ mod tests {
         // "y: 2" in tuple context will cause a colon error.
         let (doc, errors) = parse_document_lossy("(123, y: 2)");
         // Errors occur because "y: 2" looks like a map entry in tuple context
-        assert!(!errors.is_empty());
+        assert!(!errors.is_empty(), "expected parse errors");
         match &doc.value {
             Some(Expr::Tuple(t)) => {
                 // First element is the number, second involves recovery
-                assert!(!t.elements.is_empty());
+                assert!(!t.elements.is_empty(), "expected tuple elements");
             }
             _ => panic!("expected tuple, got {:?}", doc.value),
         }
@@ -526,11 +536,11 @@ mod tests {
         // @ is not an identifier, so parser can't know it's meant to be a field.
         // It parses as a tuple with error elements.
         let (doc, errors) = parse_document_lossy("(@: 1, y: 2)");
-        assert!(!errors.is_empty());
+        assert!(!errors.is_empty(), "expected parse errors");
         match &doc.value {
             Some(Expr::Tuple(t)) => {
                 // Contains error expressions for invalid tokens
-                assert!(!t.elements.is_empty());
+                assert!(!t.elements.is_empty(), "expected tuple elements");
             }
             _ => panic!("expected tuple, got {:?}", doc.value),
         }
@@ -541,7 +551,7 @@ mod tests {
         // Start with a valid field so parser knows it's a struct,
         // then encounter an invalid token where a field name is expected.
         let (doc, errors) = parse_document_lossy("(x: 1, @: 2, y: 3)");
-        assert!(!errors.is_empty());
+        assert!(!errors.is_empty(), "expected parse errors");
         match &doc.value {
             Some(Expr::AnonStruct(s)) => {
                 // Should have 3 fields: x, placeholder for @, and y
@@ -604,7 +614,7 @@ mod tests {
     #[test]
     fn lossy_valid_document_no_errors() {
         let (doc, errors) = parse_document_lossy("(x: 1, y: 2)");
-        assert!(errors.is_empty());
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         match &doc.value {
             Some(Expr::AnonStruct(s)) => {
                 assert_eq!(s.fields.len(), 2);

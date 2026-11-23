@@ -25,8 +25,9 @@ pub const MAX_FIELDS: usize = 64;
 /// # Example
 ///
 /// ```
-/// use ron2::{AstMapAccess, FromRon};
+/// use ron2::FromRon;
 /// use ron2::ast::Expr;
+/// use ron2::convert::AstMapAccess;
 /// use ron2::error::Result;
 ///
 /// // Manually implementing FromRon for a struct
@@ -42,10 +43,14 @@ pub const MAX_FIELDS: usize = 64;
 ///                 access.deny_unknown_fields(&["x", "y"])?;
 ///                 Ok(Point { x, y })
 ///             }
-///             _ => Err(ron2::Error::expected("struct", expr.span()))
+///             _ => Err(ron2::Error::expected("struct", *expr.span()))
 ///         }
 ///     }
 /// }
+///
+/// let point = Point::from_ron("(x: 1, y: 2)").unwrap();
+/// assert_eq!((point.x, point.y), (1, 2));
+/// assert!(Point::from_ron("(x: 1, y: 2, z: 3)").is_err());
 /// ```
 #[derive(Debug)]
 pub struct AstMapAccess<'a> {

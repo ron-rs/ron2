@@ -11,15 +11,15 @@
 //! # Example
 //!
 //! ```
-//! use ron2::fmt::{FormatConfig, Spacing, Compaction};
+//! use ron2::fmt::{FormatConfig, Spacing};
 //!
 //! // Create a minimal format (no extra whitespace)
 //! let minimal = FormatConfig::minimal();
 //!
 //! // Create a custom format
 //! let custom = FormatConfig::default()
-//!     .spacing(Spacing::Compact)
-//!     .indent("    ");  // 4 spaces
+//!     .spacing(Spacing::None)
+//!     .indent("  ");  // 2 spaces
 //! ```
 
 pub use crate::ast::{

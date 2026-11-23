@@ -209,7 +209,7 @@ mod tests {
         let doc = parse_document("[]").unwrap();
         match doc.value {
             Some(Expr::Seq(seq)) => {
-                assert!(seq.items.is_empty());
+                assert!(seq.items.is_empty(), "unexpected items: {:?}", seq.items);
             }
             _ => panic!("expected seq"),
         }

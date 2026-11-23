@@ -70,31 +70,26 @@ impl Map {
     }
 
     /// Iterate all key-value pairs.
-    #[must_use]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&Value, &Value)> {
         self.0.iter()
     }
 
     /// Iterate all key-value pairs mutably.
-    #[must_use]
     pub fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = (&Value, &mut Value)> {
         self.0.iter_mut()
     }
 
     /// Iterate all keys.
-    #[must_use]
     pub fn keys(&self) -> impl DoubleEndedIterator<Item = &Value> {
         self.0.keys()
     }
 
     /// Iterate all values.
-    #[must_use]
     pub fn values(&self) -> impl DoubleEndedIterator<Item = &Value> {
         self.0.values()
     }
 
     /// Iterate all values mutably.
-    #[must_use]
     pub fn values_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut Value> {
         self.0.values_mut()
     }

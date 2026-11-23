@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust
-//! use crate::schema::{RonSchema, RonList, TypeKind};
+//! use ron2::schema::{RonSchema, RonList, TypeKind};
 //!
 //! // A custom list type
 //! struct MyVec<T>(Vec<T>);
@@ -60,7 +60,7 @@ use crate::schema::{Schema, TypeKind, collect::SchemaEntry};
 /// implement this trait manually:
 ///
 /// ```rust
-/// use crate::schema::{RonSchema, TypeKind};
+/// use ron2::schema::{RonSchema, TypeKind};
 ///
 /// struct UserId(u64);
 ///
@@ -154,7 +154,7 @@ pub trait RonSchema {
 /// # Example
 ///
 /// ```rust
-/// use crate::schema::{RonSchema, RonList, TypeKind};
+/// use ron2::schema::{RonSchema, RonList, TypeKind};
 ///
 /// struct SortedVec<T>(Vec<T>);
 ///
@@ -188,7 +188,7 @@ pub trait RonList: RonSchema {
 /// # Example
 ///
 /// ```rust
-/// use crate::schema::{RonSchema, RonMap, TypeKind};
+/// use ron2::schema::{RonSchema, RonMap, TypeKind};
 /// use std::collections::BTreeMap;
 ///
 /// struct OrderedMap<K, V>(BTreeMap<K, V>);

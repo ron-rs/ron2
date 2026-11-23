@@ -261,10 +261,8 @@ impl VariantAttrs {
                         result.skip = true;
                     }
                 }
-                Meta::NameValue(nv) => {
-                    if nv.path.is_ident("rename") {
-                        result.rename = Some(get_lit_str(&nv.value)?);
-                    }
+                Meta::NameValue(nv) if nv.path.is_ident("rename") => {
+                    result.rename = Some(get_lit_str(&nv.value)?);
                 }
                 _ => {}
             }

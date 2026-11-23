@@ -192,8 +192,8 @@ impl<T> Spanned<T> {
     /// use ron2::{Spanned, error::{Span, Position}};
     ///
     /// let span = Span {
-    ///     start: Position { line: 1, column: 1 },
-    ///     end: Position { line: 1, column: 5 },
+    ///     start: Position { line: 1, col: 1 },
+    ///     end: Position { line: 1, col: 5 },
     ///     start_offset: 0,
     ///     end_offset: 4,
     /// };
@@ -214,8 +214,8 @@ impl<T> Spanned<T> {
     /// ```
     /// # use ron2::{Spanned, error::{Span, Position}};
     /// # let span = Span {
-    /// #     start: Position { line: 1, column: 1 },
-    /// #     end: Position { line: 1, column: 5 },
+    /// #     start: Position { line: 1, col: 1 },
+    /// #     end: Position { line: 1, col: 5 },
     /// #     start_offset: 0,
     /// #     end_offset: 4,
     /// # };
@@ -236,8 +236,8 @@ impl<T> Spanned<T> {
     /// ```
     /// # use ron2::{Spanned, error::{Span, Position}};
     /// # let span = Span {
-    /// #     start: Position { line: 1, column: 1 },
-    /// #     end: Position { line: 1, column: 5 },
+    /// #     start: Position { line: 1, col: 1 },
+    /// #     end: Position { line: 1, col: 5 },
     /// #     start_offset: 0,
     /// #     end_offset: 4,
     /// # };
@@ -256,8 +256,8 @@ impl<T> Spanned<T> {
     /// ```
     /// # use ron2::{Spanned, error::{Span, Position}};
     /// # let span = Span {
-    /// #     start: Position { line: 1, column: 1 },
-    /// #     end: Position { line: 1, column: 5 },
+    /// #     start: Position { line: 1, col: 1 },
+    /// #     end: Position { line: 1, col: 5 },
     /// #     start_offset: 0,
     /// #     end_offset: 4,
     /// # };
@@ -276,8 +276,8 @@ impl<T> Spanned<T> {
     /// ```
     /// # use ron2::{Spanned, error::{Span, Position}};
     /// # let span = Span {
-    /// #     start: Position { line: 1, column: 1 },
-    /// #     end: Position { line: 1, column: 5 },
+    /// #     start: Position { line: 1, col: 1 },
+    /// #     end: Position { line: 1, col: 5 },
     /// #     start_offset: 0,
     /// #     end_offset: 4,
     /// # };
@@ -303,8 +303,8 @@ impl<T> Spanned<T> {
     /// ```
     /// # use ron2::{Spanned, error::{Span, Position}};
     /// # let span = Span {
-    /// #     start: Position { line: 1, column: 1 },
-    /// #     end: Position { line: 1, column: 5 },
+    /// #     start: Position { line: 1, col: 1 },
+    /// #     end: Position { line: 1, col: 5 },
     /// #     start_offset: 0,
     /// #     end_offset: 4,
     /// # };
@@ -329,8 +329,8 @@ impl<T> Spanned<T> {
     /// ```
     /// # use ron2::{Spanned, error::{Span, Position}};
     /// # let span = Span {
-    /// #     start: Position { line: 1, column: 1 },
-    /// #     end: Position { line: 1, column: 5 },
+    /// #     start: Position { line: 1, col: 1 },
+    /// #     end: Position { line: 1, col: 5 },
     /// #     start_offset: 0,
     /// #     end_offset: 4,
     /// # };

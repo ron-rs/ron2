@@ -27,7 +27,7 @@ use crate::{
 ///
 /// ```rust
 /// use std::collections::HashMap;
-/// use crate::schema::{Schema, SchemaResolver};
+/// use ron2::schema::{Schema, SchemaResolver};
 ///
 /// struct MyResolver {
 ///     schemas: HashMap<String, Schema>,
@@ -175,7 +175,17 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
 /// # Example
 ///
 /// ```rust
-/// use crate::schema::{Schema, TypeKind, Field, StorageResolver, validate_with_resolver};
+/// use ron2::Value;
+/// use ron2::schema::{Field, Schema, SchemaResolver, TypeKind, validate_with_resolver};
+///
+/// // Resolves "my::Type" to an `i32` schema; unknown paths accept any value.
+/// struct MyResolver;
+///
+/// impl SchemaResolver for MyResolver {
+///     fn resolve(&self, type_path: &str) -> Option<Schema> {
+///         (type_path == "my::Type").then(|| Schema::new(TypeKind::I32))
+///     }
+/// }
 ///
 /// let schema = Schema::new(TypeKind::Struct {
 ///     fields: vec![
@@ -183,11 +193,11 @@ pub fn validate_type(value: &Value, kind: &TypeKind) -> Result<()> {
 ///     ],
 /// });
 ///
-/// let resolver = StorageResolver::new();
-/// let value = "(data: 42)".parse::<Value>().unwrap();
+/// let valid = "(data: 42)".parse::<Value>().unwrap();
+/// assert!(validate_with_resolver(&valid, &schema, &MyResolver).is_ok());
 ///
-/// // If "my::Type" schema is not found, accepts any value for 'data'
-/// let result = validate_with_resolver(&value, &schema, &resolver);
+/// let invalid = "(data: \"text\")".parse::<Value>().unwrap();
+/// assert!(validate_with_resolver(&invalid, &schema, &MyResolver).is_err());
 /// ```
 pub fn validate_with_resolver<R: SchemaResolver>(
     value: &Value,
@@ -610,12 +620,7 @@ fn resolve_flattened_kind<R: SchemaResolver>(
                 if !seen_refs.insert(path.clone()) {
                     return None;
                 }
-                match ctx.resolver.resolve(&path) {
-                    Some(schema) => {
-                        current = schema.kind;
-                    }
-                    None => return None,
-                }
+                current = ctx.resolver.resolve(&path)?.kind;
             }
             _ => return Some((current, presence_based)),
         }

@@ -6,14 +6,18 @@
 //! # Example
 //!
 //! ```
-//! use ron2::{ToRon, FromRon, Value};
+//! use ron2::{ToRon, FromRon, fmt::FormatConfig};
 //!
-//! // Serialize to RON
+//! // Serialize to RON (root collections are pretty-printed multiline by default)
 //! let numbers = vec![1, 2, 3];
 //! let ron_string = numbers.to_ron().unwrap();
-//! assert_eq!(ron_string, "[1,2,3]");
+//! assert_eq!(ron_string, "[\n    1,\n    2,\n    3,\n]");
 //!
-//! // Deserialize from RON (now returns SpannedResult for precise error locations)
+//! // Serialize without any extra whitespace
+//! let minimal = numbers.to_ron_with(&FormatConfig::minimal()).unwrap();
+//! assert_eq!(minimal, "[1,2,3]");
+//!
+//! // Deserialize from RON (errors carry spans for precise locations)
 //! let parsed: Vec<i32> = Vec::from_ron("[1, 2, 3]").unwrap();
 //! assert_eq!(parsed, vec![1, 2, 3]);
 //! ```

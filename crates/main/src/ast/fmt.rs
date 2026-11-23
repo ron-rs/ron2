@@ -396,35 +396,12 @@ pub fn format_expr(expr: &Expr<'_>, config: &FormatConfig) -> String {
 ///
 /// This is a convenience function for quick serialization. For custom formatting
 /// options, use [`to_ron_string_with`].
-///
-/// # Example
-///
-/// ```
-/// use ron2::ast::to_ron_string;
-/// use ron2::Value;
-///
-/// let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
-/// let ron = to_ron_string(&value);
-/// // Output will be formatted with default settings
-/// ```
 #[must_use]
 pub fn to_ron_string<T: SerializeRon>(value: &T) -> String {
     to_ron_string_with(value, &FormatConfig::default())
 }
 
 /// Serialize any `SerializeRon` type to a RON string with custom configuration.
-///
-/// # Example
-///
-/// ```
-/// use ron2::fmt::FormatConfig;
-/// use ron2::ast::to_ron_string_with;
-/// use ron2::Value;
-///
-/// let value = Value::Seq(vec![Value::Number(1.into()), Value::Number(2.into())]);
-/// let ron = to_ron_string_with(&value, &FormatConfig::minimal());
-/// assert_eq!(ron, "[1,2]");
-/// ```
 #[must_use]
 pub fn to_ron_string_with<T: SerializeRon>(value: &T, config: &FormatConfig) -> String {
     let mut formatter = RonFormatter::new(config);
@@ -1801,7 +1778,10 @@ mod tests {
     fn test_compact_types_arrays() {
         let config = FormatConfig::new()
             .char_limit(5) // Would normally expand due to length
-            .compact_types(CompactTypes { arrays: true, ..Default::default() });
+            .compact_types(CompactTypes {
+                arrays: true,
+                ..Default::default()
+            });
         let source = "Config(items: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])";
         let formatted = format_with(source, &config);
         // Arrays should be compact despite exceeding char limit

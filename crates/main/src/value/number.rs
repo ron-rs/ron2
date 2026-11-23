@@ -248,6 +248,6 @@ mod tests {
     fn test_partial_ord() {
         assert!(F32(f32::NAN) > F32(f32::INFINITY));
         assert!(F32(-f32::NAN) < F32(f32::NEG_INFINITY));
-        assert!(F32(f32::NAN) == F32(f32::NAN));
+        assert_eq!(F32(f32::NAN), F32(f32::NAN));
     }
 }
