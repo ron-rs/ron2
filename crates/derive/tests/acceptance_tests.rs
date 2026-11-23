@@ -130,13 +130,6 @@ mod container_rename_all {
         assert_eq!(original, parsed);
     }
 
-    #[test]
-    #[ignore = "kebab-case removed - creates invalid RON identifiers"]
-    fn kebab_case_not_supported() {
-        // kebab-case creates identifiers like "user-name" which cannot be parsed
-        // as valid RON identifiers (the dash is interpreted as subtraction operator)
-    }
-
     #[derive(Debug, Ron, PartialEq)]
     #[ron(rename_all = "lowercase")]
     struct LowerConfig {
@@ -149,7 +142,10 @@ mod container_rename_all {
             user_name: "test".to_string(),
         };
         let ron = original.to_ron().unwrap();
-        assert!(ron.contains("username"));
+        assert!(
+            ron.contains("user_name"),
+            "lowercase keeps underscores: {ron}"
+        );
         let parsed: LowerConfig = LowerConfig::from_ron(&ron).unwrap();
         assert_eq!(original, parsed);
     }
@@ -166,7 +162,10 @@ mod container_rename_all {
             user_name: "test".to_string(),
         };
         let ron = original.to_ron().unwrap();
-        assert!(ron.contains("USERNAME"));
+        assert!(
+            ron.contains("USER_NAME"),
+            "UPPERCASE keeps underscores: {ron}"
+        );
         let parsed: UpperConfig = UpperConfig::from_ron(&ron).unwrap();
         assert_eq!(original, parsed);
     }
@@ -1389,17 +1388,25 @@ mod variant_rename {
 // =============================================================================
 
 mod variant_skip {
-    // Variant skip currently causes compilation errors with exhaustiveness checking
-    // This is expected behavior - skipped variants should not be used
+    use super::*;
+
+    #[derive(Debug, Ron, PartialEq)]
+    enum Mode {
+        Active,
+        #[ron(skip)]
+        Legacy,
+    }
+
     #[test]
-    #[ignore = "Variant skip causes exhaustiveness check failures - by design"]
-    fn variant_skip_compile_test() {
-        // This test documents that #[ron(skip)] on variants is primarily
-        // for preventing serialization/deserialization, but causes compile errors
-        // in exhaustive match contexts. This is the expected behavior.
-        //
-        // Use case: Mark deprecated variants that shouldn't be used anymore
-        // but can't be removed due to compatibility.
+    fn skipped_variant_is_not_deserialized() {
+        assert_eq!(Mode::from_ron("Active").unwrap(), Mode::Active);
+        assert!(Mode::from_ron("Legacy").is_err());
+    }
+
+    #[test]
+    fn serializing_skipped_variant_is_an_error() {
+        assert!(Mode::Active.to_ron().is_ok());
+        assert!(Mode::Legacy.to_ron().is_err());
     }
 }
 

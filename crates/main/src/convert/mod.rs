@@ -239,8 +239,91 @@ pub trait FromRon: Sized {
 /// # Ok::<(), ron2::Error>(())
 /// ```
 pub trait FromRonFields: Sized {
+    /// Whether this type takes every field nobody else claimed (maps).
+    ///
+    /// Derived structs read catch-all flattened fields last, so that named
+    /// fields get their keys regardless of declaration order.
+    const CATCH_ALL: bool = false;
+
     /// Consume fields from an existing map access to construct this type.
     fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self>;
+
+    /// Appends the RON field names this type reads to `names`.
+    ///
+    /// Used to list every accepted field when a parent with
+    /// `#[ron(deny_unknown_fields)]` rejects an unknown one, and to decide
+    /// whether a flattened `Option<Self>` is present. Types that accept
+    /// arbitrary fields (such as maps) add nothing.
+    fn field_names(_names: &mut Vec<&'static str>) {}
+}
+
+/// The fields of a struct, in the form [`ToRonFields::to_fields`] appends to.
+pub type StructFieldList = Vec<(Cow<'static, str>, Expr<'static>)>;
+
+/// Trait for types that can be serialized as a list of struct fields.
+///
+/// This is the serialization counterpart of [`FromRonFields`], used by
+/// `#[ron(flatten)]`: the flattened value appends its fields to the parent's
+/// field list. The `ToRon` derive implements it for named structs.
+pub trait ToRonFields {
+    /// Whether this type holds arbitrary extra fields (maps). Derived structs
+    /// write these after all other fields.
+    const CATCH_ALL: bool = false;
+
+    /// Append this value's fields to `fields`.
+    fn to_fields(&self, fields: &mut StructFieldList) -> Result<()>;
+}
+
+impl<T: ToRonFields> ToRonFields for Option<T> {
+    const CATCH_ALL: bool = T::CATCH_ALL;
+
+    fn to_fields(&self, fields: &mut StructFieldList) -> Result<()> {
+        match self {
+            Some(value) => value.to_fields(fields),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Append map entries as fields; keys must serialize to strings.
+fn map_to_fields<'m, K: ToRon + 'm, V: ToRon + 'm>(
+    entries: impl ExactSizeIterator<Item = (&'m K, &'m V)>,
+    fields: &mut StructFieldList,
+) -> Result<()> {
+    fields.reserve(entries.len());
+    for (key, value) in entries {
+        let Expr::String(key) = key.to_ast()? else {
+            return Err(Error::new(ErrorKind::Message(
+                "flattened map keys must serialize to strings".into(),
+            )));
+        };
+        fields.push((Cow::Owned(key.value), value.to_ast()?));
+    }
+    Ok(())
+}
+
+impl<K: ToRon, V: ToRon, S> ToRonFields for std::collections::HashMap<K, V, S> {
+    const CATCH_ALL: bool = true;
+
+    fn to_fields(&self, fields: &mut StructFieldList) -> Result<()> {
+        map_to_fields(self.iter(), fields)
+    }
+}
+
+impl<K: ToRon, V: ToRon> ToRonFields for alloc::collections::BTreeMap<K, V> {
+    const CATCH_ALL: bool = true;
+
+    fn to_fields(&self, fields: &mut StructFieldList) -> Result<()> {
+        map_to_fields(self.iter(), fields)
+    }
+}
+
+impl<K: ToRon, V: ToRon, S> ToRonFields for indexmap::IndexMap<K, V, S> {
+    const CATCH_ALL: bool = true;
+
+    fn to_fields(&self, fields: &mut StructFieldList) -> Result<()> {
+        map_to_fields(self.iter(), fields)
+    }
 }
 
 // =============================================================================

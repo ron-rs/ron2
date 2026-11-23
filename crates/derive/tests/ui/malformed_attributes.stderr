@@ -1,0 +1,29 @@
+error: duplicate ron attribute `rename`
+ --> tests/ui/malformed_attributes.rs:3:25
+  |
+3 |     #[ron(rename = "a", rename = "b")]
+  |                         ^^^^^^^^^^^^
+
+error: ron attribute `skip` does not take a value
+ --> tests/ui/malformed_attributes.rs:5:11
+  |
+5 |     #[ron(skip = true)]
+  |           ^^^^
+
+error: expected string literal
+ --> tests/ui/malformed_attributes.rs:7:20
+  |
+7 |     #[ron(rename = c)]
+  |                    ^
+
+error: unknown rename rule `kebab-case`, expected one of: camelCase, snake_case, PascalCase, SCREAMING_SNAKE_CASE, lowercase, UPPERCASE
+  --> tests/ui/malformed_attributes.rs:12:20
+   |
+12 | #[ron(rename_all = "kebab-case")]
+   |                    ^^^^^^^^^^^^
+
+error: `user-name` is not a valid RON identifier
+  --> tests/ui/malformed_attributes.rs:19:11
+   |
+19 |     #[ron(rename = "user-name")]
+   |           ^^^^^^

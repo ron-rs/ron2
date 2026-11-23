@@ -1,0 +1,29 @@
+error: #[ron(skip_serializing_if)] cannot be combined with #[ron(opt)]
+ --> tests/ui/attribute_conflicts.rs:7:16
+  |
+7 |     #[ron(opt, skip_serializing_if = "always")]
+  |                ^^^^^^^^^^^^^^^^^^^
+
+error: #[ron(rename)] cannot be combined with #[ron(flatten)]
+ --> tests/ui/attribute_conflicts.rs:9:20
+  |
+9 |     #[ron(flatten, rename = "x")]
+  |                    ^^^^^^
+
+error: #[ron(rename)] cannot be combined with #[ron(skip)]
+  --> tests/ui/attribute_conflicts.rs:11:17
+   |
+11 |     #[ron(skip, rename = "d")]
+   |                 ^^^^^^
+
+error: tuple fields only support #[ron(skip)] and #[ron(skip, default = "..")]
+  --> tests/ui/attribute_conflicts.rs:21:25
+   |
+21 | struct TupleField(#[ron(rename = "a")] u32, #[ron(default)] u32, #[ron(skip)] u32);
+   |                         ^^^^^^
+
+error: #[ron(default)] on a tuple field requires #[ron(skip)]
+  --> tests/ui/attribute_conflicts.rs:21:51
+   |
+21 | struct TupleField(#[ron(rename = "a")] u32, #[ron(default)] u32, #[ron(skip)] u32);
+   |                                                   ^^^^^^^

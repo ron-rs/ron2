@@ -140,7 +140,7 @@ impl<R: SchemaResolver + ?Sized> Walker<'_, R> {
                     Error::with_span(
                         ErrorKind::UnknownField {
                             field: Cow::Owned(name.to_owned()),
-                            expected: &[],
+                            expected: Cow::Borrowed(&[]),
                             outer: None,
                         },
                         ast_field.name.span,

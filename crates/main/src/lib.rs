@@ -94,6 +94,9 @@ pub use crate::{
     value::{Map, NamedContent, Number, StructFields, Value},
 };
 
+#[doc(hidden)]
+pub mod __private;
+
 /// Internal module for benchmarks. Not part of the public API.
 #[doc(hidden)]
 pub mod __internal {

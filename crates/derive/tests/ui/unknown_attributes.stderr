@@ -1,0 +1,17 @@
+error: unknown ron attribute `deny_unknown_field`, expected one of: rename, rename_all, deny_unknown_fields, transparent, bound
+ --> tests/ui/unknown_attributes.rs:2:7
+  |
+2 | #[ron(deny_unknown_field, rename_al = "camelCase")]
+  |       ^^^^^^^^^^^^^^^^^^
+
+error: unknown ron attribute `defualt`, expected one of: rename, skip, skip_serializing, skip_deserializing, skip_serializing_if, default, flatten, explicit, opt
+ --> tests/ui/unknown_attributes.rs:4:11
+  |
+4 |     #[ron(defualt)]
+  |           ^^^^^^^
+
+error: unknown ron attribute `skipp`, expected one of: rename, rename_all, skip
+  --> tests/ui/unknown_attributes.rs:10:11
+   |
+10 |     #[ron(skipp)]
+   |           ^^^^^

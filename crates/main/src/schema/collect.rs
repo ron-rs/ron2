@@ -1,26 +1,12 @@
 //! Collect the schemas of a type and every type it references.
 
-use alloc::{
-    collections::{BTreeMap, VecDeque},
-    sync::Arc,
-};
+use alloc::{collections::BTreeMap, sync::Arc};
 #[cfg(feature = "derive")]
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "derive")]
 use crate::schema::write_schema;
 use crate::schema::{RonSchema, Schema, SchemaError, SchemaResolver, traits::require_type_path};
-
-/// A schema entry for recursive collection.
-#[derive(Clone, Copy, Debug)]
-pub struct SchemaEntry {
-    /// Fully-qualified type path for this schema.
-    pub type_path: &'static str,
-    /// Build the schema for this type.
-    pub schema: fn() -> Schema,
-    /// Direct child schemas referenced by this type.
-    pub children: fn() -> &'static [&'static SchemaEntry],
-}
 
 /// Collected schemas keyed by type path.
 ///
@@ -33,6 +19,22 @@ pub struct SchemaCatalog {
 }
 
 impl SchemaCatalog {
+    /// Add `T`'s schema under its type path.
+    ///
+    /// Returns `false` without doing anything if `T` has no type path or is
+    /// already in the catalog, so that registering recursive types terminates.
+    pub fn insert<T: RonSchema + ?Sized>(&mut self) -> bool {
+        let Some(type_path) = T::type_path() else {
+            return false;
+        };
+        if self.schemas.contains_key(type_path) {
+            return false;
+        }
+        self.schemas
+            .insert(type_path.to_string(), Arc::new(T::schema()));
+        true
+    }
+
     /// Write all schemas in this catalog to disk.
     #[cfg(feature = "derive")]
     pub fn write_all(&self, output_dir: Option<&Path>) -> Result<Vec<PathBuf>, SchemaError> {
@@ -49,30 +51,21 @@ impl SchemaResolver for SchemaCatalog {
     }
 }
 
-/// Collect schemas recursively starting from `T`.
-pub fn collect_schemas<T: RonSchema>() -> Result<SchemaCatalog, SchemaError> {
-    let root = SchemaEntry {
-        type_path: require_type_path::<T>()?,
-        schema: T::schema,
-        children: T::child_schemas,
-    };
-
+/// Collect the schemas of `T` and every type it references.
+///
+/// Fails if `T` has no type path of its own (primitives and standard library
+/// types).
+pub fn collect_schemas<T: RonSchema + ?Sized>() -> Result<SchemaCatalog, SchemaError> {
+    require_type_path::<T>()?;
     let mut catalog = SchemaCatalog::default();
-    let mut queue = VecDeque::from([&root]);
-    while let Some(entry) = queue.pop_front() {
-        if catalog.schemas.contains_key(entry.type_path) {
-            continue;
-        }
-        catalog
-            .schemas
-            .insert(entry.type_path.to_string(), Arc::new((entry.schema)()));
-        queue.extend((entry.children)());
-    }
+    T::register_schemas(&mut catalog);
     Ok(catalog)
 }
 
 /// Collect schemas recursively starting from `T` and write them to `output_dir`.
 #[cfg(feature = "derive")]
-pub fn write_schemas<T: RonSchema>(output_dir: Option<&str>) -> Result<Vec<PathBuf>, SchemaError> {
+pub fn write_schemas<T: RonSchema + ?Sized>(
+    output_dir: Option<&str>,
+) -> Result<Vec<PathBuf>, SchemaError> {
     collect_schemas::<T>()?.write_all(output_dir.map(Path::new))
 }

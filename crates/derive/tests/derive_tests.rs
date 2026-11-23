@@ -192,25 +192,27 @@ fn test_collection_types() {
     }
 }
 
-/// Generic wrapper to validate TypeRef handling for type parameters.
+/// Generic wrapper: type parameters take the kind of the type argument.
 #[derive(RonSchema)]
 struct GenericWrapper<T> {
     value: T,
 }
 
 #[test]
-fn test_generic_param_schema_typeref() {
+fn test_generic_param_schema_uses_argument_kind() {
     let schema = GenericWrapper::<u32>::schema();
-    let expected = "T".to_string();
-
     match &schema.kind {
         TypeKind::Struct { fields } => {
             assert_eq!(fields.len(), 1);
             assert_eq!(fields[0].name, "value");
-            assert_eq!(fields[0].ty, TypeKind::TypeRef(expected));
+            assert_eq!(fields[0].ty, TypeKind::U32);
         }
         _ => panic!("Expected struct type kind"),
     }
+    assert_eq!(
+        GenericWrapper::<u32>::type_path(),
+        Some("derive_tests::GenericWrapper<u32>")
+    );
 }
 
 #[derive(RonSchema)]
@@ -218,24 +220,30 @@ struct Wrapper<T> {
     inner: T,
 }
 
+/// Two instantiations of one generic type are referenced by their own
+/// paths instead of colliding on one.
 #[derive(RonSchema)]
-struct GenericHolder<T> {
-    value: Wrapper<std::vec::Vec<T>>,
+struct TwoInstantiations {
+    small: Wrapper<u8>,
+    text: Wrapper<String>,
 }
 
 #[test]
-fn test_generic_typeref_canonicalizes_std_paths() {
-    let schema = GenericHolder::<u32>::schema();
-    let crate_name = env!("CARGO_CRATE_NAME").replace('-', "_");
-    let expected = format!("{crate_name}::Wrapper<Vec<T>>");
-
-    match &schema.kind {
-        TypeKind::Struct { fields } => {
-            let field = fields.iter().find(|f| f.name == "value").unwrap();
-            assert_eq!(field.ty, TypeKind::TypeRef(expected));
+fn test_generic_instantiations_do_not_collide() {
+    let TypeKind::Struct { fields } = TwoInstantiations::schema().kind else {
+        panic!("Expected struct type kind");
+    };
+    let small = Wrapper::<u8>::type_path().unwrap();
+    let text = Wrapper::<String>::type_path().unwrap();
+    assert_ne!(small, text);
+    assert_eq!(fields[0].ty, TypeKind::TypeRef(small.into()));
+    assert_eq!(fields[1].ty, TypeKind::TypeRef(text.into()));
+    assert_eq!(
+        Wrapper::<String>::type_kind(),
+        TypeKind::Struct {
+            fields: vec![ron2::schema::Field::new("inner", TypeKind::String)],
         }
-        _ => panic!("Expected struct type kind"),
-    }
+    );
 }
 
 /// Unit struct test.

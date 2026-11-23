@@ -237,7 +237,7 @@ impl Error {
     ) -> Self {
         Self::new(ErrorKind::UnknownField {
             field: field.into(),
-            expected,
+            expected: Cow::Borrowed(expected),
             outer: None,
         })
     }
@@ -433,7 +433,7 @@ pub enum ErrorKind {
         /// The name of the unknown field.
         field: Cow<'static, str>,
         /// The list of expected field names.
-        expected: &'static [&'static str],
+        expected: Cow<'static, [&'static str]>,
         /// The containing struct name, if known.
         outer: Option<Cow<'static, str>>,
     },
@@ -768,9 +768,9 @@ impl From<io::Error> for Error {
 
 /// `, expected ...` suffix listing the alternatives. Empty when the
 /// alternatives are unknown (e.g. errors built from a runtime schema).
-struct OneOf(&'static [&'static str]);
+struct OneOf<'a>(&'a [&'static str]);
 
-impl fmt::Display for OneOf {
+impl fmt::Display for OneOf<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             [] => Ok(()),

@@ -1,449 +1,422 @@
-//! Unified attribute parsing for all ron-derive macros.
+//! Parsing of `#[ron(...)]` attributes, shared by all derives.
 //!
-//! This module provides shared attribute parsing for `#[derive(RonSchema)]`,
-//! `#[derive(SerRon)]`, and `#[derive(DeRon)]`. All three derives use the
-//! `#[ron(...)]` attribute namespace.
+//! Unknown keys, repeated keys and malformed values are compile errors. Rules
+//! that depend on more than one attribute live in `ast.rs`.
 
-use syn::{Attribute, Expr, ExprPath, Lit, Meta};
+use proc_macro2::Span;
+use syn::{
+    Attribute, Expr, ExprPath, Lit, LitStr, Token, WherePredicate, meta::ParseNestedMeta,
+    punctuated::Punctuated,
+};
 
-/// Rename strategy for fields/variants.
+/// Rename strategy for `rename_all`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
 pub enum RenameRule {
-    /// camelCase
     CamelCase,
-    /// snake_case
     SnakeCase,
-    /// PascalCase
     PascalCase,
-    /// SCREAMING_SNAKE_CASE
     ScreamingSnakeCase,
-    /// lowercase
     LowerCase,
-    /// UPPERCASE
     UpperCase,
 }
 
 impl RenameRule {
-    /// Parse a rename rule from a string.
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "camelCase" => Some(RenameRule::CamelCase),
-            "snake_case" => Some(RenameRule::SnakeCase),
-            "PascalCase" => Some(RenameRule::PascalCase),
-            "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnakeCase),
-            "lowercase" => Some(RenameRule::LowerCase),
-            "UPPERCASE" => Some(RenameRule::UpperCase),
-            _ => None,
-        }
+    // kebab-case is deliberately absent: `user-name` is not a RON identifier.
+    const ALL: &[(&str, RenameRule)] = &[
+        ("camelCase", RenameRule::CamelCase),
+        ("snake_case", RenameRule::SnakeCase),
+        ("PascalCase", RenameRule::PascalCase),
+        ("SCREAMING_SNAKE_CASE", RenameRule::ScreamingSnakeCase),
+        ("lowercase", RenameRule::LowerCase),
+        ("UPPERCASE", RenameRule::UpperCase),
+    ];
+
+    fn parse(lit: &LitStr) -> syn::Result<Self> {
+        let value = lit.value();
+        Self::ALL
+            .iter()
+            .find(|(name, _)| *name == value)
+            .map(|(_, rule)| *rule)
+            .ok_or_else(|| {
+                let names: Vec<_> = Self::ALL.iter().map(|(name, _)| *name).collect();
+                syn::Error::new(
+                    lit.span(),
+                    format!(
+                        "unknown rename rule `{value}`, expected one of: {}",
+                        names.join(", ")
+                    ),
+                )
+            })
     }
 
-    /// Apply this rename rule to an identifier.
-    pub fn apply(&self, s: &str) -> String {
+    /// Apply this rule to a Rust identifier (field or variant name).
+    pub fn apply(self, ident: &str) -> String {
+        let words = split_words(ident);
         match self {
-            RenameRule::CamelCase => to_camel_case(s),
-            RenameRule::SnakeCase => to_snake_case(s),
-            RenameRule::PascalCase => to_pascal_case(s),
-            RenameRule::ScreamingSnakeCase => to_screaming_snake_case(s),
-            RenameRule::LowerCase => s.replace('_', "").to_lowercase(),
-            RenameRule::UpperCase => s.replace('_', "").to_uppercase(),
-        }
-    }
-}
-
-/// Container-level attributes parsed from `#[ron(...)]`.
-///
-/// # Attributes
-///
-/// - `rename = "..."` - Use a different name in RON
-/// - `rename_all = "..."` - Apply rename rule to all fields/variants
-/// - `deny_unknown_fields` - Error on unknown fields during deserialization
-/// - `transparent` - Serialize/deserialize as the single inner field
-///
-/// # Example
-///
-/// ```ignore
-/// #[derive(FromRon, ToRon)]
-/// #[ron(transparent)]
-/// struct UserId(u64);
-/// ```
-#[derive(Debug, Default)]
-pub struct ContainerAttrs {
-    /// Rename the type in RON output.
-    pub rename: Option<String>,
-    /// Rename all fields using this rule.
-    pub rename_all: Option<RenameRule>,
-    /// Error on unknown fields during deserialization.
-    pub deny_unknown_fields: bool,
-    /// Serialize/deserialize as the single inner field (for newtypes).
-    pub transparent: bool,
-}
-
-impl ContainerAttrs {
-    /// Parse container attributes from a list of attributes.
-    pub fn from_ast(attrs: &[Attribute]) -> syn::Result<Self> {
-        parse_ron_attrs(attrs, |result: &mut Self, meta| {
-            match meta {
-                Meta::Path(path) => {
-                    if path.is_ident("deny_unknown_fields") {
-                        result.deny_unknown_fields = true;
-                    } else if path.is_ident("transparent") {
-                        result.transparent = true;
+            RenameRule::SnakeCase => join_mapped(&words, "_", str::to_lowercase),
+            RenameRule::ScreamingSnakeCase => join_mapped(&words, "_", str::to_uppercase),
+            RenameRule::CamelCase => {
+                let mut out = String::new();
+                for (i, word) in words.iter().enumerate() {
+                    if i == 0 {
+                        out.push_str(&word.to_lowercase());
+                    } else {
+                        out.push_str(&capitalize(word));
                     }
                 }
-                Meta::NameValue(nv) => {
-                    if nv.path.is_ident("rename") {
-                        result.rename = Some(get_lit_str(&nv.value)?);
-                    } else if nv.path.is_ident("rename_all") {
-                        let s = get_lit_str(&nv.value)?;
-                        result.rename_all = RenameRule::from_str(&s);
-                        if result.rename_all.is_none() {
-                            return Err(syn::Error::new_spanned(
-                                &nv.value,
-                                format!("unknown rename rule: {}", s),
-                            ));
-                        }
-                    }
-                }
-                _ => {}
+                out
             }
-            Ok(())
-        })
-    }
-
-    /// Get the effective field name, applying rename_all if set.
-    pub fn rename_field(&self, name: &str) -> String {
-        if let Some(rule) = self.rename_all {
-            rule.apply(name)
-        } else {
-            name.to_string()
+            RenameRule::PascalCase => join_mapped(&words, "", capitalize),
+            RenameRule::LowerCase => ident.to_lowercase(),
+            RenameRule::UpperCase => ident.to_uppercase(),
         }
     }
 }
 
-/// The default value for a field.
-#[derive(Debug, Clone, Default)]
+/// Split an identifier into words at underscores, lower-to-upper transitions
+/// and the end of acronyms (`HTTPServer` → `HTTP`, `Server`).
+fn split_words(ident: &str) -> Vec<&str> {
+    let chars: Vec<(usize, char)> = ident.char_indices().collect();
+    let mut words = Vec::new();
+    let mut start = None;
+    for (i, &(pos, c)) in chars.iter().enumerate() {
+        if c == '_' {
+            if let Some(s) = start.take() {
+                words.push(&ident[s..pos]);
+            }
+            continue;
+        }
+        if let Some(s) = start
+            && c.is_uppercase()
+        {
+            let prev = chars[i - 1].1;
+            let next_is_lower = chars.get(i + 1).is_some_and(|(_, n)| n.is_lowercase());
+            if !prev.is_uppercase() || next_is_lower {
+                words.push(&ident[s..pos]);
+                start = Some(pos);
+            }
+        }
+        start.get_or_insert(pos);
+    }
+    if let Some(s) = start {
+        words.push(&ident[s..]);
+    }
+    words
+}
+
+fn join_mapped(words: &[&str], sep: &str, f: impl Fn(&str) -> String) -> String {
+    words.iter().map(|w| f(w)).collect::<Vec<_>>().join(sep)
+}
+
+/// Uppercase the first character and keep the rest, so `HTTP` stays `HTTP`
+/// and an already PascalCase name is unchanged.
+fn capitalize(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// A value together with the span of the attribute that set it.
+#[derive(Clone)]
+pub struct Spanned<T> {
+    pub value: T,
+    pub span: Span,
+}
+
+/// Where a missing field's value comes from.
+#[derive(Clone)]
 pub enum FieldDefault {
-    /// No default value - field is required.
-    #[default]
-    None,
-    /// Use `Default::default()`.
+    /// `Default::default()`.
     Default,
-    /// Use a custom function path.
+    /// A user function, `default = "path"`.
     Path(ExprPath),
 }
 
-/// Field-level attributes parsed from `#[ron(...)]`.
-///
-/// # Attributes
-///
-/// - `rename = "..."` - Use a different name in RON
-/// - `skip` - Skip this field entirely
-/// - `skip_serializing` - Skip during serialization only
-/// - `skip_deserializing` - Skip during deserialization only
-/// - `skip_serializing_if = "path"` - Skip if predicate returns true
-/// - `default` - Use `Default::default()` if missing
-/// - `default = "path"` - Use custom function if missing
-/// - `flatten` - Flatten nested struct fields into parent
-/// - `explicit` - Require explicit `Some(...)` or `None` for Option fields
-/// - `opt` - Shorthand for `default` + skip when value equals default
-///
-/// # Implicit Some (Default Behavior)
-///
-/// By default, `Option<T>` fields accept bare values:
-/// ```ron
-/// (name: "Alice")  // name: Option<String> becomes Some("Alice")
-/// ```
-///
-/// Use `#[ron(explicit)]` to require explicit syntax:
-/// ```ignore
-/// #[ron(explicit)]
-/// flags: Option<bool>,  // Must be Some(true), Some(false), or None
-/// ```
-#[derive(Debug, Clone, Default)]
-pub struct FieldAttrs {
-    /// Rename this field in RON.
-    pub rename: Option<String>,
-    /// Skip this field entirely (both ser and de).
-    pub skip: bool,
-    /// Skip this field during serialization.
-    pub skip_serializing: bool,
-    /// Skip this field during deserialization (use default).
-    pub skip_deserializing: bool,
-    /// Skip serializing if predicate returns true.
-    pub skip_serializing_if: Option<ExprPath>,
-    /// Default value for deserialization.
-    pub default: FieldDefault,
-    /// Flatten nested struct fields into parent.
-    pub flatten: bool,
-    /// Require explicit `Some(...)` or `None` syntax for Option fields.
-    pub explicit: bool,
-    /// Shorthand for `default` + skip when value equals default (requires Default + PartialEq).
-    pub opt: bool,
+/// Attributes on a struct or enum.
+#[derive(Default)]
+pub struct ContainerAttrs {
+    pub rename: Option<Spanned<String>>,
+    pub rename_all: Option<Spanned<RenameRule>>,
+    pub deny_unknown_fields: Option<Span>,
+    pub transparent: Option<Span>,
+    /// `bound = ".."` or `bound(ser = "..", de = "..", schema = "..")`:
+    /// replaces the inferred where-clause predicates.
+    pub bound: Bounds,
 }
 
-impl FieldAttrs {
-    /// Parse field attributes from a list of attributes.
-    pub fn from_ast(attrs: &[Attribute]) -> syn::Result<Self> {
-        parse_ron_attrs(attrs, |result: &mut Self, meta| {
-            match meta {
-                Meta::Path(path) => {
-                    if path.is_ident("skip") {
-                        result.skip = true;
-                    } else if path.is_ident("skip_serializing") {
-                        result.skip_serializing = true;
-                    } else if path.is_ident("skip_deserializing") {
-                        result.skip_deserializing = true;
-                    } else if path.is_ident("default") {
-                        result.default = FieldDefault::Default;
-                    } else if path.is_ident("flatten") {
-                        result.flatten = true;
-                    } else if path.is_ident("explicit") {
-                        result.explicit = true;
-                    } else if path.is_ident("opt") {
-                        result.opt = true;
-                    }
+/// Where-clause overrides; a derive without one infers its bounds.
+#[derive(Default)]
+pub struct Bounds {
+    pub ser: Option<Vec<WherePredicate>>,
+    pub de: Option<Vec<WherePredicate>>,
+    pub schema: Option<Vec<WherePredicate>>,
+}
+
+impl Bounds {
+    fn parse(&mut self, meta: &ParseNestedMeta<'_>) -> syn::Result<()> {
+        if meta.input.peek(Token![=]) {
+            let predicates = predicates_value(meta)?;
+            for slot in [&mut self.ser, &mut self.de, &mut self.schema] {
+                if slot.is_some() {
+                    return Err(duplicate(meta));
                 }
-                Meta::NameValue(nv) => {
-                    if nv.path.is_ident("rename") {
-                        result.rename = Some(get_lit_str(&nv.value)?);
-                    } else if nv.path.is_ident("default") {
-                        // #[ron(default = "path::to::fn")]
-                        let path = get_expr_path(&nv.value)?;
-                        result.default = FieldDefault::Path(path);
-                    } else if nv.path.is_ident("skip_serializing_if") {
-                        result.skip_serializing_if = Some(get_expr_path(&nv.value)?);
-                    }
-                }
-                _ => {}
+                *slot = Some(predicates.clone());
             }
+            return Ok(());
+        }
+        meta.parse_nested_meta(|inner| {
+            let slot = match key_of(&inner).as_str() {
+                "ser" => &mut self.ser,
+                "de" => &mut self.de,
+                "schema" => &mut self.schema,
+                _ => return Err(unknown(&inner, &["ser", "de", "schema"])),
+            };
+            if slot.is_some() {
+                return Err(duplicate(&inner));
+            }
+            *slot = Some(predicates_value(&inner)?);
             Ok(())
         })
     }
+}
 
-    /// Get the effective field name, considering rename.
-    pub fn effective_name(&self, original: &str, container: &ContainerAttrs) -> String {
-        effective_name_impl(self.rename.as_ref(), original, container)
-    }
+fn predicates_value(meta: &ParseNestedMeta<'_>) -> syn::Result<Vec<WherePredicate>> {
+    let lit = meta.value()?.parse::<LitStr>()?;
+    let predicates = lit.parse_with(Punctuated::<WherePredicate, Token![,]>::parse_terminated)?;
+    Ok(predicates.into_iter().collect())
+}
 
-    /// Check if this field should be skipped for serialization.
-    pub fn should_skip_serializing(&self) -> bool {
-        self.skip || self.skip_serializing
-    }
-
-    /// Check if this field should be skipped for deserialization.
-    pub fn should_skip_deserializing(&self) -> bool {
-        self.skip || self.skip_deserializing
-    }
-
-    /// Check if this field has any form of default.
-    pub fn has_default(&self) -> bool {
-        self.opt || !matches!(self.default, FieldDefault::None)
+impl ContainerAttrs {
+    pub fn from_ast(attrs: &[Attribute]) -> syn::Result<Self> {
+        let mut out = Self::default();
+        parse_ron_attrs(attrs, |meta| {
+            let key = key_of(&meta);
+            match key.as_str() {
+                "rename" => set(&mut out.rename, string_value(&meta)?, &meta),
+                "rename_all" => {
+                    let lit = meta.value()?.parse::<LitStr>()?;
+                    let rule = RenameRule::parse(&lit)?;
+                    set(&mut out.rename_all, rule, &meta)
+                }
+                "deny_unknown_fields" => set_flag(&mut out.deny_unknown_fields, &meta),
+                "transparent" => set_flag(&mut out.transparent, &meta),
+                "bound" => out.bound.parse(&meta),
+                _ => Err(unknown(
+                    &meta,
+                    &[
+                        "rename",
+                        "rename_all",
+                        "deny_unknown_fields",
+                        "transparent",
+                        "bound",
+                    ],
+                )),
+            }
+        })?;
+        Ok(out)
     }
 }
 
-/// Variant-level attributes parsed from `#[ron(...)]`.
-#[derive(Debug, Default)]
+/// Attributes on an enum variant.
+#[derive(Default)]
 pub struct VariantAttrs {
-    /// Rename this variant in RON.
-    pub rename: Option<String>,
-    /// Skip this variant.
-    pub skip: bool,
+    pub rename: Option<Spanned<String>>,
+    /// Renames the fields of a struct variant.
+    pub rename_all: Option<Spanned<RenameRule>>,
+    pub skip: Option<Span>,
 }
 
 impl VariantAttrs {
-    /// Parse variant attributes from a list of attributes.
     pub fn from_ast(attrs: &[Attribute]) -> syn::Result<Self> {
-        parse_ron_attrs(attrs, |result: &mut Self, meta| {
-            match meta {
-                Meta::Path(path) => {
-                    if path.is_ident("skip") {
-                        result.skip = true;
-                    }
-                }
-                Meta::NameValue(nv) if nv.path.is_ident("rename") => {
-                    result.rename = Some(get_lit_str(&nv.value)?);
-                }
-                _ => {}
+        let mut out = Self::default();
+        parse_ron_attrs(attrs, |meta| match key_of(&meta).as_str() {
+            "rename" => set(&mut out.rename, string_value(&meta)?, &meta),
+            "rename_all" => {
+                let lit = meta.value()?.parse::<LitStr>()?;
+                let rule = RenameRule::parse(&lit)?;
+                set(&mut out.rename_all, rule, &meta)
             }
-            Ok(())
+            "skip" => set_flag(&mut out.skip, &meta),
+            _ => Err(unknown(&meta, &["rename", "rename_all", "skip"])),
+        })?;
+        Ok(out)
+    }
+}
+
+/// Attributes on a field.
+#[derive(Default)]
+pub struct FieldAttrs {
+    pub rename: Option<Spanned<String>>,
+    pub skip: Option<Span>,
+    pub skip_serializing: Option<Span>,
+    pub skip_deserializing: Option<Span>,
+    pub skip_serializing_if: Option<Spanned<ExprPath>>,
+    pub default: Option<Spanned<FieldDefault>>,
+    pub flatten: Option<Span>,
+    /// Require `Some(..)`/`None` for an `Option` field.
+    pub explicit: Option<Span>,
+    /// `default` plus "skip serializing when equal to the default".
+    pub opt: Option<Span>,
+}
+
+impl FieldAttrs {
+    pub fn from_ast(attrs: &[Attribute]) -> syn::Result<Self> {
+        let mut out = Self::default();
+        parse_ron_attrs(attrs, |meta| match key_of(&meta).as_str() {
+            "rename" => set(&mut out.rename, string_value(&meta)?, &meta),
+            "skip" => set_flag(&mut out.skip, &meta),
+            "skip_serializing" => set_flag(&mut out.skip_serializing, &meta),
+            "skip_deserializing" => set_flag(&mut out.skip_deserializing, &meta),
+            "skip_serializing_if" => set(&mut out.skip_serializing_if, path_value(&meta)?, &meta),
+            "default" => {
+                let default = if meta.input.peek(Token![=]) {
+                    FieldDefault::Path(path_value(&meta)?)
+                } else {
+                    FieldDefault::Default
+                };
+                set(&mut out.default, default, &meta)
+            }
+            "flatten" => set_flag(&mut out.flatten, &meta),
+            "explicit" => set_flag(&mut out.explicit, &meta),
+            "opt" => set_flag(&mut out.opt, &meta),
+            _ => Err(unknown(
+                &meta,
+                &[
+                    "rename",
+                    "skip",
+                    "skip_serializing",
+                    "skip_deserializing",
+                    "skip_serializing_if",
+                    "default",
+                    "flatten",
+                    "explicit",
+                    "opt",
+                ],
+            )),
+        })?;
+        Ok(out)
+    }
+
+    /// Spans of every attribute that was set, for "not allowed here" errors.
+    pub fn all_spans(&self) -> Vec<Span> {
+        [
+            self.rename.as_ref().map(|s| s.span),
+            self.skip,
+            self.skip_serializing,
+            self.skip_deserializing,
+            self.skip_serializing_if.as_ref().map(|s| s.span),
+            self.default.as_ref().map(|s| s.span),
+            self.flatten,
+            self.explicit,
+            self.opt,
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
+/// Join the doc comments of an item.
+pub fn doc_comment(attrs: &[Attribute]) -> Option<String> {
+    let lines: Vec<String> = attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .filter_map(|attr| match &attr.meta {
+            syn::Meta::NameValue(nv) => match &nv.value {
+                Expr::Lit(syn::ExprLit {
+                    lit: Lit::Str(s), ..
+                }) => {
+                    let line = s.value();
+                    Some(line.strip_prefix(' ').unwrap_or(&line).to_string())
+                }
+                _ => None,
+            },
+            _ => None,
         })
-    }
-
-    /// Get the effective variant name.
-    pub fn effective_name(&self, original: &str, container: &ContainerAttrs) -> String {
-        effective_name_impl(self.rename.as_ref(), original, container)
-    }
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
-/// Extract the doc comment from attributes.
-pub fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
-    let mut docs = Vec::new();
-
-    for attr in attrs {
-        if attr.path().is_ident("doc")
-            && let syn::Meta::NameValue(meta) = &attr.meta
-            && let Expr::Lit(syn::ExprLit {
-                lit: Lit::Str(lit_str),
-                ..
-            }) = &meta.value
-        {
-            let value = lit_str.value();
-            // Trim leading space that's typically added by rustdoc
-            let trimmed = value.strip_prefix(' ').unwrap_or(&value);
-            docs.push(trimmed.to_string());
+/// Run `handler` on each item of every `#[ron(...)]` attribute, combining
+/// the errors of all attributes.
+fn parse_ron_attrs(
+    attrs: &[Attribute],
+    mut handler: impl FnMut(ParseNestedMeta<'_>) -> syn::Result<()>,
+) -> syn::Result<()> {
+    let mut errors: Option<syn::Error> = None;
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("ron")) {
+        if let Err(err) = attr.parse_nested_meta(&mut handler) {
+            match &mut errors {
+                Some(errors) => errors.combine(err),
+                None => errors = Some(err),
+            }
         }
     }
-
-    if docs.is_empty() {
-        None
-    } else {
-        Some(docs.join("\n"))
-    }
+    errors.map_or(Ok(()), Err)
 }
 
-// =============================================================================
-// Helper functions
-// =============================================================================
-
-/// Parse `#[ron(...)]` attributes using a callback handler.
-///
-/// This helper consolidates the common pattern of:
-/// 1. Iterating through attributes
-/// 2. Filtering for "ron" ident
-/// 3. Parsing nested Meta items
-/// 4. Processing each Meta with custom logic
-fn parse_ron_attrs<T, F>(attrs: &[Attribute], mut handler: F) -> syn::Result<T>
-where
-    T: Default,
-    F: FnMut(&mut T, &Meta) -> syn::Result<()>,
-{
-    let mut result = T::default();
-
-    for attr in attrs {
-        if !attr.path().is_ident("ron") {
-            continue;
-        }
-
-        let nested = attr.parse_args_with(
-            syn::punctuated::Punctuated::<Meta, syn::Token![,]>::parse_terminated,
-        )?;
-
-        for meta in nested {
-            handler(&mut result, &meta)?;
-        }
-    }
-
-    Ok(result)
+fn key_of(meta: &ParseNestedMeta<'_>) -> String {
+    meta.path
+        .get_ident()
+        .map_or_else(String::new, ToString::to_string)
 }
 
-/// Get the effective name for a field or variant.
-///
-/// Returns the explicit rename if provided, otherwise applies the container's
-/// rename_all rule to the original name.
-fn effective_name_impl(
-    explicit_rename: Option<&String>,
-    original: &str,
-    container: &ContainerAttrs,
-) -> String {
-    explicit_rename
-        .cloned()
-        .unwrap_or_else(|| container.rename_field(original))
+fn span_of(meta: &ParseNestedMeta<'_>) -> Span {
+    syn::spanned::Spanned::span(&meta.path)
 }
 
-/// Extract a string literal from an expression.
-fn get_lit_str(expr: &Expr) -> syn::Result<String> {
-    if let Expr::Lit(syn::ExprLit {
-        lit: Lit::Str(lit_str),
-        ..
-    }) = expr
-    {
-        Ok(lit_str.value())
-    } else {
-        Err(syn::Error::new_spanned(expr, "expected string literal"))
-    }
-}
-
-/// Extract an expression path from an expression (for function paths).
-fn get_expr_path(expr: &Expr) -> syn::Result<ExprPath> {
-    // First try direct path
-    if let Expr::Path(path) = expr {
-        return Ok(path.clone());
-    }
-
-    // Try string literal and parse as path
-    if let Expr::Lit(syn::ExprLit {
-        lit: Lit::Str(lit_str),
-        ..
-    }) = expr
-    {
-        let path_str = lit_str.value();
-        let path: ExprPath = syn::parse_str(&path_str)
-            .map_err(|_| syn::Error::new_spanned(expr, format!("invalid path: {}", path_str)))?;
-        return Ok(path);
-    }
-
-    Err(syn::Error::new_spanned(
-        expr,
-        "expected path or string literal",
+fn unknown(meta: &ParseNestedMeta<'_>, expected: &[&str]) -> syn::Error {
+    let path = &meta.path;
+    let key = quote::quote!(#path).to_string().replace(' ', "");
+    meta.error(format!(
+        "unknown ron attribute `{key}`, expected one of: {}",
+        expected.join(", ")
     ))
 }
 
-// =============================================================================
-// Case conversion utilities
-// =============================================================================
-
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
-    }
-    result
+fn duplicate(meta: &ParseNestedMeta<'_>) -> syn::Error {
+    meta.error(format!("duplicate ron attribute `{}`", key_of(meta)))
 }
 
-fn to_camel_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = false;
-    for (i, c) in s.chars().enumerate() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_uppercase().next().unwrap());
-            capitalize_next = false;
-        } else if i == 0 {
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
+fn set<T>(slot: &mut Option<Spanned<T>>, value: T, meta: &ParseNestedMeta<'_>) -> syn::Result<()> {
+    if slot.is_some() {
+        return Err(duplicate(meta));
     }
-    result
+    *slot = Some(Spanned {
+        value,
+        span: span_of(meta),
+    });
+    Ok(())
 }
 
-fn to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-    for c in s.chars() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_uppercase().next().unwrap());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
+fn set_flag(slot: &mut Option<Span>, meta: &ParseNestedMeta<'_>) -> syn::Result<()> {
+    if !meta.input.is_empty() && !meta.input.peek(Token![,]) {
+        return Err(meta.error(format!(
+            "ron attribute `{}` does not take a value",
+            key_of(meta)
+        )));
     }
-    result
+    if slot.is_some() {
+        return Err(duplicate(meta));
+    }
+    *slot = Some(span_of(meta));
+    Ok(())
 }
 
-fn to_screaming_snake_case(s: &str) -> String {
-    to_snake_case(s).to_uppercase()
+fn string_value(meta: &ParseNestedMeta<'_>) -> syn::Result<String> {
+    Ok(meta.value()?.parse::<LitStr>()?.value())
+}
+
+/// A function path, written either as a string (`"path::to::fn"`) or bare.
+fn path_value(meta: &ParseNestedMeta<'_>) -> syn::Result<ExprPath> {
+    let input = meta.value()?;
+    if input.peek(LitStr) {
+        input.parse::<LitStr>()?.parse()
+    } else {
+        input.parse()
+    }
 }
 
 #[cfg(test)]
@@ -451,14 +424,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rename_rules() {
-        assert_eq!(RenameRule::CamelCase.apply("my_field"), "myField");
-        assert_eq!(RenameRule::SnakeCase.apply("MyField"), "my_field");
-        assert_eq!(RenameRule::PascalCase.apply("my_field"), "MyField");
-        assert_eq!(RenameRule::ScreamingSnakeCase.apply("MyField"), "MY_FIELD");
-        assert_eq!(RenameRule::LowerCase.apply("MyField"), "myfield");
-        assert_eq!(RenameRule::LowerCase.apply("my_field"), "myfield");
-        assert_eq!(RenameRule::UpperCase.apply("MyField"), "MYFIELD");
-        assert_eq!(RenameRule::UpperCase.apply("my_field"), "MYFIELD");
+    fn rename_rules() {
+        let cases = [
+            (RenameRule::CamelCase, "my_field", "myField"),
+            (RenameRule::CamelCase, "HTTPServer", "httpServer"),
+            (RenameRule::SnakeCase, "MyField", "my_field"),
+            (RenameRule::SnakeCase, "HTTPServer", "http_server"),
+            (RenameRule::SnakeCase, "my_field", "my_field"),
+            (RenameRule::SnakeCase, "Vec3D", "vec3_d"),
+            (RenameRule::PascalCase, "my_field", "MyField"),
+            (RenameRule::PascalCase, "HTTPServer", "HTTPServer"),
+            (RenameRule::ScreamingSnakeCase, "MyField", "MY_FIELD"),
+            (RenameRule::ScreamingSnakeCase, "user_name", "USER_NAME"),
+            (RenameRule::LowerCase, "MyField", "myfield"),
+            (RenameRule::LowerCase, "my_field", "my_field"),
+            (RenameRule::UpperCase, "MyField", "MYFIELD"),
+            (RenameRule::UpperCase, "my_field", "MY_FIELD"),
+        ];
+        for (rule, input, expected) in cases {
+            assert_eq!(rule.apply(input), expected, "{rule:?} of {input}");
+        }
     }
 }

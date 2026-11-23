@@ -1,6 +1,6 @@
 //! `AstMapAccess` helper for struct deserialization with span preservation.
 
-use alloc::{borrow::Cow, string::String, vec, vec::Vec};
+use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
 
@@ -182,16 +182,37 @@ impl<'a> AstMapAccess<'a> {
         })
     }
 
+    /// Create an access with no fields, for `()` or `Name()` standing in for a
+    /// struct whose fields all have defaults.
+    #[must_use]
+    pub fn empty(struct_name: Option<&'a str>, struct_span: Span) -> Self {
+        Self {
+            fields: &[],
+            index: None,
+            consumed: Consumed::new(0),
+            consumed_count: 0,
+            cursor: 0,
+            struct_span,
+            struct_name,
+        }
+    }
+
+    /// The index of the field called `name`.
+    fn find(&self, name: &str) -> Option<usize> {
+        let fields = self.fields;
+        if fields.get(self.cursor).is_some_and(|f| f.name.name == name) {
+            Some(self.cursor)
+        } else if let Some(index) = &self.index {
+            index.get(name).copied()
+        } else {
+            fields.iter().position(|f| f.name.name == name)
+        }
+    }
+
     /// Find a field by name and mark it consumed.
     fn take(&mut self, name: &str) -> Option<&'a StructField<'a>> {
         let fields = self.fields;
-        let index = if fields.get(self.cursor).is_some_and(|f| f.name.name == name) {
-            self.cursor
-        } else if let Some(index) = &self.index {
-            *index.get(name)?
-        } else {
-            fields.iter().position(|f| f.name.name == name)?
-        };
+        let index = self.find(name)?;
         self.cursor = index + 1;
         if self.consumed.insert(index) {
             self.consumed_count += 1;
@@ -288,12 +309,21 @@ impl<'a> AstMapAccess<'a> {
     /// Pass the list of expected field names. Returns an error pointing to
     /// the first unknown field's span.
     pub fn deny_unknown_fields(&self, expected: &'static [&'static str]) -> Result<()> {
+        self.deny_unknown_fields_with(|| Cow::Borrowed(expected))
+    }
+
+    /// Like [`deny_unknown_fields`](Self::deny_unknown_fields), but builds the
+    /// list of expected names only when there is an unknown field.
+    pub fn deny_unknown_fields_with(
+        &self,
+        expected: impl FnOnce() -> Cow<'static, [&'static str]>,
+    ) -> Result<()> {
         match self.remaining().next() {
             None => Ok(()),
             Some(field) => Err(Error::with_span(
                 ErrorKind::UnknownField {
                     field: Cow::Owned(String::from(field.name.name.as_ref())),
-                    expected,
+                    expected: expected(),
                     outer: self.struct_name.map(|s| Cow::Owned(String::from(s))),
                 },
                 field.name.span,
@@ -326,40 +356,46 @@ impl<'a> AstMapAccess<'a> {
     }
 }
 
+/// A flattened `Option<T>` is `None` when none of `T`'s fields are present
+/// and `Some` otherwise, so a partially present `T` reports its missing
+/// fields instead of being dropped. A catch-all `T` (a map) is `Some` when it
+/// collected at least one field.
 impl<T: FromRonFields> FromRonFields for Option<T> {
-    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
-        let consumed_before = access.consumed_count;
-        let nothing_consumed = |access: &AstMapAccess<'_>| access.consumed_count == consumed_before;
+    const CATCH_ALL: bool = T::CATCH_ALL;
 
-        match T::from_fields(access) {
-            Ok(_) if nothing_consumed(access) => Ok(None),
-            Ok(value) => Ok(Some(value)),
-            Err(err)
-                if nothing_consumed(access)
-                    && matches!(err.kind(), ErrorKind::MissingField { .. }) =>
-            {
-                Ok(None)
-            }
-            Err(err) => Err(err),
+    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
+        if T::CATCH_ALL {
+            let consumed_before = access.consumed_count;
+            let value = T::from_fields(access)?;
+            return Ok((access.consumed_count != consumed_before).then_some(value));
         }
+
+        let mut names = Vec::new();
+        T::field_names(&mut names);
+        if names.iter().any(|name| access.find(name).is_some()) {
+            T::from_fields(access).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn field_names(names: &mut Vec<&'static str>) {
+        T::field_names(names);
     }
 }
 
-/// A catch-all map takes every field no other field consumed.
-impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRonFields
-    for HashMap<K, V, S>
-{
-    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
-        let mut map = HashMap::with_capacity_and_hasher(
-            access.fields.len() - access.consumed_count,
-            S::default(),
-        );
-
-        for (index, field) in access.fields.iter().enumerate() {
-            if !access.consumed.insert(index) {
+impl AstMapAccess<'_> {
+    /// Consume every remaining field as a `(key, value)` pair, for maps that
+    /// collect the fields no one else claimed.
+    fn take_remaining<K: FromRon, V: FromRon>(
+        &mut self,
+        mut insert: impl FnMut(K, V),
+    ) -> Result<()> {
+        for (index, field) in self.fields.iter().enumerate() {
+            if !self.consumed.insert(index) {
                 continue;
             }
-            access.consumed_count += 1;
+            self.consumed_count += 1;
 
             let name = field.name.name.as_ref();
             let mut key_expr = synthetic_string(String::from(name));
@@ -368,9 +404,54 @@ impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRonFields
             }
             let key = K::from_ast(&key_expr).map_err(Error::in_map_key)?;
             let value = V::from_ast(&field.value).map_err(|e| e.in_field(name))?;
-            map.insert(key, value);
+            insert(key, value);
         }
+        Ok(())
+    }
 
+    fn remaining_count(&self) -> usize {
+        self.fields.len() - self.consumed_count
+    }
+}
+
+/// A catch-all map takes every field no other field consumed.
+impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRonFields
+    for HashMap<K, V, S>
+{
+    const CATCH_ALL: bool = true;
+
+    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
+        let mut map = HashMap::with_capacity_and_hasher(access.remaining_count(), S::default());
+        access.take_remaining(|k, v| {
+            map.insert(k, v);
+        })?;
+        Ok(map)
+    }
+}
+
+impl<K: FromRon + Ord, V: FromRon> FromRonFields for BTreeMap<K, V> {
+    const CATCH_ALL: bool = true;
+
+    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
+        let mut map = BTreeMap::new();
+        access.take_remaining(|k, v| {
+            map.insert(k, v);
+        })?;
+        Ok(map)
+    }
+}
+
+impl<K: FromRon + Eq + Hash, V: FromRon, S: BuildHasher + Default> FromRonFields
+    for indexmap::IndexMap<K, V, S>
+{
+    const CATCH_ALL: bool = true;
+
+    fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
+        let mut map =
+            indexmap::IndexMap::with_capacity_and_hasher(access.remaining_count(), S::default());
+        access.take_remaining(|k, v| {
+            map.insert(k, v);
+        })?;
         Ok(map)
     }
 }

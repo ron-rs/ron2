@@ -1,0 +1,29 @@
+error: #[ron(transparent)] is only supported on structs
+ --> tests/ui/misplaced_container_attributes.rs:2:7
+  |
+2 | #[ron(transparent)]
+  |       ^^^^^^^^^^^
+
+error: #[ron(rename)] has no effect on enums, rename the variants instead
+ --> tests/ui/misplaced_container_attributes.rs:8:7
+  |
+8 | #[ron(rename = "Other")]
+  |       ^^^^^^
+
+error: #[ron(transparent)] requires exactly one field that is not #[ron(skip)]
+  --> tests/ui/misplaced_container_attributes.rs:14:7
+   |
+14 | #[ron(transparent)]
+   |       ^^^^^^^^^^^
+
+error: #[ron(rename_all)] requires named fields
+  --> tests/ui/misplaced_container_attributes.rs:21:7
+   |
+21 | #[ron(rename_all = "camelCase")]
+   |       ^^^^^^^^^^
+
+error: #[ron(rename_all)] requires named fields
+  --> tests/ui/misplaced_container_attributes.rs:26:11
+   |
+26 |     #[ron(rename_all = "camelCase")]
+   |           ^^^^^^^^^^

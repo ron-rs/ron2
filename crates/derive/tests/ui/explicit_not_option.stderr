@@ -1,0 +1,17 @@
+error[E0277]: `#[ron(explicit)]` requires an `Option<T>` field, but this field is `u32`
+ --> tests/ui/explicit_not_option.rs:4:12
+  |
+4 |     value: u32,
+  |            ^^^ not an `Option`
+  |
+  = help: the trait `ron2::__private::ExplicitOption` is not implemented for `u32`
+help: the trait `ron2::__private::ExplicitOption` is implemented for `std::option::Option<T>`
+ --> $WORKSPACE/crates/main/src/__private.rs
+  |
+  | impl<T: FromRon> ExplicitOption for Option<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `ron2::__private::read_explicit`
+ --> $WORKSPACE/crates/main/src/__private.rs
+  |
+  | pub fn read_explicit<T: ExplicitOption>(
+  |                         ^^^^^^^^^^^^^^ required by this bound in `read_explicit`

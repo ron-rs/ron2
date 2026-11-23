@@ -11,9 +11,11 @@ description = "Derive macros for RON serialization, deserialization, and schema 
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full", "extra-traits"] }
+syn = { version = "2", features = ["full", "visit"] }
 quote = "1"
 proc-macro2 = "1"
 
 [dev-dependencies]
+indexmap = "2"
 ron2 = { path = "../main" }
+trybuild = "1"
