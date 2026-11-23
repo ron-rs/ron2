@@ -61,7 +61,10 @@ pub use ser::{serialize_document, serialize_document_to};
 #[doc(hidden)]
 pub use unescape::decode_string;
 
-use crate::error::{Error, Span};
+use crate::{
+    error::{Error, Span},
+    value::Number,
+};
 
 // ============================================================================
 // into_owned() macro
@@ -497,12 +500,20 @@ pub struct NumberExpr<'a> {
     pub raw: Cow<'a, str>,
     /// The parsed numeric kind, if available.
     pub kind: NumberKind,
+    /// The exact value of a synthetic number built from a [`Number`] (by
+    /// [`value_to_expr`]); `None` for parsed literals.
+    ///
+    /// When set, conversions ([`FromRon`](crate::FromRon), [`expr_to_value`])
+    /// use it instead of parsing `raw`, with the same result. `raw` must spell
+    /// the same number: reset this to `None` when editing `raw`.
+    pub value: Option<Number>,
 }
 
 impl_into_owned!(NumberExpr {
     span: copy,
     raw: cow,
     kind: copy,
+    value: copy,
 });
 
 /// The kind of number parsed.

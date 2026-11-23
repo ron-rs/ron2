@@ -258,7 +258,7 @@ pub fn synthetic_unit() -> Expr<'static> {
 pub fn synthetic_integer<T: itoa::Integer + PartialOrd + Default>(value: T) -> Expr<'static> {
     let mut raw = String::new();
     let kind = escape::push_int(&mut raw, value);
-    number_expr(raw, kind)
+    number_expr(raw, kind, None)
 }
 
 /// Create a synthetic expression for a typed `f32`; unlike a `Value`
@@ -267,7 +267,7 @@ pub fn synthetic_integer<T: itoa::Integer + PartialOrd + Default>(value: T) -> E
 pub fn synthetic_f32(value: f32) -> Expr<'static> {
     let mut raw = String::new();
     let kind = escape::push_f32(&mut raw, value);
-    number_expr(raw, kind)
+    number_expr(raw, kind, None)
 }
 
 /// Create a synthetic `f64` expression.
@@ -275,22 +275,26 @@ pub fn synthetic_f32(value: f32) -> Expr<'static> {
 pub fn synthetic_f64(value: f64) -> Expr<'static> {
     let mut raw = String::new();
     let kind = escape::push_f64(&mut raw, value);
-    number_expr(raw, kind)
+    number_expr(raw, kind, None)
 }
 
 /// Create a synthetic number expression for a `Value` number.
+///
+/// The expression carries `value` ([`NumberExpr::value`]), so converting it
+/// back does not parse the canonical text.
 #[must_use]
 pub fn synthetic_number(value: Number) -> Expr<'static> {
     let mut raw = String::new();
     let kind = escape::push_number(&mut raw, value);
-    number_expr(raw, kind)
+    number_expr(raw, kind, Some(value))
 }
 
-fn number_expr(raw: String, kind: NumberKind) -> Expr<'static> {
+fn number_expr(raw: String, kind: NumberKind, value: Option<Number>) -> Expr<'static> {
     Expr::Number(NumberExpr {
         span: Span::synthetic(),
         raw: Cow::Owned(raw),
         kind,
+        value,
     })
 }
 

@@ -605,6 +605,7 @@ mod tests {
             span: Span::synthetic(),
             raw: raw.into(),
             kind,
+            value: None,
         })
     }
 
@@ -975,6 +976,131 @@ mod tests {
             Value::from_ron("b'a'").unwrap(),
             Value::Number(Number::U8(97))
         );
+    }
+
+    /// 1 + 2^-24 lies halfway between two f32s: its shortest spelling rounds
+    /// up at f32 precision, the value itself ties to even.
+    const F32_MIDPOINT: f64 = 1.0 + 1.0 / 16_777_216.0;
+
+    /// Numbers at the edges of every conversion rule.
+    fn edge_numbers() -> Vec<Number> {
+        let mut numbers = vec![
+            Number::from(i8::MIN),
+            Number::from(-1i8),
+            Number::from(i16::MIN),
+            Number::from(i32::MIN),
+            Number::from(i64::MIN),
+            Number::from(i64::MAX),
+            Number::from(0u8),
+            Number::from(u8::MAX),
+            Number::from(u16::MAX),
+            Number::from(u32::MAX),
+            Number::from(u64::MAX),
+            Number::from(16_777_217u32),
+        ];
+        #[cfg(feature = "integer128")]
+        numbers.extend([Number::from(i128::MIN), Number::from(u128::MAX)]);
+        numbers.extend(
+            [
+                0.0,
+                -0.0,
+                0.1,
+                0.5,
+                1e-45,
+                f32::MIN_POSITIVE,
+                f32::MAX,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NAN,
+                -f32::NAN,
+                f32::from_bits(0x7fc0_0001),
+                f32::from_bits(0xffc0_1234),
+            ]
+            .map(Number::from),
+        );
+        numbers.extend(
+            [
+                0.0,
+                -0.0,
+                0.1,
+                F32_MIDPOINT,
+                1e40,
+                -1e40,
+                3.402_823_5e38,
+                f64::from(f32::MAX) * (1.0 + f64::EPSILON),
+                1e-50,
+                5e-324,
+                f64::MAX,
+                f64::NEG_INFINITY,
+                f64::NAN,
+                -f64::NAN,
+                f64::from_bits(0x7ff8_0000_0000_0001),
+                f64::from_bits(0xfff8_0000_0000_dead),
+            ]
+            .map(Number::from),
+        );
+
+        numbers
+    }
+
+    /// A synthetic number carrying its `Number` converts to the same typed
+    /// value (bit for bit) or the same error as parsing its canonical text.
+    #[test]
+    fn carried_numbers_convert_like_their_text() {
+        /// The same expression with the carried value dropped, and its text.
+        fn text_only(expr: &Expr<'_>) -> (Expr<'static>, String) {
+            let Expr::Number(n) = expr else {
+                panic!("not a number: {expr:?}")
+            };
+            assert!(n.value.is_some(), "{} carries no value", n.raw);
+            let text = NumberExpr {
+                value: None,
+                ..n.clone().into_owned()
+            };
+            let raw = text.raw.to_string();
+            (Expr::Number(text), raw)
+        }
+        fn same<T: PartialEq + core::fmt::Debug>(raw: &str, carried: Result<T>, text: Result<T>) {
+            match (carried, text) {
+                (Ok(a), Ok(b)) => assert_eq!(a, b, "{raw}"),
+                (Err(a), Err(b)) => assert_eq!(a.kind(), b.kind(), "{raw}"),
+                (a, b) => panic!("{raw}: carried {a:?}, text {b:?}"),
+            }
+        }
+
+        for n in edge_numbers() {
+            let carried = value_to_expr(&Value::Number(n)).unwrap();
+            let (text, raw) = text_only(&carried);
+            let bits64 = |r: Result<f64>| r.map(f64::to_bits);
+            let bits32 = |r: Result<f32>| r.map(f32::to_bits);
+            same(
+                &raw,
+                bits64(f64::from_ast(&carried)),
+                bits64(f64::from_ast(&text)),
+            );
+            same(
+                &raw,
+                bits32(f32::from_ast(&carried)),
+                bits32(f32::from_ast(&text)),
+            );
+            same(&raw, i64::from_ast(&carried), i64::from_ast(&text));
+            same(&raw, u64::from_ast(&carried), u64::from_ast(&text));
+            same(&raw, i8::from_ast(&carried), i8::from_ast(&text));
+            same(&raw, u8::from_ast(&carried), u8::from_ast(&text));
+            #[cfg(feature = "integer128")]
+            same(&raw, i128::from_ast(&carried), i128::from_ast(&text));
+
+            // A `Value` gets the carried number back unchanged.
+            let value = Value::from_ast(&carried).unwrap();
+            assert_eq!(value, Value::Number(n), "{raw}");
+        }
+
+        // The midpoint really takes the text path at f32 precision.
+        let midpoint = f32::from_ron_value(Value::from(F32_MIDPOINT)).unwrap();
+        assert_eq!(midpoint, 1.000_000_1);
+        // A carried NaN payload is not spelled: typed floats get plain NaN.
+        let nan = f64::from_ron_value(Value::from(f64::from_bits(0xfff8_0000_0000_dead))).unwrap();
+        assert_eq!(nan.to_bits(), (-f64::NAN).to_bits());
     }
 
     #[test]

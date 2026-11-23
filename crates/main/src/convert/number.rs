@@ -12,6 +12,9 @@
 //!   rounded once. A finite literal that overflows the target is an error.
 //! - Integer literals convert to floats with a single rounding.
 //!
+//! A synthetic number that carries its [`Number`] ([`NumberExpr::value`])
+//! converts without parsing its text, to exactly the result the text gives.
+//!
 //! [`Value`]: crate::Value
 
 use alloc::{borrow::Cow, string::String};
@@ -34,6 +37,28 @@ pub(crate) enum Int {
 }
 
 impl Int {
+    /// The integer held by `n`; `None` for floats.
+    fn from_number(n: Number) -> Option<Self> {
+        let signed = |v: i128| u128::try_from(v).map_or(Int::Neg(v), Int::Pos);
+        Some(match n {
+            Number::I8(v) => signed(v.into()),
+            Number::I16(v) => signed(v.into()),
+            Number::I32(v) => signed(v.into()),
+            Number::I64(v) => signed(v.into()),
+            #[cfg(feature = "integer128")]
+            Number::I128(v) => signed(v),
+            Number::U8(v) => Int::Pos(v.into()),
+            Number::U16(v) => Int::Pos(v.into()),
+            Number::U32(v) => Int::Pos(v.into()),
+            Number::U64(v) => Int::Pos(v.into()),
+            #[cfg(feature = "integer128")]
+            Number::U128(v) => Int::Pos(v),
+            Number::F32(_) | Number::F64(_) => return None,
+            #[cfg(not(doc))]
+            Number::__NonExhaustive(never) => never.never(),
+        })
+    }
+
     fn convert<T: TryFrom<u128> + TryFrom<i128>>(self) -> Option<T> {
         match self {
             Int::Pos(v) => T::try_from(v).ok(),
@@ -213,6 +238,8 @@ pub(crate) trait Float: Copy + FromStr + From<u8> + Neg<Output = Self> {
     fn from_int(value: Int) -> Self;
     fn from_f32(value: f32) -> Self;
     fn from_f64(value: f64) -> Self;
+    /// `value` at this precision if no rounding is needed (`f64` only).
+    fn from_f64_exact(value: f64) -> Option<Self>;
     fn is_infinite(self) -> bool;
 }
 
@@ -235,6 +262,9 @@ impl Float for f32 {
     fn from_f64(value: f64) -> Self {
         value as f32
     }
+    fn from_f64_exact(_: f64) -> Option<Self> {
+        None
+    }
     fn is_infinite(self) -> bool {
         f32::is_infinite(self)
     }
@@ -256,6 +286,9 @@ impl Float for f64 {
     }
     fn from_f64(value: f64) -> Self {
         value
+    }
+    fn from_f64_exact(value: f64) -> Option<Self> {
+        Some(value)
     }
     fn is_infinite(self) -> bool {
         f64::is_infinite(self)
@@ -281,6 +314,38 @@ fn float_out_of_bounds(raw: &str, target_type: &'static str) -> Error {
     })
 }
 
+/// `NaN` with the given sign, as `NaN` and `-NaN` read.
+fn signed_nan<G: Float>(negative: bool) -> G {
+    if negative { -G::NAN } else { G::NAN }
+}
+
+/// An integer literal at float precision `F`; a value beyond `F`'s range is an error.
+fn int_to_float<F: Float>(value: Int, raw: &str) -> Result<F> {
+    let value = F::from_int(value);
+    if value.is_infinite() {
+        return Err(float_out_of_bounds(raw, F::NAME));
+    }
+    Ok(value)
+}
+
+/// A carried [`Number`] at float precision `F`, equal to what reading its
+/// canonical text (`raw`) gives; `None` when only parsing the text can tell.
+///
+/// The text of an `F32` is its shortest spelling, read at `f32` precision or
+/// spelled so that `f64` reads the widened value; an `F64` is read exactly
+/// by `f64`, while reading it at `f32` precision rounds its shortest
+/// spelling (not the value), so that case parses the text. `NaN` payloads
+/// are not spelled, only the sign.
+fn carried_float<F: Float>(n: Number, raw: &str) -> Option<Result<F>> {
+    match n {
+        Number::F32(v) if v.0.is_nan() => Some(Ok(signed_nan(v.0.is_sign_negative()))),
+        Number::F32(v) => Some(Ok(F::from_f32(v.0))),
+        Number::F64(v) if v.0.is_nan() => Some(Ok(signed_nan(v.0.is_sign_negative()))),
+        Number::F64(v) => F::from_f64_exact(v.0).map(Ok),
+        _ => Int::from_number(n).map(|value| int_to_float(value, raw)),
+    }
+}
+
 /// Parse float text (no suffix or `_`) at precision `G`. A finite literal
 /// that overflows `G` is an error; the sign of `NaN` is kept.
 fn parse_float_text<G: Float>(text: &str, raw: &str) -> Result<G> {
@@ -303,12 +368,11 @@ fn parse_float_text<G: Float>(text: &str, raw: &str) -> Result<G> {
 /// value 16777216 for every target, as it is in a `Value`.
 fn parse_float<F: Float>(n: &NumberExpr<'_>) -> Result<F> {
     let raw = n.raw.as_ref();
+    if let Some(value) = n.value.and_then(|number| carried_float(number, raw)) {
+        return value;
+    }
     if !is_float_kind(n) {
-        let value = F::from_int(parse_int(raw, None)?.0);
-        if value.is_infinite() {
-            return Err(float_out_of_bounds(raw, F::NAME));
-        }
-        return Ok(value);
+        return int_to_float(parse_int(raw, None)?.0, raw);
     }
 
     let (text, suffix) = split_float_suffix(raw);
@@ -344,8 +408,14 @@ fn parse_number(n: &NumberExpr<'_>) -> Result<Number> {
 }
 
 /// Convert a number literal to the `Number` stored in a `Value`.
+///
+/// A carried number is returned as is, keeping its variant (`5u32` stays
+/// `U32`, where reading the text `5` gives `U8`; both are equal).
 pub(crate) fn to_number(n: &NumberExpr<'_>) -> Result<Number> {
-    parse_number(n).map_err(|e| e.or_span(n.span))
+    match n.value {
+        Some(number) => Ok(number),
+        None => parse_number(n).map_err(|e| e.or_span(n.span)),
+    }
 }
 
 /// Convert an expression to an integer type (`FromRon` for integers).
@@ -361,9 +431,12 @@ where
             },
             n.span,
         )),
-        Expr::Number(n) => parse_int(&n.raw, Some(target))
-            .and_then(|(value, _)| value.convert().ok_or_else(|| out_of_bounds(&n.raw, target)))
-            .map_err(|e| e.or_span(n.span)),
+        Expr::Number(n) => match n.value.and_then(Int::from_number) {
+            Some(value) => Ok(value),
+            None => parse_int(&n.raw, Some(target)).map(|(value, _)| value),
+        }
+        .and_then(|value| value.convert().ok_or_else(|| out_of_bounds(&n.raw, target)))
+        .map_err(|e| e.or_span(n.span)),
         Expr::Byte(b) => {
             T::try_from(b.value).map_err(|_| out_of_bounds(&b.raw, target).or_span(b.span))
         }

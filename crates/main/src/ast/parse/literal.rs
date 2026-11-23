@@ -27,6 +27,7 @@ impl<'a> AstParser<'a> {
             span: tok.span,
             raw: Cow::Borrowed(tok.text),
             kind,
+            value: None,
         })
     }
 

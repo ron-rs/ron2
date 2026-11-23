@@ -242,6 +242,45 @@ fn bench_deserialize(c: &mut Criterion) {
 }
 
 // ============================================================================
+// Value → typed Benchmarks
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq, ToRon, FromRon)]
+struct Samples {
+    doubles: Vec<f64>,
+    singles: Vec<f32>,
+    ints: Vec<i64>,
+}
+
+fn bench_from_value(c: &mut Criterion) {
+    let mut group = c.benchmark_group("typed/from_value");
+
+    let config = ron2::Value::from_ron(&large_config().to_ron().unwrap()).unwrap();
+    group.bench_function("large_config", |b| {
+        b.iter(|| LargeConfig::from_ron_value(config.clone()).unwrap());
+    });
+
+    let samples = Samples {
+        doubles: (0..1000)
+            .map(|i| f64::from(i) * 1.1 + 0.123_456_789)
+            .collect(),
+        singles: (0..1000).map(|i| i as f32 * 0.3).collect(),
+        ints: (0..1000).map(|i| i * 1_000_003 - 500_000_000).collect(),
+    };
+    let samples = samples.to_ron_value().unwrap();
+    group.bench_function("numbers", |b| {
+        b.iter(|| Samples::from_ron_value(samples.clone()).unwrap());
+    });
+    // The typed half alone: converting the carried numbers.
+    let expr = ron2::ast::value_to_expr(&samples).unwrap();
+    group.bench_function("numbers_from_ast", |b| {
+        b.iter(|| Samples::from_ast(&expr).unwrap());
+    });
+
+    group.finish();
+}
+
+// ============================================================================
 // Field Scaling Benchmarks - measure O(n²) vs O(n) lookup performance
 // ============================================================================
 
@@ -276,6 +315,7 @@ criterion_group!(
     benches,
     bench_serialize,
     bench_deserialize,
+    bench_from_value,
     bench_field_scaling
 );
 
