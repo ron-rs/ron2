@@ -56,6 +56,7 @@ const CORPUS: &[&str] = &[
     "(\n    a: 1, /* a */ // b\n    b: 2,\n)",
     "(\n port: 8080, // the port\n host: \"h\",\n)",
     "#![type = \"Foo\"]\n// doc\nConfig(\n    // Server port\n    port: 8080,\n    tags: [\"web\", \"api\"], /* trailing block */\n    nested: Inner(a: Some([1, 2]), b: {1: (x: 1)}),\n)",
+    "[\r\n 1, // c\r\n /* d\r\n */ 2\r\n]",
     // Width.
     "(a: \"ünïcödé strings that are fairly long to push the line over the limit\", b: [1, 2])",
     "E(Variant(1), Other(x: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]))",
