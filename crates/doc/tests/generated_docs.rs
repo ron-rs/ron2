@@ -72,8 +72,6 @@ fn fully_expanded_showcase_example_deserializes() {
     }
 }
 
-/// Collect `](target)` link targets from Markdown.
-
 fn discovered(type_path: &str, kind: TypeKind) -> DiscoveredSchema {
     DiscoveredSchema {
         path: PathBuf::from(format!("{type_path}.schema.ron")),
