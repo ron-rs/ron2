@@ -39,7 +39,7 @@
 //! ```
 
 mod convert;
-mod escape;
+pub(crate) mod escape;
 mod parse;
 mod ser;
 mod unescape;

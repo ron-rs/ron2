@@ -8,6 +8,7 @@ use core::{
     str::FromStr,
 };
 
+mod display;
 mod map;
 mod number;
 
@@ -91,12 +92,14 @@ impl FromStr for Value {
 /// Formats the value as RON with [`FormatConfig::default`].
 ///
 /// A value nested deeper than [`MAX_CONVERSION_DEPTH`](crate::ast::MAX_CONVERSION_DEPTH)
-/// cannot be formatted and yields [`fmt::Error`]; [`ToRon::to_ron`](crate::ToRon::to_ron)
-/// reports that case as an error instead.
+/// is written on a single line instead, without recursion, so formatting never fails.
+/// [`ToRon::to_ron`](crate::ToRon::to_ron) reports such a value as an error.
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let expr = value_to_expr(self).map_err(|_| fmt::Error)?;
-        f.write_str(&format_expr(&expr, &FormatConfig::default()))
+        match value_to_expr(self) {
+            Ok(expr) => f.write_str(&format_expr(&expr, &FormatConfig::default())),
+            Err(_) => f.write_str(&display::compact(self)),
+        }
     }
 }
 
