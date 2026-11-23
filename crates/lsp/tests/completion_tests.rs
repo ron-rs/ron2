@@ -879,9 +879,6 @@ graphics:
         let doc = make_doc(content);
         let resolver = make_resolver();
 
-        // AST should still be available (partial identifier parses as struct name)
-        assert!(doc.ast.is_some(), "AST should be available");
-
         // Completions should still work (IDE filters by prefix)
         let completions = ron2_lsp::provide_completions(&doc, Position::new(3, 17), &resolver);
         let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
@@ -894,8 +891,7 @@ graphics:
 
     #[test]
     fn test_completions_in_nested_incomplete_struct() {
-        // Inner struct missing close paren - should still offer completions
-        // Note: For incomplete nested structs, completions work at root level
+        // The only `)` closes `window`, so the cursor is inside the unclosed inner struct.
         let content = r#"#![type = "ron_showcase::GameConfig"]
 
 (
@@ -905,21 +901,11 @@ graphics:
 )"#;
         let doc = make_doc(content);
         let resolver = make_resolver();
+        assert!(!doc.parse_errors.is_empty(), "outer struct is unclosed");
 
-        // Despite missing inner close paren, parser should recover
-        assert!(doc.ast.is_some(), "AST should be available");
-
-        // The parser recovers but nested TypeRef resolution is limited.
-        // Test that at least root-level completions work.
-        let completions = ron2_lsp::provide_completions(&doc, Position::new(6, 0), &resolver);
-        let _labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
-
-        // Root-level fields should be suggested (window is present but incomplete)
-        // Note: window may or may not be recognized as present depending on recovery
-        assert!(
-            doc.ast.is_some(),
-            "AST should survive incomplete nested struct"
-        );
+        let completions = ron2_lsp::provide_completions(&doc, Position::new(5, 8), &resolver);
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, ["height", "fullscreen"]);
     }
 
     #[test]
@@ -936,8 +922,8 @@ graphics:
         let doc = make_doc(content);
         let resolver = make_resolver();
 
-        // Document has two errors: invalid @ token and missing value after graphics:
-        assert!(doc.ast.is_some(), "AST should be available despite errors");
+        // Two errors: invalid @ token and missing value after graphics:
+        assert_eq!(doc.parse_errors.len(), 2);
 
         // Position after valid version field
         let completions = ron2_lsp::provide_completions(&doc, Position::new(6, 4), &resolver);
@@ -978,8 +964,7 @@ graphics:
         let doc = make_doc(content);
         let resolver = make_resolver();
 
-        // AST should be available despite error in nested struct
-        assert!(doc.ast.is_some(), "AST should be available");
+        assert!(!doc.parse_errors.is_empty(), "width has no value");
 
         // Root-level field completions should still work
         // Position at line 7 (empty line before closing paren), col 4
@@ -1009,7 +994,7 @@ graphics:
         let doc = make_doc(content);
         let resolver = make_resolver();
 
-        assert!(doc.ast.is_some(), "AST should be available");
+        assert!(!doc.parse_errors.is_empty(), "nested fields have no values");
 
         // Position for root-level field completions
         let completions = ron2_lsp::provide_completions(&doc, Position::new(5, 4), &resolver);
@@ -1092,6 +1077,66 @@ mod diagnostic_integration {
     }
 }
 
+/// Schemas beyond the showcase, written to their own directory.
+fn extra_schemas_dir() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("ron2-lsp-extra-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create schema temp dir");
+        let type_ref = |path: &str| TypeKind::TypeRef(path.to_string());
+        let opt = |path: &str| TypeKind::Option(Box::new(type_ref(path)));
+        let schemas = [
+            (
+                "t::FlatOpt",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("fz", TypeKind::Bool),
+                        Field::flattened("again", opt("t::FlatOpt")),
+                    ],
+                },
+            ),
+            (
+                "t::A",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("a", TypeKind::Bool),
+                        Field::flattened("b", opt("t::B")),
+                    ],
+                },
+            ),
+            (
+                "t::B",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("b", TypeKind::Bool),
+                        Field::flattened("a", opt("t::A")),
+                    ],
+                },
+            ),
+            (
+                "t::Root",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("shape", type_ref("t::Shape")),
+                        Field::new("opt", TypeKind::Option(Box::new(TypeKind::Bool))),
+                    ],
+                },
+            ),
+            (
+                "t::Shape",
+                TypeKind::Enum {
+                    variants: vec![Variant::unit("Empty"), Variant::unit("Full")],
+                },
+            ),
+        ];
+        for (path, kind) in schemas {
+            write_schema(path, &Schema::new(kind), Some(&dir)).expect("write schema");
+        }
+        dir
+    })
+    .clone()
+}
+
 mod nested_context {
     use ron2_lsp::{Document, SchemaResolver};
 
@@ -1099,7 +1144,7 @@ mod nested_context {
 
     fn make_resolver() -> SchemaResolver {
         let resolver = SchemaResolver::new();
-        resolver.set_schema_dirs(vec![showcase_schemas_dir()]);
+        resolver.set_schema_dirs(vec![showcase_schemas_dir(), extra_schemas_dir()]);
         resolver
     }
 
@@ -1208,5 +1253,24 @@ mod nested_context {
     fn hover_on_unknown_word_is_none() {
         let (doc, position) = doc_with_cursor(&format!("{HEADER}(nosu|chfield: 1)"));
         assert!(ron2_lsp::hover::provide_hover(&doc, position, &make_resolver()).is_none());
+    }
+
+    #[test]
+    fn flattened_option_self_reference_terminates() {
+        let labels = labels_at("#![type = \"t::FlatOpt\"]\n(|)");
+        assert_eq!(labels, ["fz"]);
+        let labels = labels_at("#![type = \"t::A\"]\n(|)");
+        assert_eq!(labels, ["a", "b"]);
+    }
+
+    #[test]
+    fn fields_without_root_parentheses_use_the_field_at_the_cursor() {
+        let labels = labels_at("#![type = \"t::Root\"]\nshape: Empty,\nopt: |");
+        assert_eq!(labels, ["None", "Some(...)", "true", "false"]);
+    }
+
+    #[test]
+    fn nothing_after_the_root_value() {
+        assert!(labels_at(&format!("{HEADER}(title: \"a\")|")).is_empty());
     }
 }

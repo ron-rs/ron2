@@ -7,7 +7,7 @@
 //! from the lexer instead of ad-hoc text scanning.
 
 use ron2::{
-    ErrorKind, Span,
+    Span,
     ast::{self, Expr, StructBody, StructField, Trivia, TupleElement},
 };
 
@@ -74,8 +74,11 @@ pub fn context_at_offset(doc: &ast::Document<'_>, offset: usize) -> CursorContex
     if offset < span.start_offset {
         return value_at(Vec::new());
     }
+    if let Some(context) = without_root_parens(doc, value, offset) {
+        return context;
+    }
     if offset > span.end_offset {
-        return after_root_value(doc, value, offset);
+        return CursorContext::None;
     }
     let walker = Walker {
         source: &doc.source,
@@ -88,20 +91,43 @@ fn value_at(path: Vec<PathStep>) -> CursorContext {
     CursorContext::Value { path, ident: None }
 }
 
-/// Recover `field: value` written without the surrounding parentheses.
+/// Handle `field: value, ...` written without the surrounding parentheses.
 ///
-/// The parser reads `graphics: Hi` as the value `graphics` followed by
-/// garbage, so the cursor ends up behind the root value.
-fn after_root_value(doc: &ast::Document<'_>, value: &Expr<'_>, offset: usize) -> CursorContext {
+/// The parser reads `shape: Empty, opt: x` as the value `shape` followed by
+/// garbage, so the document is re-parsed with the fields wrapped in `(...)`.
+fn without_root_parens(
+    doc: &ast::Document<'_>,
+    value: &Expr<'_>,
+    offset: usize,
+) -> Option<CursorContext> {
     let Expr::Struct(s) = value else {
-        return CursorContext::None;
+        return None;
     };
-    let rest = doc.source.get(s.name.span.end_offset..offset).unwrap_or("");
-    if s.body.is_none() && rest.trim_start().starts_with(':') {
-        value_at(vec![PathStep::Field(s.name.name.to_string())])
-    } else {
-        CursorContext::None
+    let after_name = doc.source.get(s.name.span.end_offset..)?;
+    if s.body.is_some() || !after_name.trim_start().starts_with(':') {
+        return None;
     }
+
+    let start = s.span.start_offset;
+    let wrapped = format!("{}({})", &doc.source[..start], &doc.source[start..]);
+    let (wrapped_doc, _) = ast::parse_document_lossy(&wrapped);
+    let mut context = context_at_offset(&wrapped_doc, offset + 1);
+
+    // Map identifier spans back to the original text, without the inserted `(`.
+    let ident = match &mut context {
+        CursorContext::FieldName { ident, .. } | CursorContext::Value { ident, .. } => ident,
+        _ => return Some(context),
+    };
+    if let Some(Ident { span, .. }) = ident {
+        span.start_offset -= 1;
+        span.end_offset -= 1;
+        for position in [&mut span.start, &mut span.end] {
+            if position.line == s.span.start.line {
+                position.col -= 1;
+            }
+        }
+    }
+    Some(context)
 }
 
 /// `start <= offset <= end`: the cursor touches the span.
@@ -140,18 +166,32 @@ impl Walker<'_> {
         self.offset >= open.end_offset && (self.offset <= close.start_offset || is_synthetic(close))
     }
 
+    /// Whether the source at `span` starts a string, byte string or char literal.
+    fn starts_literal(&self, span: &Span) -> bool {
+        let text = self.source.get(span.start_offset..).unwrap_or("");
+        let text = text.strip_prefix('b').unwrap_or(text);
+        let text = text.strip_prefix('r').unwrap_or(text);
+        text.starts_with(['"', '\'', '#'])
+    }
+
+    /// Whether the cursor is right behind a closing delimiter, where a value is complete.
+    fn after(&self, close: &Span) -> bool {
+        !is_synthetic(close) && self.offset >= close.end_offset
+    }
+
     fn walk(&self, expr: &Expr<'_>, mut path: Vec<PathStep>) -> CursorContext {
         let offset = self.offset;
+        if closing_delimiter(expr).is_some_and(|close| self.after(&close)) {
+            return CursorContext::None;
+        }
         match expr {
             Expr::String(_) | Expr::Char(_) | Expr::Bytes(_) | Expr::Byte(_)
                 if strictly_inside(expr.span(), offset) =>
             {
                 CursorContext::None
             }
-            Expr::Error(e)
-                if matches!(e.error.kind(), ErrorKind::ExpectedStringEnd)
-                    && offset > e.span.start_offset =>
-            {
+            // An unterminated string, byte string or char literal runs to the cursor.
+            Expr::Error(e) if offset > e.span.start_offset && self.starts_literal(&e.span) => {
                 CursorContext::None
             }
             Expr::AnonStruct(s) if self.inside(&s.open_paren, &s.close_paren) => {
@@ -315,27 +355,34 @@ impl Walker<'_> {
     /// Whether the cursor is in a comment inside `( ... )` parsed as unit.
     ///
     /// The parser keeps no trivia for `()`, so these comments are not in the
-    /// AST. The parentheses contain only whitespace and comments, which makes
-    /// this scan exact.
+    /// AST. The text between `(` and the cursor is only whitespace and
+    /// comments, so the lexer decides: a value placed at the cursor is
+    /// swallowed exactly when the cursor is inside a comment.
     fn in_unit_comment(&self, unit: &Span) -> bool {
-        let Some(mut rest) = self.source.get(unit.start_offset + 1..self.offset) else {
+        let Some(trivia) = self.source.get(unit.start_offset + 1..self.offset) else {
             return false;
         };
-        loop {
-            let line = rest.find("//");
-            let block = rest.find("/*");
-            match (line, block) {
-                (Some(l), b) if b.is_none_or(|b| l < b) => match rest[l..].find('\n') {
-                    Some(newline) => rest = &rest[l + newline..],
-                    None => return true,
-                },
-                (_, Some(b)) => match rest[b + 2..].find("*/") {
-                    Some(end) => rest = &rest[b + 2 + end + 2..],
-                    None => return true,
-                },
-                _ => return false,
-            }
-        }
+        let probe_source = format!("{trivia}0");
+        let (probe, _) = ast::parse_document_lossy(&probe_source);
+        !matches!(probe.value, Some(Expr::Number(_)))
+    }
+}
+
+/// The span of an expression's closing delimiter (the whole span for `()`).
+fn closing_delimiter(expr: &Expr<'_>) -> Option<Span> {
+    match expr {
+        Expr::Unit(u) => Some(u.span),
+        Expr::AnonStruct(s) => Some(s.close_paren),
+        Expr::Tuple(t) => Some(t.close_paren),
+        Expr::Seq(s) => Some(s.close_bracket),
+        Expr::Map(m) => Some(m.close_brace),
+        Expr::Option(o) => o.value.as_ref().map(|v| v.close_paren),
+        Expr::Struct(s) => match &s.body {
+            Some(StructBody::Fields(b)) => Some(b.close_brace),
+            Some(StructBody::Tuple(b)) => Some(b.close_paren),
+            None => None,
+        },
+        _ => None,
     }
 }
 
@@ -487,10 +534,15 @@ mod tests {
             "(a: \"x|y\")",
             "(a: \"unterminated|",
             "(a: 'x|')",
+            "(a: '|)",
+            "(a: 'x|",
+            "(a: b\"x|",
+            "(a: r#\"x|",
             "(a: 1, // comm|ent\n b: 2)",
             "(a: /* bl|ock */ 1)",
             "( // in unit|\n)",
             "( /* in unit| */ )",
+            "( /* a /* nested */ still| */ )",
             "#![type = \"a|\"]\n()",
         ] {
             assert_eq!(context(source), CursorContext::None, "{source}");
@@ -577,6 +629,25 @@ mod tests {
     #[test]
     fn missing_parentheses_at_root() {
         assert!(is_value(&context("graphics: |\n"), &[field("graphics")]));
+        assert!(is_value(&context("shape: Empty,\nopt: |"), &[field("opt")]));
+        assert!(is_field_name(&context("shape: Empty,\n|"), &[]));
+        let CursorContext::Value {
+            ident: Some(ident), ..
+        } = context("shape: Em|pty")
+        else {
+            panic!("expected identifier");
+        };
+        assert_eq!((ident.span.start_offset, ident.span.end_offset), (7, 12));
+        assert_eq!(ident.span.start.col, 8);
+    }
+
+    #[test]
+    fn nothing_after_a_complete_value() {
         assert_eq!(context("(a: 1)\n|"), CursorContext::None);
+        assert_eq!(context("(name: \"a\")|"), CursorContext::None);
+        assert_eq!(context("(a: (b: 1)|, c: 2)"), CursorContext::None);
+        assert_eq!(context("(a: [1]|)"), CursorContext::None);
+        assert_eq!(context("(a: X(b: 1)|)"), CursorContext::None);
+        assert_eq!(context("(a: ()|)"), CursorContext::None);
     }
 }

@@ -48,11 +48,22 @@ pub fn resolve<R: SchemaResolver + ?Sized>(
     unwrap_option: bool,
     resolver: &R,
 ) -> Option<Resolved> {
+    resolve_tracked(kind, doc, unwrap_option, resolver, &mut Vec::new())
+}
+
+/// [`resolve`], recording every `TypeRef` followed in `visited` and failing
+/// on one that is already there.
+fn resolve_tracked<R: SchemaResolver + ?Sized>(
+    kind: &TypeKind,
+    doc: Option<String>,
+    unwrap_option: bool,
+    resolver: &R,
+    visited: &mut Vec<String>,
+) -> Option<Resolved> {
     let mut current = Resolved {
         kind: kind.clone(),
         doc,
     };
-    let mut visited: Vec<String> = Vec::new();
     loop {
         match current.kind {
             TypeKind::TypeRef(path) => {
@@ -138,50 +149,54 @@ pub fn struct_fields<R: SchemaResolver + ?Sized>(
     target: &Target,
     resolver: &R,
 ) -> Option<Vec<Field>> {
+    // `TypeRef`s on the way to the fields, so flattening never re-enters them.
+    let mut stack = Vec::new();
     let fields = match target {
         Target::Variant(Variant {
             kind: VariantKind::Struct(fields),
             ..
         }) => fields.clone(),
         Target::Variant(_) => return None,
-        Target::Type { kind, .. } => match resolve(kind, None, true, resolver)?.kind {
-            TypeKind::Struct { fields } => fields,
-            _ => return None,
-        },
+        Target::Type { kind, .. } => {
+            match resolve_tracked(kind, None, true, resolver, &mut stack)?.kind {
+                TypeKind::Struct { fields } => fields,
+                _ => return None,
+            }
+        }
     };
     let mut out = Vec::with_capacity(fields.len());
-    inline_flattened(fields, resolver, &mut Vec::new(), &mut out);
+    inline_flattened(fields, resolver, &mut stack, &mut out);
     Some(out)
 }
 
 fn inline_flattened<R: SchemaResolver + ?Sized>(
     fields: Vec<Field>,
     resolver: &R,
-    // `TypeRef`s currently being inlined, to stop on self-flattening schemas.
+    // `TypeRef`s being resolved or inlined, to stop on self-flattening schemas.
     stack: &mut Vec<String>,
     out: &mut Vec<Field>,
 ) {
     for field in fields {
         if !field.flattened {
-            out.push(field);
-            continue;
-        }
-        let type_ref = field.ty.type_ref_path().map(str::to_string);
-        if type_ref.as_ref().is_some_and(|path| stack.contains(path)) {
+            // A root schema loaded from a file is not on the stack, so a self-flattening
+            // root is inlined once more; its repeated fields are dropped here.
+            if !out.iter().any(|f| f.name == field.name) {
+                out.push(field);
+            }
             continue;
         }
         // A flattened map accepts arbitrary keys, so it contributes no named fields.
+        // Resolving through the stack skips any `TypeRef` (also behind `Option`)
+        // that is already being inlined.
+        let depth = stack.len();
         if let Some(Resolved {
             kind: TypeKind::Struct { fields },
             ..
-        }) = resolve(&field.ty, None, true, resolver)
+        }) = resolve_tracked(&field.ty, None, true, resolver, stack)
         {
-            stack.extend(type_ref.clone());
             inline_flattened(fields, resolver, stack, out);
-            if type_ref.is_some() {
-                stack.pop();
-            }
         }
+        stack.truncate(depth);
     }
 }
 
@@ -283,5 +298,49 @@ pub(crate) mod tests {
         let fields = struct_fields(&Target::ty(type_ref("t::Outer")), &r).expect("struct");
         let names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["a", "b"]);
+    }
+
+    #[test]
+    fn flattened_option_cycles_terminate_without_duplicates() {
+        let opt = |path: &str| TypeKind::Option(Box::new(type_ref(path)));
+        let r = resolver(&[
+            (
+                "t::FlatOpt",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("fz", TypeKind::Bool),
+                        Field::flattened("again", opt("t::FlatOpt")),
+                    ],
+                },
+            ),
+            (
+                "t::A",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("a", TypeKind::Bool),
+                        Field::flattened("b", opt("t::B")),
+                    ],
+                },
+            ),
+            (
+                "t::B",
+                TypeKind::Struct {
+                    fields: vec![
+                        Field::new("b", TypeKind::Bool),
+                        Field::flattened("a", opt("t::A")),
+                    ],
+                },
+            ),
+        ]);
+        let names = |root: &str| -> Vec<String> {
+            struct_fields(&Target::ty(type_ref(root)), &r)
+                .expect("struct")
+                .into_iter()
+                .map(|f| f.name)
+                .collect()
+        };
+        assert_eq!(names("t::FlatOpt"), ["fz"]);
+        assert_eq!(names("t::A"), ["a", "b"]);
+        assert_eq!(names("t::B"), ["b", "a"]);
     }
 }
