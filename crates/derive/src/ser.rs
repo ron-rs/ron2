@@ -7,6 +7,7 @@ use syn::spanned::Spanned;
 use crate::{
     ast::{Container, Data, Field, Style, Variant, unraw},
     bound::{self, Derive},
+    names::{self, Direction},
 };
 
 pub fn expand(cont: &Container<'_>) -> TokenStream {
@@ -14,6 +15,7 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
     let (impl_generics, ty_generics, _) = cont.generics.split_for_impl();
     let where_clause = bound::where_clause(cont, Derive::ToRon);
     let name = &cont.name;
+    let mut checks = Vec::new();
 
     let mut fields_impl = None;
     let body = match &cont.data {
@@ -27,6 +29,10 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
                 let member = &f.member;
                 (*f, quote!(&self.#member))
             }));
+            let tree = names::tree(fields, Direction::Write);
+            let check = names::unique_check(cont, fields, Direction::Write, &unraw(ident));
+            checks.extend(check.item);
+            let check = check.stmt;
             let catch_all = active.iter().filter(|f| f.is_flatten()).map(|f| {
                 let ty = f.ty;
                 quote!(<#ty as ::ron2::convert::ToRonFields>::CATCH_ALL)
@@ -34,11 +40,13 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
             fields_impl = Some(quote! {
                 impl #impl_generics ::ron2::convert::ToRonFields for #ident #ty_generics #where_clause {
                     const CATCH_ALL: bool = false #(|| #catch_all)*;
+                    const FIELDS: &'static ::ron2::convert::FieldNames = #tree;
 
                     fn to_fields(
                         &self,
                         __fields: &mut ::ron2::convert::StructFieldList,
                     ) -> ::ron2::error::Result<()> {
+                        #check
                         #pushes
                         ::core::result::Result::Ok(())
                     }
@@ -69,7 +77,9 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
         Data::Enum(variants) if variants.is_empty() => quote!(match *self {}),
         Data::Enum(variants) => {
             let enum_name = unraw(ident);
-            let arms = variants.iter().map(|v| variant_arm(&enum_name, v));
+            let arms = variants
+                .iter()
+                .map(|v| variant_arm(cont, &enum_name, v, &mut checks));
             quote!(match self { #(#arms)* })
         }
     };
@@ -82,10 +92,18 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
         }
 
         #fields_impl
+        #(#checks)*
     }
 }
 
-fn variant_arm(enum_name: &str, variant: &Variant<'_>) -> TokenStream {
+/// The match arm writing `variant`; free items (the field-name check) go to
+/// `checks`.
+fn variant_arm(
+    cont: &Container<'_>,
+    enum_name: &str,
+    variant: &Variant<'_>,
+    checks: &mut Vec<TokenStream>,
+) -> TokenStream {
     let ident = variant.ident;
     let name = &variant.name;
     if variant.attrs.skip.is_some() {
@@ -141,8 +159,13 @@ fn variant_arm(enum_name: &str, variant: &Variant<'_>) -> TokenStream {
                     .zip(bindings.iter().map(|b| quote!(#b))),
             );
             let capacity = active.len();
+            let label = format!("{enum_name}::{}", unraw(ident));
+            let check = names::unique_check(cont, &variant.fields, Direction::Write, &label);
+            checks.extend(check.item);
+            let check = check.stmt;
             quote! {
                 Self::#ident { #(#members: #bindings,)* .. } => {
+                    #check
                     let mut __vec = ::std::vec::Vec::with_capacity(#capacity);
                     {
                         let __fields = &mut __vec;

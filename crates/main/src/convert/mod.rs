@@ -245,6 +245,12 @@ pub trait FromRonFields: Sized {
     /// fields get their keys regardless of declaration order.
     const CATCH_ALL: bool = false;
 
+    /// The RON field names this type reads, for the compile-time check that
+    /// a struct and its flattened fields read no name twice.
+    ///
+    /// Types that accept arbitrary fields (such as maps) list none.
+    const FIELDS: &'static FieldNames = &FieldNames::EMPTY;
+
     /// Consume fields from an existing map access to construct this type.
     fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self>;
 
@@ -255,6 +261,28 @@ pub trait FromRonFields: Sized {
     /// whether a flattened `Option<Self>` is present. Types that accept
     /// arbitrary fields (such as maps) add nothing.
     fn field_names(_names: &mut Vec<&'static str>) {}
+}
+
+/// The field names of a struct, as a tree that follows `#[ron(flatten)]`:
+/// the struct's own names and the [`FieldNames`] of each flattened field.
+///
+/// A tree rather than a flat list because constants cannot concatenate
+/// slices of generic length. See [`FromRonFields::FIELDS`] and
+/// [`ToRonFields::FIELDS`].
+#[derive(Debug)]
+pub struct FieldNames {
+    /// Names of the fields read or written directly.
+    pub own: &'static [&'static str],
+    /// Names of the flattened fields.
+    pub flattened: &'static [&'static FieldNames],
+}
+
+impl FieldNames {
+    /// No fields.
+    pub const EMPTY: Self = Self {
+        own: &[],
+        flattened: &[],
+    };
 }
 
 /// The fields of a struct, in the form [`ToRonFields::to_fields`] appends to.
@@ -270,12 +298,19 @@ pub trait ToRonFields {
     /// write these after all other fields.
     const CATCH_ALL: bool = false;
 
+    /// The RON field names this type may write, for the compile-time check
+    /// that a struct and its flattened fields write no name twice.
+    ///
+    /// Types that hold arbitrary fields (such as maps) list none.
+    const FIELDS: &'static FieldNames = &FieldNames::EMPTY;
+
     /// Append this value's fields to `fields`.
     fn to_fields(&self, fields: &mut StructFieldList) -> Result<()>;
 }
 
 impl<T: ToRonFields> ToRonFields for Option<T> {
     const CATCH_ALL: bool = T::CATCH_ALL;
+    const FIELDS: &'static FieldNames = T::FIELDS;
 
     fn to_fields(&self, fields: &mut StructFieldList) -> Result<()> {
         match self {

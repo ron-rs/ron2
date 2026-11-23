@@ -55,6 +55,7 @@
 //! - `#[ron(default)]` - Use `Default::default()` if missing
 //! - `#[ron(default = "path::to::fn")]` - Use a custom function if missing (or skipped)
 //! - `#[ron(flatten)]` - Merge the fields of a nested struct into this one
+//!   (sharing a field name with it is a compile error)
 //! - `#[ron(skip_serializing_if = "path::to::fn")]` - Skip if the predicate returns true
 //! - `#[ron(explicit)]` - Require explicit `Some(...)` or `None` for an `Option` field
 //! - `#[ron(opt)]` - `default`, and skip serialization when equal to the default
@@ -69,6 +70,7 @@ mod ast;
 mod attr;
 mod bound;
 mod de;
+mod names;
 mod schema;
 mod ser;
 

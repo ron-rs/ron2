@@ -7,7 +7,7 @@ use alloc::{borrow::Cow, format, string::ToString, vec::Vec};
 
 use crate::{
     ast::{Expr, SeqItem, StructBody, StructExpr, TupleElement},
-    convert::{AstMapAccess, FromRon, expr_type_name},
+    convert::{AstMapAccess, FieldNames, FromRon, expr_type_name},
     error::{Error, ErrorKind, Result},
     schema::{Field, TypeKind},
 };
@@ -280,6 +280,121 @@ pub fn deny_unknown_fields(
         names(&mut list);
         Cow::Owned(list)
     })
+}
+
+/// Compile-time check that `fields` (a struct or struct variant with
+/// `#[ron(flatten)]` fields) contains no RON field name twice.
+///
+/// `container` names the type for the error and `action` is `"reads"` or
+/// `"writes"`. The derive evaluates this in a constant, so a conflict is a
+/// compile error: input could never satisfy both fields, and output would
+/// carry the name twice.
+// Only evaluated in constants: the panic is a compile error, never a runtime one.
+#[allow(clippy::panic)]
+pub const fn assert_unique_field_names(fields: &FieldNames, container: &str, action: &str) {
+    if let Some(name) = find_duplicate(fields, fields) {
+        let message = ConstMessage::new()
+            .push("`")
+            .push(container)
+            .push("` ")
+            .push(action)
+            .push(" field `")
+            .push(name)
+            .push("` more than once; names must be unique across #[ron(flatten)] fields");
+        panic!("{}", message.as_str());
+    }
+}
+
+/// The first name of `node` (a subtree of `root`) that occurs twice in `root`.
+const fn find_duplicate(node: &FieldNames, root: &FieldNames) -> Option<&'static str> {
+    let mut i = 0;
+    while i < node.own.len() {
+        if count_field_name(root, node.own[i]) > 1 {
+            return Some(node.own[i]);
+        }
+        i += 1;
+    }
+    let mut j = 0;
+    while j < node.flattened.len() {
+        if let Some(name) = find_duplicate(node.flattened[j], root) {
+            return Some(name);
+        }
+        j += 1;
+    }
+    None
+}
+
+const fn count_field_name(fields: &FieldNames, name: &str) -> usize {
+    let mut count = 0;
+    let mut i = 0;
+    while i < fields.own.len() {
+        if const_str_eq(fields.own[i], name) {
+            count += 1;
+        }
+        i += 1;
+    }
+    let mut j = 0;
+    while j < fields.flattened.len() {
+        count += count_field_name(fields.flattened[j], name);
+        j += 1;
+    }
+    count
+}
+
+const fn const_str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// A message built in a constant (const panics take a single `&str`),
+/// truncated at a char boundary when it exceeds the buffer.
+struct ConstMessage {
+    buf: [u8; 512],
+    len: usize,
+}
+
+impl ConstMessage {
+    const fn new() -> Self {
+        Self {
+            buf: [0; 512],
+            len: 0,
+        }
+    }
+
+    const fn push(mut self, s: &str) -> Self {
+        let mut end = s.len();
+        if end > self.buf.len() - self.len {
+            end = self.buf.len() - self.len;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+        }
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < end {
+            self.buf[self.len + i] = bytes[i];
+            i += 1;
+        }
+        self.len += end;
+        self
+    }
+
+    const fn as_str(&self) -> &str {
+        match core::str::from_utf8(self.buf.split_at(self.len).0) {
+            Ok(s) => s,
+            Err(_) => "duplicate field name across #[ron(flatten)] fields",
+        }
+    }
 }
 
 /// Schema of a `#[ron(flatten)]` field.

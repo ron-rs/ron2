@@ -11,17 +11,19 @@ use syn::spanned::Spanned;
 use crate::{
     ast::{Container, Data, Field, Style, Variant, unraw},
     bound::{self, Derive},
+    names::{self, Direction},
 };
 
 pub fn expand(cont: &Container<'_>) -> TokenStream {
     let ident = cont.ident;
     let (impl_generics, ty_generics, _) = cont.generics.split_for_impl();
     let where_clause = bound::where_clause(cont, Derive::FromRon);
+    let mut checks = Vec::new();
 
     let (body, fields_impl) = match &cont.data {
         Data::Struct(..) if cont.attrs.transparent.is_some() => (transparent(cont), None),
         Data::Struct(Style::Named, fields) => {
-            let (body, fields_impl) = named_struct(cont, fields);
+            let (body, fields_impl) = named_struct(cont, fields, &mut checks);
             (body, Some(fields_impl))
         }
         Data::Struct(Style::Tuple, fields) => (tuple_struct(cont, fields), None),
@@ -33,7 +35,7 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
             };
             (body, None)
         }
-        Data::Enum(variants) => (enum_body(cont, variants), None),
+        Data::Enum(variants) => (enum_body(cont, variants, &mut checks), None),
     };
 
     let fields_impl = fields_impl.map(|fields_impl| {
@@ -52,12 +54,18 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
         }
 
         #fields_impl
+        #(#checks)*
     }
 }
 
 /// `FromRon` reads a named struct through its `FromRonFields` impl, which
-/// `#[ron(flatten)]` in other structs uses too.
-fn named_struct(cont: &Container<'_>, fields: &[Field<'_>]) -> (TokenStream, TokenStream) {
+/// `#[ron(flatten)]` in other structs uses too. Free items (the field-name
+/// check) go to `checks`.
+fn named_struct(
+    cont: &Container<'_>,
+    fields: &[Field<'_>],
+    checks: &mut Vec<TokenStream>,
+) -> (TokenStream, TokenStream) {
     let name = &cont.name;
     let own_names = own_field_names(fields);
     let accepts_empty = accepts_empty(fields);
@@ -79,6 +87,10 @@ fn named_struct(cont: &Container<'_>, fields: &[Field<'_>]) -> (TokenStream, Tok
 
     let construct = construct_named(&quote!(Self), fields);
     let push_names = push_field_names(fields);
+    let tree = names::tree(fields, Direction::Read);
+    let check = names::unique_check(cont, fields, Direction::Read, &unraw(cont.ident));
+    checks.extend(check.item);
+    let check = check.stmt;
     let catch_all = fields
         .iter()
         .filter(|f| f.is_flatten() && !f.skip_deserializing())
@@ -88,10 +100,12 @@ fn named_struct(cont: &Container<'_>, fields: &[Field<'_>]) -> (TokenStream, Tok
         });
     let fields_impl = quote! {
         const CATCH_ALL: bool = false #(|| #catch_all)*;
+        const FIELDS: &'static ::ron2::convert::FieldNames = #tree;
 
         fn from_fields(
             __access: &mut ::ron2::convert::AstMapAccess<'_>,
         ) -> ::ron2::error::Result<Self> {
+            #check
             #construct
             ::core::result::Result::Ok(__value)
         }
@@ -152,13 +166,17 @@ fn transparent(cont: &Container<'_>) -> TokenStream {
     quote!(::core::result::Result::Ok(Self { #(#inits),* }))
 }
 
-fn enum_body(cont: &Container<'_>, variants: &[Variant<'_>]) -> TokenStream {
+fn enum_body(
+    cont: &Container<'_>,
+    variants: &[Variant<'_>],
+    checks: &mut Vec<TokenStream>,
+) -> TokenStream {
     let enum_name = unraw(cont.ident);
     let active: Vec<_> = variants.iter().filter(|v| v.attrs.skip.is_none()).collect();
     let names: Vec<_> = active.iter().map(|v| &v.name).collect();
     let arms = active.iter().map(|variant| {
         let name = &variant.name;
-        let body = variant_body(cont, variant);
+        let body = variant_body(cont, variant, checks);
         quote!(#name => { #body })
     });
 
@@ -216,7 +234,11 @@ fn enum_body(cont: &Container<'_>, variants: &[Variant<'_>]) -> TokenStream {
     }
 }
 
-fn variant_body(cont: &Container<'_>, variant: &Variant<'_>) -> TokenStream {
+fn variant_body(
+    cont: &Container<'_>,
+    variant: &Variant<'_>,
+    checks: &mut Vec<TokenStream>,
+) -> TokenStream {
     let ident = variant.ident;
     let name = &variant.name;
     match variant.style {
@@ -234,6 +256,10 @@ fn variant_body(cont: &Container<'_>, variant: &Variant<'_>) -> TokenStream {
         Style::Named => {
             let accepts_empty = accepts_empty(&variant.fields);
             let construct = construct_named(&quote!(Self::#ident), &variant.fields);
+            let label = format!("{}::{}", unraw(cont.ident), unraw(ident));
+            let check = names::unique_check(cont, &variant.fields, Direction::Read, &label);
+            checks.extend(check.item);
+            let check = check.stmt;
             let deny = cont.attrs.deny_unknown_fields.map(|_| {
                 let push_names = push_field_names(&variant.fields);
                 quote! {
@@ -241,6 +267,7 @@ fn variant_body(cont: &Container<'_>, variant: &Variant<'_>) -> TokenStream {
                 }
             });
             quote! {
+                #check
                 let __access = &mut ::ron2::__private::variant_access(__s, #name, #accepts_empty)?;
                 #construct
                 #deny

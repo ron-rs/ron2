@@ -6,7 +6,9 @@
 //! 3. Context about expected vs actual types
 //! 4. Suggestions for valid alternatives (for unknown fields/variants)
 
-use ron2::{FromRon, error::ErrorKind};
+use std::collections::BTreeMap;
+
+use ron2::{FromRon, ToRon, error::ErrorKind, fmt::FormatConfig};
 use ron2_derive::Ron;
 
 // =============================================================================
@@ -933,47 +935,73 @@ fn flatten_with_optional_field_error() {
 // Flatten Field Conflicts Tests
 // =============================================================================
 
-/// Inner struct for conflict tests.
+// A field name shared by a struct and its flattened fields is a compile
+// error (`tests/ui/flatten_conflicts.rs`). The cases below are no conflicts.
+
 #[derive(Debug, Ron, PartialEq)]
 struct ConflictInner {
-    shared: i32, // Same name as outer field
+    shared: i32,
 }
 
-/// Outer struct with potential field name conflict.
-#[derive(Debug, Ron, PartialEq)]
-struct ConflictOuter {
-    shared: String, // Conflicts with inner.shared
+/// Skipping the outer field on one side removes the conflict on that side.
+#[derive(Debug, FromRon, PartialEq)]
+struct SkippedOuter {
+    #[ron(skip_deserializing)]
+    shared: String,
     #[ron(flatten)]
     inner: ConflictInner,
 }
 
+/// A flattened map takes the fields nobody else claimed.
+#[derive(Debug, Ron, PartialEq)]
+struct CatchAllOuter {
+    shared: String,
+    #[ron(flatten)]
+    rest: BTreeMap<String, i32>,
+}
+
+/// The names of a generic flattened field depend on the instantiation.
+#[derive(Debug, Ron, PartialEq)]
+struct GenericOuter<T> {
+    name: String,
+    #[ron(flatten)]
+    inner: T,
+}
+
 #[test]
 fn flatten_field_name_conflict() {
-    // When outer and flattened inner have same field name,
-    // behavior should be well-defined (typically outer wins or error).
-    // This test documents whatever the behavior ends up being.
-    let input = r#"(shared: "text")"#;
-    let result = ConflictOuter::from_ron(input);
+    let skipped = SkippedOuter::from_ron("(shared: 1)").unwrap();
+    assert_eq!(
+        skipped,
+        SkippedOuter {
+            shared: String::new(),
+            inner: ConflictInner { shared: 1 },
+        }
+    );
 
-    // Document current behavior - this may be an error or one wins
-    // For now, just verify we get SOME result (either Ok or Err)
-    match result {
-        Ok(val) => {
-            // If it succeeds, document which interpretation won
-            eprintln!("Field conflict resolved: outer.shared = {:?}", val.shared);
+    let catch_all = CatchAllOuter::from_ron(r#"(shared: "text", extra: 2)"#).unwrap();
+    assert_eq!(
+        catch_all,
+        CatchAllOuter {
+            shared: "text".into(),
+            rest: BTreeMap::from([("extra".into(), 2)]),
         }
-        Err(err) => {
-            // If it fails, that's also valid - document the error
-            eprintln!("Field conflict produced error: {}", err);
-        }
-    }
+    );
+    assert_eq!(
+        catch_all.to_ron_with(&FormatConfig::minimal()).unwrap(),
+        r#"CatchAllOuter(shared:"text",extra:2)"#
+    );
+
+    let generic = GenericOuter::<ConflictInner>::from_ron(r#"(name: "n", shared: 3)"#).unwrap();
+    assert_eq!(
+        generic.to_ron_with(&FormatConfig::minimal()).unwrap(),
+        r#"GenericOuter(name:"n",shared:3)"#
+    );
 }
 
 // =============================================================================
 // Map Key vs Value Error Context Tests
 // =============================================================================
-
-use std::collections::BTreeMap;
 
 /// Tests for distinguishing and correctly pointing to map KEY errors.
 mod map_key_errors {

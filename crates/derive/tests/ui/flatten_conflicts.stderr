@@ -1,0 +1,50 @@
+error[E0080]: evaluation panicked: `Outer` reads field `shared` more than once; names must be unique across #[ron(flatten)] fields
+  --> tests/ui/flatten_conflicts.rs:10:10
+   |
+10 | #[derive(ron2::FromRon)]
+   |          ^^^^^^^^^^^^^ evaluation of `_` failed inside this call
+   |
+note: inside `ron2::__private::assert_unique_field_names`
+  --> $RUST/core/src/panic.rs
+   |
+   |         $crate::panicking::panic_display(&$arg);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: $WORKSPACE/crates/main/src/__private.rs
+   |
+   |         panic!("{}", message.as_str());
+   |         ------------------------------ in this macro invocation
+
+error[E0080]: evaluation panicked: `Siblings` writes field `shared` more than once; names must be unique across #[ron(flatten)] fields
+  --> tests/ui/flatten_conflicts.rs:24:10
+   |
+24 | #[derive(ron2::ToRon)]
+   |          ^^^^^^^^^^^ evaluation of `_` failed inside this call
+   |
+note: inside `ron2::__private::assert_unique_field_names`
+  --> $RUST/core/src/panic.rs
+   |
+   |         $crate::panicking::panic_display(&$arg);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: $WORKSPACE/crates/main/src/__private.rs
+   |
+   |         panic!("{}", message.as_str());
+   |         ------------------------------ in this macro invocation
+
+error[E0080]: evaluation panicked: `Nested::Variant` reads field `shared` more than once; names must be unique across #[ron(flatten)] fields
+  --> tests/ui/flatten_conflicts.rs:39:10
+   |
+39 | #[derive(ron2::FromRon)]
+   |          ^^^^^^^^^^^^^ evaluation of `_` failed inside this call
+   |
+note: inside `ron2::__private::assert_unique_field_names`
+  --> $RUST/core/src/panic.rs
+   |
+   |         $crate::panicking::panic_display(&$arg);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: $WORKSPACE/crates/main/src/__private.rs
+   |
+   |         panic!("{}", message.as_str());
+   |         ------------------------------ in this macro invocation

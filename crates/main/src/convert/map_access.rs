@@ -4,7 +4,7 @@ use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
 
-use super::{FromRon, FromRonFields, expr_type_name};
+use super::{FieldNames, FromRon, FromRonFields, expr_type_name};
 use crate::{
     ast::{AnonStructExpr, Expr, FieldsBody, StructField, synthetic_string},
     error::{Error, ErrorKind, Result, Span},
@@ -362,6 +362,7 @@ impl<'a> AstMapAccess<'a> {
 /// collected at least one field.
 impl<T: FromRonFields> FromRonFields for Option<T> {
     const CATCH_ALL: bool = T::CATCH_ALL;
+    const FIELDS: &'static FieldNames = T::FIELDS;
 
     fn from_fields(access: &mut AstMapAccess<'_>) -> Result<Self> {
         if T::CATCH_ALL {
