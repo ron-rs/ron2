@@ -6,7 +6,7 @@ use crate::{
     config::{DocConfig, OutputFormat},
     discovery::DiscoveredSchema,
     example::generate_example,
-    link::{LinkFrom, LinkResolver, type_anchor, type_path_short_name, type_path_to_md_path},
+    link::{LinkFrom, LinkResolver, type_path_short_name, type_path_to_md_path, variant_anchor},
 };
 
 /// Generates documentation pages for a set of discovered schemas.
@@ -175,7 +175,7 @@ impl<'a> DocGenerator<'a> {
                 level + 1,
                 &format!(
                     "<a id=\"{}\"></a>`{}`",
-                    variant_anchor(type_path, variant),
+                    variant_anchor(type_path, &variant.name),
                     variant.name
                 ),
             ));
@@ -201,16 +201,11 @@ impl<'a> DocGenerator<'a> {
     }
 }
 
-/// Anchor of a variant section, qualified by its type so it is unique on a single page.
-fn variant_anchor(type_path: &str, variant: &Variant) -> String {
-    format!("{}-{}", type_anchor(type_path), variant.name.to_lowercase())
-}
-
 fn variant_link(type_path: &str, variant: &Variant) -> String {
     format!(
         "[`{}`](#{})",
         variant.name,
-        variant_anchor(type_path, variant)
+        variant_anchor(type_path, &variant.name)
     )
 }
 
@@ -368,11 +363,11 @@ mod tests {
         let page = DocGenerator::new(&schemas, &config).type_page(&schemas[0]);
 
         assert!(
-            page.contains("| [`Point`](#my-shape-point) | Tuple |"),
+            page.contains("| [`Point`](#my-Shape.Point) | Tuple |"),
             "{page}"
         );
         assert!(
-            page.contains("### <a id=\"my-shape-point\"></a>`Point`"),
+            page.contains("### <a id=\"my-Shape.Point\"></a>`Point`"),
             "{page}"
         );
         // Tuple types are not wrapped in an extra pair of backticks.

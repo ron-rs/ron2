@@ -7,10 +7,17 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::Args;
-use ron2_doc::{DocConfig, DocGenerator, OutputFormat, OutputMode, discover_schemas};
+use ron2_doc::{
+    DocConfig, DocGenerator, OutputFormat, OutputMode, discover_schemas, link::slugify,
+};
 
 /// Generate documentation from RON schema files
 #[derive(Args, Debug)]
+#[command(
+    after_help = "With --format starlight, links are root-relative routes. They are derived \
+from an --output inside src/content/docs (e.g. src/content/docs/reference -> /reference); \
+otherwise pass --base-url with the route the output is served under, including any Astro base."
+)]
 pub struct DocArgs {
     /// Input path (directory or single .schema.ron file)
     #[arg(value_name = "INPUT")]
@@ -20,7 +27,7 @@ pub struct DocArgs {
     #[arg(short, long, value_name = "PATH")]
     pub output: PathBuf,
 
-    /// Base URL for cross-type links (e.g., "/docs/types")
+    /// Base URL for cross-type links (e.g., "/docs/types"); plain output uses relative links without it
     #[arg(long, value_name = "URL")]
     pub base_url: Option<String>,
 
@@ -57,10 +64,23 @@ pub fn run(args: DocArgs) -> Result<()> {
         OutputMode::MultiPage
     };
 
+    let base_url = match (&args.base_url, args.format) {
+        (None, OutputFormat::Starlight) if !args.single_page => {
+            Some(starlight_base(&args.output).with_context(|| {
+                format!(
+                    "--format starlight needs --base-url: {} is not inside src/content/docs, \
+                     so the route it is served under is unknown",
+                    args.output.display()
+                )
+            })?)
+        }
+        _ => args.base_url,
+    };
+
     let config = DocConfig {
         input: args.input,
         output: args.output.clone(),
-        base_url: args.base_url,
+        base_url,
         format: args.format,
         output_mode,
         example_depth: args.example_depth,
@@ -98,6 +118,24 @@ pub fn run(args: DocArgs) -> Result<()> {
     Ok(())
 }
 
+/// The Starlight route of an output directory inside `src/content/docs`.
+fn starlight_base(output: &Path) -> Option<String> {
+    let absolute = std::env::current_dir().ok()?.join(output);
+    let segments: Vec<String> = absolute
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let docs = segments
+        .windows(3)
+        .rposition(|w| w == ["src", "content", "docs"])?;
+    let route: Vec<String> = segments[docs + 3..]
+        .iter()
+        .filter(|s| *s != ".")
+        .map(|s| slugify(s))
+        .collect();
+    Some(format!("/{}", route.join("/")))
+}
+
 /// Write a file, creating its parent directories.
 fn write(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent()
@@ -107,4 +145,22 @@ fn write(path: &Path, content: &str) -> Result<()> {
             .with_context(|| format!("failed to create directory: {}", parent.display()))?;
     }
     fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn starlight_base_from_content_docs() {
+        assert_eq!(
+            starlight_base(Path::new("site/src/content/docs/Reference/types")).as_deref(),
+            Some("/reference/types")
+        );
+        assert_eq!(
+            starlight_base(Path::new("/abs/src/content/docs")).as_deref(),
+            Some("/")
+        );
+        assert_eq!(starlight_base(Path::new("docs/out")), None);
+    }
 }

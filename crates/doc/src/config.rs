@@ -29,7 +29,10 @@ pub struct DocConfig {
     pub input: PathBuf,
     /// Output directory for markdown files (or single file path for SinglePage mode)
     pub output: PathBuf,
-    /// Base URL for cross-type links (e.g., "/docs/types")
+    /// Base URL for cross-type links (e.g., "/docs/types").
+    ///
+    /// Plain output links relative to each page without it. Starlight output
+    /// always links by root-relative route and treats `None` as the docs root.
     pub base_url: Option<String>,
     /// Output format
     pub format: OutputFormat,

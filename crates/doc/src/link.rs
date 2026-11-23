@@ -88,41 +88,46 @@ impl<'a> LinkResolver<'a> {
     }
 
     /// The link target for a type's documentation, as seen from `from`.
+    ///
+    /// Markdown output uses links relative to the current page, or absolute
+    /// ones under `base_url`. Starlight output always uses root-relative
+    /// routes (`{base_url}/crate/type/`), because Starlight resolves sidebar
+    /// links from the site root and serves pages with or without a trailing
+    /// slash; without `base_url` the output is assumed to be the docs root.
     pub fn href(&self, type_path: &str, from: LinkFrom<'_>) -> String {
         if let LinkFrom::SamePage = from {
             return format!("#{}", type_anchor(type_path));
         }
-        let starlight = matches!(self.format, OutputFormat::Starlight);
         let target = self.route_segments(type_path);
-        let trailing = if starlight { "/" } else { "" };
+        if let OutputFormat::Starlight = self.format {
+            let base = self.base_url.unwrap_or("").trim_end_matches('/');
+            return format!("{base}/{}/", target.join("/"));
+        }
         if let Some(base) = self.base_url {
             let base = base.trim_end_matches('/');
-            return format!("{base}/{}{trailing}", target.join("/"));
+            return format!("{base}/{}", target.join("/"));
         }
 
+        // A Markdown page lives in the directory of its module.
         let from_dir: Vec<String> = match from {
             LinkFrom::SamePage | LinkFrom::Index => Vec::new(),
-            // A Starlight page is served as a directory; a Markdown page lives in one.
-            LinkFrom::Type(path) if starlight => self.route_segments(path),
             LinkFrom::Type(path) => {
                 let mut segments = self.route_segments(path);
                 segments.pop();
                 segments
             }
         };
-
         let common = from_dir
             .iter()
             .zip(&target)
             .take_while(|(a, b)| a == b)
             .count();
-        let rest = target[common..].join("/");
         let up = from_dir.len() - common;
-        match (up, rest.is_empty()) {
-            (0, true) => "./".to_string(),
-            (0, false) => format!("./{rest}{trailing}"),
-            (_, true) => "../".repeat(up),
-            (_, false) => format!("{}{rest}{trailing}", "../".repeat(up)),
+        let rest = target[common..].join("/");
+        if up == 0 {
+            format!("./{rest}")
+        } else {
+            format!("{}{rest}", "../".repeat(up))
         }
     }
 
@@ -176,21 +181,33 @@ impl<'a> LinkResolver<'a> {
     }
 }
 
-/// The HTML anchor id of a type in single-page output. Unique per type path.
+/// The HTML anchor id of a type in single-page output.
+///
+/// Path segments keep their case and are joined with `-`, so distinct Rust
+/// type paths get distinct anchors. Anchors never contain `.`, which
+/// [`variant_anchor`] uses to stay apart from all type anchors.
 pub fn type_anchor(type_path: &str) -> String {
     type_path
         .split("::")
         .map(|segment| {
             segment
                 .chars()
-                .map(|c| match c {
-                    c if c.is_ascii_alphanumeric() || c == '_' => c.to_ascii_lowercase(),
-                    _ => '-',
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '_' {
+                        c
+                    } else {
+                        '-'
+                    }
                 })
                 .collect::<String>()
         })
         .collect::<Vec<_>>()
         .join("-")
+}
+
+/// The anchor id of an enum variant's section.
+pub fn variant_anchor(type_path: &str, variant: &str) -> String {
+    format!("{}.{variant}", type_anchor(type_path))
 }
 
 /// Convert a type path to the Markdown file path of its page.
@@ -221,14 +238,15 @@ fn is_path_suffix(suffix: &str, path: &str) -> bool {
 }
 
 /// Slugify a path segment the way Astro/Starlight derive routes from file names.
-fn slugify(segment: &str) -> String {
+pub fn slugify(segment: &str) -> String {
     segment
         .chars()
         .filter_map(|c| match c {
-            c if c.is_alphanumeric() || c == '_' || c == '-' => Some(c.to_ascii_lowercase()),
+            c if c.is_alphanumeric() || c == '_' || c == '-' => Some(c),
             ' ' => Some('-'),
             _ => None,
         })
+        .flat_map(char::to_lowercase)
         .collect()
 }
 
@@ -342,14 +360,14 @@ mod tests {
             make_schema("game::WindowConfig"),
         ];
         let resolver = LinkResolver::new(&schemas, None, OutputFormat::Starlight);
-        // Starlight serves game/GameConfig.md at .../game/gameconfig/.
+        // Starlight serves game/GameConfig.md at /game/gameconfig/ under the docs root.
         assert_eq!(
             resolver.href("game::WindowConfig", LinkFrom::Type("game::GameConfig")),
-            "../windowconfig/"
+            "/game/windowconfig/"
         );
         assert_eq!(
             resolver.href("game::WindowConfig", LinkFrom::Index),
-            "./game/windowconfig/"
+            "/game/windowconfig/"
         );
         let with_base = LinkResolver::new(&schemas, Some("/types"), OutputFormat::Starlight);
         assert_eq!(
@@ -410,9 +428,25 @@ mod tests {
     fn test_type_anchor() {
         assert_eq!(
             type_anchor("my_crate::config::AppConfig"),
-            "my_crate-config-appconfig"
+            "my_crate-config-AppConfig"
         );
-        assert_eq!(type_anchor("Config"), "config");
+        assert_eq!(type_anchor("Config"), "Config");
+        // Case and nesting stay distinct, and variant anchors never equal type anchors.
+        assert_ne!(type_anchor("a::Foo"), type_anchor("a::foo"));
+        assert_ne!(
+            variant_anchor("game::Ship", "Fighter"),
+            type_anchor("game::Ship::Fighter")
+        );
+    }
+
+    #[test]
+    fn starlight_slugs_lowercase_unicode() {
+        let schemas = vec![make_schema("HTTP::Ünïcode_Type")];
+        let resolver = LinkResolver::new(&schemas, None, OutputFormat::Starlight);
+        assert_eq!(
+            resolver.href("HTTP::Ünïcode_Type", LinkFrom::Index),
+            "/http/ünïcode_type/"
+        );
     }
 
     #[test]
@@ -424,7 +458,7 @@ mod tests {
         let resolver = plain(&schemas);
         assert_eq!(
             resolver.type_to_markdown(&type_ref("crate_a::Config"), LinkFrom::SamePage),
-            "[`crate_a::Config`](#crate_a-config)"
+            "[`crate_a::Config`](#crate_a-Config)"
         );
     }
 }

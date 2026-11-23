@@ -106,9 +106,9 @@ mod tests {
         assert!(output.contains("# API Reference"));
         assert!(output.contains("## Table of Contents"));
         assert!(output.contains("### my_crate"));
-        assert!(output.contains("[`Config`](#my_crate-config)"));
-        assert!(output.contains("[`Server`](#my_crate-server)"));
-        assert!(output.contains("### <a id=\"my_crate-config\"></a>Config\n"));
+        assert!(output.contains("[`Config`](#my_crate-Config)"));
+        assert!(output.contains("[`Server`](#my_crate-Server)"));
+        assert!(output.contains("### <a id=\"my_crate-Config\"></a>Config\n"));
         assert!(!output.contains("{#"), "no Pandoc-only heading attributes");
         assert!(output.contains("Main configuration."));
     }
@@ -119,8 +119,8 @@ mod tests {
             make_schema("crate_a::Config", Some("Config A")),
             make_schema("crate_b::Config", Some("Config B")),
         ]);
-        assert!(output.contains("[`crate_a::Config`](#crate_a-config)"));
-        assert!(output.contains("[`crate_b::Config`](#crate_b-config)"));
+        assert!(output.contains("[`crate_a::Config`](#crate_a-Config)"));
+        assert!(output.contains("[`crate_b::Config`](#crate_b-Config)"));
     }
 
     #[test]
@@ -133,7 +133,7 @@ mod tests {
             }),
         };
         let output = single_page(&[enum_schema("app::Color"), enum_schema("app::Size")]);
-        assert!(output.contains("<a id=\"app-color-custom\"></a>"));
-        assert!(output.contains("<a id=\"app-size-custom\"></a>"));
+        assert!(output.contains("<a id=\"app-Color.Custom\"></a>"));
+        assert!(output.contains("<a id=\"app-Size.Custom\"></a>"));
     }
 }

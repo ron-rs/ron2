@@ -39,8 +39,8 @@ impl DocGenerator<'_> {
 
     /// A Starlight sidebar definition (JSON) with one group per crate.
     ///
-    /// Items link to the generated pages; set `base_url` to the route the
-    /// output directory is served under so the links are absolute.
+    /// Items link to the generated pages by root-relative route (see
+    /// [`LinkResolver::href`](crate::LinkResolver::href)), as Starlight expects.
     pub fn sidebar(&self) -> String {
         let sidebar: Vec<_> = group_by_module(self.schemas)
             .into_iter()
@@ -132,11 +132,11 @@ mod tests {
         let schemas = vec![make_schema("my_crate::Config", None)];
         let config = config(OutputFormat::Starlight);
         let generator = DocGenerator::new(&schemas, &config);
-        assert!(generator.index().contains("(./my_crate/config/)"));
+        assert!(generator.index().contains("(/my_crate/config/)"));
         assert!(
             generator
                 .sidebar()
-                .contains("\"link\": \"./my_crate/config/\"")
+                .contains("\"link\": \"/my_crate/config/\"")
         );
     }
 
