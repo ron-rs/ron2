@@ -857,6 +857,35 @@ pub struct Ident<'a> {
     pub name: Cow<'a, str>,
 }
 
+impl Ident<'_> {
+    /// How `name` is written in RON: as is when it is a plain identifier, otherwise as a
+    /// raw identifier `r#name` (e.g. `r#type.v2` or `r#true`).
+    #[must_use]
+    pub fn source_text(name: &str) -> Cow<'_, str> {
+        let mut chars = name.chars();
+        let plain = chars.next().is_some_and(crate::chars::is_ident_first_char)
+            && chars.all(crate::chars::is_ident_continue_char)
+            && !matches!(
+                name,
+                "true"
+                    | "false"
+                    | "None"
+                    | "Some"
+                    | "inf"
+                    | "inff32"
+                    | "inff64"
+                    | "NaN"
+                    | "NaNf32"
+                    | "NaNf64"
+            );
+        if plain {
+            Cow::Borrowed(name)
+        } else {
+            Cow::Owned(alloc::format!("r#{name}"))
+        }
+    }
+}
+
 impl_into_owned!(Ident {
     span: copy,
     name: cow,

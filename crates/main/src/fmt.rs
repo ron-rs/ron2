@@ -25,13 +25,15 @@
 //! ```
 
 use alloc::{
+    borrow::Cow,
     collections::BTreeMap,
     string::{String, ToString},
+    vec::Vec,
 };
 
 use crate::{
     ast::{
-        Comment, CommentKind, Document, Expr, MapEntry, OptionExpr, SeqItem, StructBody,
+        Comment, CommentKind, Document, Expr, Ident, MapEntry, OptionExpr, SeqItem, StructBody,
         StructExpr, StructField, Trivia, TupleElement,
     },
     error::Span,
@@ -320,6 +322,12 @@ enum CollectionKind {
     Struct,
 }
 
+static NO_TRIVIA: Trivia<'static> = Trivia {
+    span: None,
+    whitespace: Cow::Borrowed(""),
+    comments: Vec::new(),
+};
+
 /// What the formatter needs to know about an expression.
 enum Shape<'x, 'a> {
     /// A single token.
@@ -342,7 +350,15 @@ impl<'x, 'a> Shape<'x, 'a> {
             })
         };
         match expr {
-            Expr::Unit(_) => Shape::Scalar("()"),
+            // `()` is an empty tuple whose comments sit in its leading trivia.
+            Expr::Unit(u) => collection(
+                CollectionKind::Tuple,
+                "(",
+                ")",
+                &u.inner,
+                Items::Tuple(&[]),
+                &NO_TRIVIA,
+            ),
             Expr::Bool(b) => Shape::Scalar(if b.value { "true" } else { "false" }),
             Expr::Char(c) => Shape::Scalar(&c.raw),
             Expr::Byte(b) => Shape::Scalar(&b.raw),
@@ -607,15 +623,21 @@ impl Flat<'_> {
             Shape::Option(opt) => match &opt.value {
                 None => out.put("None"),
                 Some(inner) => {
-                    out.put("Some(")?;
+                    out.put("Some")?;
+                    if !self.config.visible(&inner.pre_paren).is_empty() {
+                        self.comments_after(out, &inner.pre_paren)?;
+                        out.put(" ")?;
+                    }
+                    out.put("(")?;
                     self.comments_before(out, &inner.leading)?;
                     self.expr(out, &inner.expr, depth)?;
                     self.comments_after(out, &inner.trailing)?;
+                    self.comments_after(out, &inner.post_comma)?;
                     out.put(")")
                 }
             },
             Shape::Named(s) => {
-                out.put(&s.name.name)?;
+                out.put(&Ident::source_text(&s.name.name))?;
                 if !self.config.visible(&s.pre_body).is_empty() {
                     self.comments_after(out, &s.pre_body)?;
                     out.put(" ")?;
@@ -637,6 +659,16 @@ impl Flat<'_> {
     ) -> Result<(), NotFlat> {
         let flat = self.enter(c, depth);
         out.put(c.open)?;
+        if c.items.is_empty() {
+            let comments = flat.config.visible(c.leading).iter();
+            for (i, comment) in comments.chain(flat.config.visible(c.trailing)).enumerate() {
+                if i > 0 {
+                    out.put(" ")?;
+                }
+                flat.comment(out, comment)?;
+            }
+            return out.put(c.close);
+        }
         flat.comments_before(out, c.leading)?;
         let separator = match flat.config.spacing {
             Spacing::None => ",",
@@ -648,16 +680,7 @@ impl Flat<'_> {
             }
             flat.item(out, item, depth)?;
         }
-        if c.items.is_empty() {
-            for (i, comment) in flat.config.visible(c.trailing).iter().enumerate() {
-                if i > 0 {
-                    out.put(" ")?;
-                }
-                flat.comment(out, comment)?;
-            }
-        } else {
-            flat.comments_after(out, c.trailing)?;
-        }
+        flat.comments_after(out, c.trailing)?;
         out.put(c.close)
     }
 
@@ -665,7 +688,7 @@ impl Flat<'_> {
         self.comments_before(out, item.leading)?;
         if let Some((key, pre_colon, post_colon)) = item.key {
             match key {
-                Key::Ident(name) => out.put(name)?,
+                Key::Ident(name) => out.put(&Ident::source_text(name))?,
                 Key::Expr(expr) => self.expr(out, expr, depth + 1)?,
             }
             self.comments_after(out, pre_colon)?;
@@ -897,7 +920,7 @@ impl<'c> Formatter<'c> {
             Shape::Scalar(text) => self.token(text),
             Shape::Option(opt) => self.option(opt, depth, suffix),
             Shape::Named(s) => {
-                self.token(&s.name.name);
+                self.token(&Ident::source_text(&s.name.name));
                 let pre_body = self.config.visible(&s.pre_body);
                 for comment in pre_body {
                     self.comment_inline(comment);
@@ -916,15 +939,24 @@ impl<'c> Formatter<'c> {
             self.token("None");
             return;
         };
+        self.token("Some");
+        let pre_paren = self.config.visible(&inner.pre_paren);
+        for comment in pre_paren {
+            self.comment_inline(comment);
+        }
+        self.pending_space = !pre_paren.is_empty();
+        self.token("(");
+
+        // A trailing comma (`Some(1, )`) is dropped; comments after it follow the value.
         let leading = self.config.visible(&inner.leading);
         let trailing = self.config.visible(&inner.trailing);
-        self.token("Some(");
-        if has_line_comment(leading) || has_line_comment(trailing) {
+        let post_comma = self.config.visible(&inner.post_comma);
+        if has_line_comment(leading) || has_line_comment(trailing) || has_line_comment(post_comma) {
             self.indent += 1;
             self.comments_after_token(&inner.leading);
             self.ensure_line_start();
             self.expr(&inner.expr, depth, 0);
-            for comment in trailing {
+            for comment in trailing.iter().chain(post_comma) {
                 self.comment_inline(comment);
             }
             self.indent -= 1;
@@ -934,8 +966,9 @@ impl<'c> Formatter<'c> {
                 self.comment(comment);
                 self.pending_space = true;
             }
-            self.expr(&inner.expr, depth, suffix + 1 + inline_width(trailing));
-            for comment in trailing {
+            let after = inline_width(trailing) + inline_width(post_comma);
+            self.expr(&inner.expr, depth, suffix + 1 + after);
+            for comment in trailing.iter().chain(post_comma) {
                 self.comment_inline(comment);
             }
         }
@@ -1009,7 +1042,7 @@ impl<'c> Formatter<'c> {
 
         if let Some((key, pre_colon, post_colon)) = item.key {
             match key {
-                Key::Ident(name) => self.token(name),
+                Key::Ident(name) => self.token(&Ident::source_text(name)),
                 Key::Expr(expr) => self.expr(expr, depth + 1, 1),
             }
             for comment in self.config.visible(pre_colon) {
@@ -2063,7 +2096,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs W1 parser trailing-trivia fix"]
     fn end_of_line_comment_after_last_comma() {
         let source = "(\n port: 8080, // the port\n host: \"h\", // the host\n)";
         assert_eq!(
@@ -2268,6 +2300,59 @@ mod tests {
                 &FormatConfig::new()
             ),
             "[\n    /* own line */\n    1, // end\n    2,\n]\n"
+        );
+    }
+
+    // =========================================================================
+    // Unit comments, `Some` trivia, raw identifiers
+    // =========================================================================
+
+    #[test]
+    fn unit_keeps_its_comments() {
+        let config = FormatConfig::new();
+        assert_eq!(
+            format_stable("(a: ( /* c */ ), b: ())", &config),
+            "(\n    a: (/* c */),\n    b: (),\n)\n"
+        );
+        assert_eq!(
+            format_stable("(a: ( // c\n ))", &config),
+            "(\n    a: ( // c\n    ),\n)\n"
+        );
+    }
+
+    #[test]
+    fn some_keeps_comments_around_parens_and_comma() {
+        let config = FormatConfig::new();
+        assert_eq!(
+            format_stable("Some /* c */ (1, /* d */)", &config),
+            "Some /* c */ (1 /* d */)\n"
+        );
+        assert_eq!(
+            format_stable("(a: Some(1, // c\n))", &config),
+            "(\n    a: Some(\n        1 // c\n    ),\n)\n"
+        );
+    }
+
+    #[test]
+    fn raw_identifiers_are_written_when_needed() {
+        assert_eq!(
+            format_stable(
+                "(r#type: r#true, r#a.b: r#Bar(1), plain: r#plain)",
+                &FormatConfig::new()
+            ),
+            "(\n    type: r#true,\n    r#a.b: Bar(1),\n    plain: plain,\n)\n"
+        );
+        let value = crate::Value::Named {
+            name: "None".into(),
+            content: crate::NamedContent::Struct(alloc::vec![(
+                "x-y".into(),
+                crate::Value::from(1)
+            )]),
+        };
+        let expr = crate::ast::value_to_expr(value);
+        assert_eq!(
+            format_expr(&expr, &FormatConfig::minimal()),
+            "r#None(r#x-y:1)"
         );
     }
 }

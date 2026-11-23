@@ -12,7 +12,10 @@ use alloc::string::{String, ToString};
 use core::fmt::Write;
 
 use crate::{
-    ast::{Attribute, CommentKind, Document, Expr, StructBody, StructField, Trivia, TupleElement},
+    ast::{
+        Attribute, CommentKind, Document, Expr, Ident, StructBody, StructField, Trivia,
+        TupleElement,
+    },
     error::{Error, ErrorKind, Result, Span},
     lexer::Lexer,
 };
@@ -98,11 +101,9 @@ impl<W: Write> AstSerializer<'_, W> {
     fn expr(&mut self, expr: &Expr<'_>) -> Result<()> {
         match expr {
             Expr::Unit(unit) => {
-                // `( )` may contain whitespace and comments that the AST does not keep.
-                let text = source_slice(self.source, &unit.span)
-                    .filter(|text| same_tokens(text, "()"))
-                    .unwrap_or("()");
-                self.str(text)
+                self.str("(")?;
+                self.trivia(&unit.inner)?;
+                self.str(")")
             }
             Expr::Bool(b) => self.str(if b.value { "true" } else { "false" }),
             Expr::Char(c) => self.str(&c.raw),
@@ -113,10 +114,16 @@ impl<W: Write> AstSerializer<'_, W> {
             Expr::Option(opt) => match &opt.value {
                 None => self.str("None"),
                 Some(inner) => {
-                    self.str("Some(")?;
+                    self.str("Some")?;
+                    self.trivia(&inner.pre_paren)?;
+                    self.str("(")?;
                     self.trivia(&inner.leading)?;
                     self.expr(&inner.expr)?;
                     self.trivia(&inner.trailing)?;
+                    if inner.comma.is_some() {
+                        self.str(",")?;
+                        self.trivia(&inner.post_comma)?;
+                    }
                     self.str(")")
                 }
             },
@@ -151,7 +158,7 @@ impl<W: Write> AstSerializer<'_, W> {
             Expr::Tuple(tuple) => self.tuple(&tuple.leading, &tuple.elements, &tuple.trailing),
             Expr::AnonStruct(s) => self.fields(&s.leading, &s.fields, &s.trailing),
             Expr::Struct(s) => {
-                self.str(&s.name.name)?;
+                self.ident(&s.name)?;
                 self.trivia(&s.pre_body)?;
                 match &s.body {
                     Some(StructBody::Tuple(body)) => {
@@ -189,7 +196,7 @@ impl<W: Write> AstSerializer<'_, W> {
     ) -> Result<()> {
         self.delimited("(", leading, fields, trailing, ")", |ser, field| {
             ser.trivia(&field.leading)?;
-            ser.str(&field.name.name)?;
+            ser.ident(&field.name)?;
             ser.trivia(&field.pre_colon)?;
             ser.str(":")?;
             ser.trivia(&field.post_colon)?;
@@ -197,6 +204,17 @@ impl<W: Write> AstSerializer<'_, W> {
             ser.trivia(&field.trailing)?;
             Ok(field.comma)
         })
+    }
+
+    /// Writes an identifier as in the source (`r#type` stays raw while it still names
+    /// the same identifier), otherwise in the form its name requires.
+    fn ident(&mut self, ident: &Ident<'_>) -> Result<()> {
+        let source = source_slice(self.source, &ident.span)
+            .filter(|text| text.strip_prefix("r#").unwrap_or(text) == ident.name);
+        match source {
+            Some(text) => self.str(text),
+            None => self.str(&Ident::source_text(&ident.name)),
+        }
     }
 
     fn element(
@@ -243,20 +261,14 @@ fn source_slice<'s>(source: &'s str, span: &Span) -> Option<&'s str> {
 }
 
 /// The original text of `trivia`, if its span still describes `source` exactly: the same
-/// comments, with only whitespace around them, and the same first run of whitespace (the
-/// only whitespace the AST stores).
+/// comments, separated by exactly the whitespace the trivia stores.
 fn trivia_source<'s>(source: &'s str, trivia: &Trivia<'_>) -> Option<&'s str> {
     let span = trivia.span.as_ref()?;
     let text = source_slice(source, span)?;
-    let mut first_whitespace = None;
+    // `trivia.whitespace` is all whitespace of the trivia, concatenated.
+    let mut whitespace: &str = &trivia.whitespace;
     let mut gap = |range: core::ops::Range<usize>| {
-        let gap = source.get(range)?;
-        if !gap.chars().all(char::is_whitespace) {
-            return None;
-        }
-        if first_whitespace.is_none() && !gap.is_empty() {
-            first_whitespace = Some(gap);
-        }
+        whitespace = whitespace.strip_prefix(source.get(range)?)?;
         Some(())
     };
     let mut pos = span.start_offset;
@@ -269,12 +281,16 @@ fn trivia_source<'s>(source: &'s str, trivia: &Trivia<'_>) -> Option<&'s str> {
         pos = end;
     }
     gap(pos..span.end_offset)?;
-    (first_whitespace.unwrap_or("") == trivia.whitespace).then_some(text)
+    whitespace.is_empty().then_some(text)
 }
 
 /// Whether `a` and `b` consist of the same tokens, ignoring whitespace and comments.
 fn same_tokens(a: &str, b: &str) -> bool {
-    let tokens = |s| Lexer::new(s).map(|token| (token.kind, token.text));
+    let tokens = |s| {
+        Lexer::new(s)
+            .filter(|token| !token.kind.is_trivia())
+            .map(|token| (token.kind, token.text))
+    };
     tokens(a).eq(tokens(b))
 }
 
@@ -513,7 +529,6 @@ Config(
     }
 
     #[test]
-    #[ignore = "parser bug: whitespace inside an attribute leaks into the following trivia"]
     fn round_trip_attribute_inner_whitespace() {
         assert_round_trip("#![type = \"Foo\"]\n#![ enable( implicit_some ,unwrap_newtypes ) ]\n42");
     }
@@ -627,5 +642,38 @@ Config(
         let mut doc = parse_document(source).unwrap();
         doc.source = "()".into();
         assert_eq!(serialize_document(&doc).unwrap(), source);
+    }
+
+    #[test]
+    fn round_trip_some_trivia_and_unit_comments() {
+        assert_round_trip("[Some /* c */ (1, /* d */), Some(2 ,), ( /* u */ ), ()]");
+    }
+
+    #[test]
+    fn raw_identifiers_keep_source_spelling() {
+        assert_round_trip("(r#type: r#true, r#a.b: r#Bar(1), plain: r#plain)");
+    }
+
+    #[test]
+    fn raw_identifiers_are_written_when_needed() {
+        let mut doc = parse_document("(a: X(b: 1))").unwrap();
+        let Some(Expr::AnonStruct(s)) = &mut doc.value else {
+            panic!("expected struct");
+        };
+        s.fields[0].name.name = "a.b".into();
+        let Expr::Struct(inner) = &mut s.fields[0].value else {
+            panic!("expected named struct");
+        };
+        inner.name.name = "Some".into();
+        assert_eq!(serialize_document(&doc).unwrap(), "(r#a.b: r#Some(b: 1))");
+
+        let synthetic = synthetic_document(crate::Value::Named {
+            name: "true".into(),
+            content: crate::NamedContent::Unit,
+        });
+        assert_eq!(
+            serialize_document(&synthetic).unwrap(),
+            "#![type = \"my::Type\"]r#true"
+        );
     }
 }

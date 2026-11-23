@@ -65,16 +65,18 @@ const CORPUS: &[&str] = &[
     // Comment placement.
     "[1, // trailing spaces   \n 2]",
     "[1, /* a */ 2]",
+    // Comments inside units and around `Some`, raw identifiers.
+    "( /* c */ )",
+    "(a: ( // c\n ), b: [(), ( /* d */ /* e */ )])",
+    "Some /* c */ (1, /* d */)",
+    "(a: Some(1, // c\n), b: Some // d\n(2))",
+    "(r#type: r#true, r#a.b: r#Bar(1), plain: r#plain)",
     "(a: [0, 1, 2] /* a fairly long comment */, b: 1)",
     "{r\"k\n\": [1, 2, 3]}",
     // Width.
     "(a: \"ünïcödé strings that are fairly long to push the line over the limit\", b: [1, 2])",
     "E(Variant(1), Other(x: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]))",
-];
-
-/// Inputs whose output puts a comment after the last item's comma, where the parser
-/// currently drops it.
-const NEEDS_TRAILING_TRIVIA_FIX: &[&str] = &[
+    // Comments after the last item's comma.
     "[\n 1,\n 2, // two\n]",
     "[1, 2 // two\n]",
     "(\n port: 8080, // the port\n host: \"h\", // the host\n)",
@@ -224,12 +226,6 @@ fn corpus_is_stable_and_lossless() {
     check_corpus(CORPUS);
 }
 
-#[test]
-#[ignore = "needs W1 parser trailing-trivia fix"]
-fn corpus_with_comments_after_last_comma() {
-    check_corpus(NEEDS_TRAILING_TRIVIA_FIX);
-}
-
 /// `(a: (a: … "xxx…" …))`, built directly: the parser stops at depth 128.
 fn nested_struct(depth: usize) -> Expr<'static> {
     let text = "x".repeat(100);
@@ -339,8 +335,13 @@ fn trivia(t: &Trivia<'_>) -> usize {
 
 fn expr(e: &Expr<'_>) -> usize {
     match e {
+        Expr::Unit(u) => trivia(&u.inner),
         Expr::Option(opt) => opt.value.as_ref().map_or(0, |v| {
-            trivia(&v.leading) + expr(&v.expr) + trivia(&v.trailing)
+            trivia(&v.pre_paren)
+                + trivia(&v.leading)
+                + expr(&v.expr)
+                + trivia(&v.trailing)
+                + trivia(&v.post_comma)
         }),
         Expr::Seq(s) => {
             trivia(&s.leading)
