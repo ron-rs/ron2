@@ -94,6 +94,8 @@ fn expand(
 /// Schemas are written at runtime with `write_schemas`:
 ///
 /// ```no_run
+/// use std::path::Path;
+///
 /// use ron2::{RonSchema, schema::RonSchema as _};
 ///
 /// #[derive(RonSchema)]
@@ -102,7 +104,7 @@ fn expand(
 /// }
 ///
 /// // Write to a specific directory
-/// Config::write_schemas(Some("./schemas"))?;
+/// Config::write_schemas(Some(Path::new("./schemas")))?;
 ///
 /// // Or to $RON_SCHEMA_DIR, falling back to the XDG data directory
 /// // (~/.local/share/ron-schemas/, requires the `xdg` feature of ron2)

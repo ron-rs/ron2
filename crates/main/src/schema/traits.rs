@@ -133,8 +133,10 @@ pub trait RonSchema {
     }
 
     /// Writes this type's schema and all referenced schemas.
+    ///
+    /// `output_dir` works as for [`write_schema`](Self::write_schema).
     #[cfg(feature = "derive")]
-    fn write_schemas(output_dir: Option<&str>) -> Result<Vec<PathBuf>, SchemaError>
+    fn write_schemas(output_dir: Option<&Path>) -> Result<Vec<PathBuf>, SchemaError>
     where
         Self: Sized,
     {

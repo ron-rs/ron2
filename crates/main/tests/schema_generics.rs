@@ -150,8 +150,7 @@ struct Parent {
 #[test]
 fn write_schemas_writes_referenced_types() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
-    let output_dir = temp_dir.path().to_str().expect("utf-8 temp dir");
-    let written = write_schemas::<Parent>(Some(output_dir)).expect("write schemas");
+    let written = write_schemas::<Parent>(Some(temp_dir.path())).expect("write schemas");
     assert_eq!(written.len(), 2);
 
     let child_rel = type_path_to_file_path(path::<Child>()).unwrap();
@@ -164,13 +163,37 @@ fn write_schemas_writes_referenced_types() {
     );
 }
 
+/// The trait's `write_schema` and `write_schemas` take the same directory type.
+#[test]
+fn trait_methods_write_to_the_same_directory() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let dir: Option<&std::path::Path> = Some(temp_dir.path());
+
+    let own = Parent::write_schema(dir).expect("write schema");
+    let child = temp_dir
+        .path()
+        .join(type_path_to_file_path(path::<Child>()).unwrap());
+    assert_eq!(
+        own,
+        temp_dir
+            .path()
+            .join(type_path_to_file_path(path::<Parent>()).unwrap())
+    );
+    assert!(!child.exists(), "write_schema writes only its own type");
+
+    let mut all = Parent::write_schemas(dir).expect("write schemas");
+    all.sort();
+    let mut expected = vec![own, child];
+    expected.sort();
+    assert_eq!(all, expected);
+}
+
 /// Generic instantiations are written under the storage's encoding of their
 /// path and read back by it.
 #[test]
 fn write_schemas_writes_generic_instantiations() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
-    let output_dir = temp_dir.path().to_str().expect("utf-8 temp dir");
-    let written = write_schemas::<Root>(Some(output_dir)).expect("write schemas");
+    let written = write_schemas::<Root>(Some(temp_dir.path())).expect("write schemas");
     assert_eq!(written.len(), 3);
 
     let rel = type_path_to_file_path(path::<GenericContainer<u32>>()).unwrap();

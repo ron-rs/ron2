@@ -64,8 +64,11 @@ pub fn collect_schemas<T: RonSchema + ?Sized>() -> Result<SchemaCatalog, SchemaE
 
 /// Collect schemas recursively starting from `T` and write them to `output_dir`.
 #[cfg(feature = "derive")]
+///
+/// If `output_dir` is `None`, the schemas go to `RON_SCHEMA_DIR` or the XDG
+/// data directory, as with [`write_schema`].
 pub fn write_schemas<T: RonSchema + ?Sized>(
-    output_dir: Option<&str>,
+    output_dir: Option<&Path>,
 ) -> Result<Vec<PathBuf>, SchemaError> {
-    collect_schemas::<T>()?.write_all(output_dir.map(Path::new))
+    collect_schemas::<T>()?.write_all(output_dir)
 }

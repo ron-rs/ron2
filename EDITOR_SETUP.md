@@ -64,6 +64,8 @@
    for example from a test or a small binary:
 
    ```rust
+   use std::path::Path;
+
    use ron2::{Ron, schema::RonSchema};
 
    #[derive(Ron)]
@@ -76,7 +78,7 @@
 
    fn main() -> Result<(), Box<dyn std::error::Error>> {
        // Writes schemas/<module path>/AppConfig.schema.ron and every type it references.
-       AppConfig::write_schemas(Some("schemas"))?;
+       AppConfig::write_schemas(Some(Path::new("schemas")))?;
        Ok(())
    }
    ```

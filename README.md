@@ -92,10 +92,12 @@ ron2 can generate schema files from your Rust types. The LSP uses these schemas 
 Generate schemas by calling `write_schemas` (e.g., from a test or a dedicated binary):
 
 ```rust
+use std::path::Path;
+
 use ron2::schema::RonSchema;
 
 // Write to a specific directory
-Config::write_schemas(Some("./schemas"))?;
+Config::write_schemas(Some(Path::new("./schemas")))?;
 
 // Or $RON_SCHEMA_DIR, falling back to the XDG data directory
 // (e.g. ~/.local/share/ron-schemas/; needs ron2's `xdg` feature)
