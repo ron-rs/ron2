@@ -36,20 +36,16 @@ pub fn validate_document(doc: &Document, resolver: &SchemaResolver) -> Vec<Diagn
     // (the parser recovers and produces partial AST)
 
     // If no type or schema attribute, we can't validate
-    if doc.type_attr.is_none() && doc.schema_attr.is_none() {
+    let (attr_name, attr_value) = match (&doc.type_attr, &doc.schema_attr) {
+        (Some(type_attr), _) => ("type", type_attr),
+        (None, Some(schema_attr)) => ("schema", schema_attr),
         // This is not an error, just no schema to validate against
-        return diagnostics;
-    }
+        (None, None) => return diagnostics,
+    };
 
     // Try to load schema
     let Some(schema) = resolver.resolve_schema(doc) else {
         // Schema not found - add a warning
-        let attr_name = if doc.type_attr.is_some() {
-            "type"
-        } else {
-            "schema"
-        };
-        let attr_value = doc.type_attr.as_ref().or(doc.schema_attr.as_ref()).unwrap();
 
         diagnostics.push(Diagnostic {
             range: Range {
