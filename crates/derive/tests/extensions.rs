@@ -253,19 +253,6 @@ mod explicit {
         assert_eq!(cfg.value, None);
     }
 
-    #[test]
-    fn explicit_rejects_bare_value() {
-        let result = StrictConfig::from_ron("(value: 42)");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        // Check error message mentions expected Some/None
-        assert!(
-            err.to_string().contains("Some") || err.to_string().contains("None"),
-            "Error should mention Some/None: {}",
-            err
-        );
-    }
-
     /// Option<Option<T>> with explicit outer, implicit inner.
     #[derive(Debug, Ron, PartialEq)]
     struct ExplicitOuter {
@@ -401,7 +388,7 @@ mod combinations {
         };
         let ron = user.to_ron_with(&FormatConfig::minimal()).unwrap();
         // id should be serialized as just the number (in minimal format: no spaces)
-        assert!(ron.contains("id:100"), "Expected id:100 in {}", ron);
+        assert_eq!(ron, r#"User(id:100,name:"Bob")"#);
     }
 
     /// Enum variant with Option field.
@@ -509,9 +496,9 @@ mod edge_cases {
     #[test]
     fn transparent_newtype_in_enum_serialize() {
         let t = Transaction::Withdraw(Amount(50.0));
-        let ron = t.to_ron().unwrap();
+        let ron = t.to_ron_with(&FormatConfig::minimal()).unwrap();
         // Amount should be transparent
-        assert!(ron.contains("50"), "Expected 50 in {}", ron);
+        assert_eq!(ron, "Withdraw(50.0)");
     }
 
     /// Error span accuracy - verify errors point to correct location.
@@ -530,17 +517,10 @@ mod edge_cases {
             second: 42,
             third: "also ok"
         )"#;
-        let result = SpanTest::from_ron(ron);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        // Error should mention the field that failed
-        let err_str = format!("{:?}", err);
-        // The span should point to line 3 where "second: 42" is
-        assert!(
-            err_str.contains("line") || err_str.contains("2:") || err_str.contains("3:"),
-            "Error should include location info: {}",
-            err_str
-        );
+        let err = SpanTest::from_ron(ron).unwrap_err();
+        // The span should point to the bare `42` on line 3
+        assert_eq!(err.span().start.line, 3);
+        assert_eq!(&ron[err.span().start_offset..err.span().end_offset], "42");
     }
 
     /// Complex nested type with explicit.

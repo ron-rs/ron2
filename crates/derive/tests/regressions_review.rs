@@ -345,7 +345,7 @@ mod skip_deserializing_schema {
         let doc = ron2::ast::parse_document("(a: 1)").unwrap();
         let value = doc.value.as_ref().unwrap();
         ron2::schema::validate(value, &SD::schema(), &ron2::schema::NoResolver).unwrap();
-        assert!(SD::from_ron("(a: 1)").is_ok());
+        assert_eq!(SD::from_ron("(a: 1)").unwrap(), SD { a: 1, b: 0 });
         assert!(SD::from_ron("(a: 1, b: 2)").is_err());
     }
 }

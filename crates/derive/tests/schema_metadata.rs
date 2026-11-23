@@ -10,8 +10,8 @@ use ron2::{
     ast::parse_document,
     fmt::FormatConfig,
     schema::{
-        Field, NoResolver, RonSchema, Schema, SchemaResolver, TypeKind, collect::collect_schemas,
-        validate,
+        Field, NoResolver, RonSchema, Schema, SchemaResolver, Severity, TypeKind,
+        collect::collect_schemas, validate, validate_all,
     },
 };
 
@@ -193,8 +193,37 @@ fn unresolved_type_refs_are_reported_without_a_resolver() {
     let doc =
         parse_document("(shared: (a: 1), generic: (t: 2), nested: (t: (t: (a: 3))))").unwrap();
     // Without a resolver the shape of TypeRef targets cannot be checked, but
-    // validation must not fail on that alone.
-    let _ = validate(doc.value.as_ref().unwrap(), &schema, &NoResolver);
+    // validation must not fail on that alone: each unresolved path is a warning.
+    let value = doc.value.as_ref().unwrap();
+    validate(value, &schema, &NoResolver).unwrap();
+    let issues: Vec<_> = validate_all(value, &schema, &NoResolver)
+        .into_iter()
+        .map(|issue| (issue.severity, issue.error.to_string()))
+        .collect();
+    assert_eq!(
+        issues,
+        [
+            (
+                Severity::Warning,
+                "1:10-1:16: in field 'shared': No schema found for type \
+                 `schema_metadata::Named`; value not checked"
+                    .to_string()
+            ),
+            (
+                Severity::Warning,
+                "1:27-1:33: in field 'generic': No schema found for type \
+                 `schema_metadata::Gen<u8>`; value not checked"
+                    .to_string()
+            ),
+            (
+                Severity::Warning,
+                "1:43-1:59: in field 'nested': No schema found for type \
+                 `schema_metadata::Gen<schema_metadata::Gen<schema_metadata::Named>>`; \
+                 value not checked"
+                    .to_string()
+            ),
+        ]
+    );
 }
 
 /// Names the formatter must write as raw identifiers.

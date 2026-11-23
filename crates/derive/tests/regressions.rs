@@ -560,7 +560,7 @@ mod skipped_variants {
             matches!(err.kind(), ErrorKind::UnknownVariant { .. }),
             "{err}"
         );
-        assert!(E::A.to_ron().is_ok());
+        assert_eq!(E::A.to_ron().unwrap(), "A");
     }
 }
 
@@ -632,6 +632,12 @@ mod deny_unknown_with_flatten {
         let err = E::from_ron("V(own: 1, inner_field: 2, bogus: 3)").unwrap_err();
         assert_eq!(expected(&err), ["own", "inner_field"]);
 
-        assert!(Outer::from_ron("(outer_field: 1, inner_field: 2)").is_ok());
+        assert_eq!(
+            Outer::from_ron("(outer_field: 1, inner_field: 2)").unwrap(),
+            Outer {
+                outer_field: 1,
+                inner: Inner { inner_field: 2 }
+            }
+        );
     }
 }

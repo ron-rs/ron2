@@ -279,7 +279,7 @@ fn test_tuple_struct() {
 #[test]
 fn test_type_path() {
     let path = SimpleStruct::type_path().expect("type_path should return Some for derived types");
-    assert!(path.ends_with("SimpleStruct"));
+    assert_eq!(path, "derive_tests::SimpleStruct");
 }
 
 /// Struct with nested custom type.
@@ -303,11 +303,7 @@ fn test_type_ref() {
         TypeKind::Struct { fields } => match &fields[0].ty {
             TypeKind::TypeRef(path) => {
                 // TypeRef should be fully qualified with crate name
-                assert!(
-                    path.ends_with("::CustomType"),
-                    "Expected path to end with ::CustomType, got: {}",
-                    path
-                );
+                assert_eq!(path, "derive_tests::CustomType");
             }
             _ => panic!("Expected TypeRef for custom type"),
         },

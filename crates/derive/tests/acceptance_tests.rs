@@ -25,8 +25,10 @@ mod container_rename {
     #[test]
     fn serializes_with_renamed_type() {
         let p = Point { x: 1, y: 2 };
-        let ron = p.to_ron().unwrap();
-        assert!(ron.contains("MyPoint"), "Expected 'MyPoint' in: {}", ron);
+        assert_eq!(
+            p.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            "MyPoint(x:1,y:2)"
+        );
     }
 
     #[test]
@@ -66,9 +68,10 @@ mod container_rename_all {
             user_name: "alice".to_string(),
             max_count: 100,
         };
-        let ron = cfg.to_ron().unwrap();
-        assert!(ron.contains("userName"), "Expected 'userName' in: {}", ron);
-        assert!(ron.contains("maxCount"), "Expected 'maxCount' in: {}", ron);
+        assert_eq!(
+            cfg.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"CamelConfig(userName:"alice",maxCount:100)"#
+        );
     }
 
     #[test]
@@ -219,14 +222,10 @@ mod deny_unknown_fields {
     #[test]
     fn rejects_unknown_field() {
         let ron = r#"(name: "test", count: 42, unknown: true)"#;
-        let result = StrictConfig::from_ron(ron);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        let err_str = err.to_string();
-        assert!(
-            err_str.contains("unknown") || err_str.contains("Unknown"),
-            "Error should mention unknown field: {}",
-            err_str
+        let err = StrictConfig::from_ron(ron).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "1:27-1:34: Unknown field `unknown` in `StrictConfig`, expected either `name` or `count` instead"
         );
     }
 
@@ -269,8 +268,11 @@ mod deny_unknown_fields {
     #[test]
     fn deny_unknown_with_flatten_rejects_unknown() {
         let ron = r#"(name: "test", x: 10, unknown: true)"#;
-        let result = OuterWithFlatten::from_ron(ron);
-        assert!(result.is_err());
+        let err = OuterWithFlatten::from_ron(ron).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "1:23-1:30: Unknown field `unknown` in `OuterWithFlatten`, expected either `name` or `x` instead"
+        );
     }
 }
 
@@ -346,9 +348,10 @@ mod field_skip {
             name: "test".to_string(),
             internal: 42,
         };
-        let ron = item.to_ron().unwrap();
-        assert!(ron.contains("name"));
-        assert!(!ron.contains("internal"));
+        assert_eq!(
+            item.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"WithSkipped(name:"test")"#
+        );
     }
 
     #[test]
@@ -387,9 +390,8 @@ mod field_skip {
             value: "hello".to_string(),
             _cache: vec![1, 2, 3],
         };
-        let ron = msg.to_ron().unwrap();
-        assert!(ron.contains("value"));
-        assert!(!ron.contains("cache"));
+        let ron = msg.to_ron_with(&FormatConfig::minimal()).unwrap();
+        assert_eq!(ron, r#"Data(value:"hello")"#);
 
         let parsed: Message = Message::from_ron(&ron).unwrap();
         match parsed {
@@ -421,10 +423,10 @@ mod field_skip_serializing {
             name: "test".to_string(),
             secret: "password123".to_string(),
         };
-        let ron = item.to_ron().unwrap();
-        assert!(ron.contains("name"));
-        assert!(!ron.contains("secret"));
-        assert!(!ron.contains("password123"));
+        assert_eq!(
+            item.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"WithSkipSerializing(name:"test")"#
+        );
     }
 
     #[test]
@@ -476,10 +478,10 @@ mod field_skip_deserializing {
             name: "test".to_string(),
             computed: 42,
         };
-        let ron = item.to_ron().unwrap();
-        assert!(ron.contains("name"));
-        assert!(ron.contains("computed"));
-        assert!(ron.contains("42"));
+        assert_eq!(
+            item.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"WithSkipDeserializing(name:"test",computed:42)"#
+        );
     }
 
     #[test]
@@ -523,9 +525,10 @@ mod field_skip_serializing_if {
             name: "test".to_string(),
             count: 0,
         };
-        let ron = item.to_ron().unwrap();
-        assert!(ron.contains("name"));
-        assert!(!ron.contains("count"));
+        assert_eq!(
+            item.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"WithConditionalSkip(name:"test")"#
+        );
     }
 
     #[test]
@@ -534,10 +537,10 @@ mod field_skip_serializing_if {
             name: "test".to_string(),
             count: 5,
         };
-        let ron = item.to_ron().unwrap();
-        assert!(ron.contains("name"));
-        assert!(ron.contains("count"));
-        assert!(ron.contains("5"));
+        assert_eq!(
+            item.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"WithConditionalSkip(name:"test",count:5)"#
+        );
     }
 
     #[test]
@@ -577,8 +580,10 @@ mod field_skip_serializing_if {
             name: "test".to_string(),
             value: None,
         };
-        let ron = item.to_ron().unwrap();
-        assert!(!ron.contains("value"));
+        assert_eq!(
+            item.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"WithOptionalField(name:"test")"#
+        );
     }
 
     #[test]
@@ -587,8 +592,10 @@ mod field_skip_serializing_if {
             name: "test".to_string(),
             value: Some(42),
         };
-        let ron = item.to_ron().unwrap();
-        assert!(ron.contains("value"));
+        assert_eq!(
+            item.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"WithOptionalField(name:"test",value:Some(42))"#
+        );
     }
 }
 
@@ -618,11 +625,10 @@ mod field_opt {
             enabled: false,
             tag: None,
         };
-        let ron = config.to_ron().unwrap();
-        assert!(ron.contains("name"));
-        assert!(!ron.contains("count"));
-        assert!(!ron.contains("enabled"));
-        assert!(!ron.contains("tag"));
+        assert_eq!(
+            config.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"Config(name:"app")"#
+        );
     }
 
     #[test]
@@ -633,13 +639,10 @@ mod field_opt {
             enabled: true,
             tag: Some("v1".to_string()),
         };
-        let ron = config.to_ron().unwrap();
-        assert!(ron.contains("name"));
-        assert!(ron.contains("count"));
-        assert!(ron.contains("5"));
-        assert!(ron.contains("enabled"));
-        assert!(ron.contains("true"));
-        assert!(ron.contains("tag"));
+        assert_eq!(
+            config.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"Config(name:"app",count:5,enabled:true,tag:Some("v1"))"#
+        );
     }
 
     #[test]
@@ -736,9 +739,10 @@ mod field_opt {
             content: "hello".to_string(),
             priority: 0,
         };
-        let ron = msg.to_ron().unwrap();
-        assert!(ron.contains("content"));
-        assert!(!ron.contains("priority"));
+        assert_eq!(
+            msg.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"Text(content:"hello")"#
+        );
     }
 
     #[test]
@@ -747,10 +751,10 @@ mod field_opt {
             content: "urgent".to_string(),
             priority: 5,
         };
-        let ron = msg.to_ron().unwrap();
-        assert!(ron.contains("content"));
-        assert!(ron.contains("priority"));
-        assert!(ron.contains("5"));
+        assert_eq!(
+            msg.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"Text(content:"urgent",priority:5)"#
+        );
     }
 
     #[test]
@@ -799,10 +803,10 @@ mod field_opt {
             tags: vec![],
             counts: vec![],
         };
-        let ron = config.to_ron().unwrap();
-        assert!(ron.contains("name"));
-        assert!(!ron.contains("tags"));
-        assert!(!ron.contains("counts"));
+        assert_eq!(
+            config.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"ConfigWithVec(name:"test")"#
+        );
     }
 
     #[test]
@@ -824,15 +828,15 @@ mod field_opt {
     #[test]
     fn opt_with_option_type() {
         let config = ConfigWithNestedOption { maybe_value: None };
-        let ron = config.to_ron().unwrap();
-        assert!(!ron.contains("maybe_value"));
+        assert_eq!(config.to_ron().unwrap(), "ConfigWithNestedOption()");
 
         let config2 = ConfigWithNestedOption {
             maybe_value: Some(42),
         };
-        let ron2 = config2.to_ron().unwrap();
-        assert!(ron2.contains("maybe_value"));
-        assert!(ron2.contains("42"));
+        assert_eq!(
+            config2.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            "ConfigWithNestedOption(maybe_value:Some(42))"
+        );
     }
 
     // Test enum variant with all opt fields at default (roundtrip bug)
@@ -898,9 +902,10 @@ mod field_default {
             count: 0,
             flag: None,
         };
-        let ron = item.to_ron().unwrap();
-        assert!(ron.contains("count"));
-        assert!(ron.contains("flag"));
+        assert_eq!(
+            item.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"WithDefault(name:"test",count:0,flag:None)"#
+        );
     }
 
     #[test]
@@ -1013,14 +1018,10 @@ mod field_flatten {
             name: "test".to_string(),
             inner: Inner { x: 10, y: 20 },
         };
-        let ron = outer.to_ron().unwrap();
+        let ron = outer.to_ron_with(&FormatConfig::minimal()).unwrap();
 
-        // Fields should appear at top level
-        assert!(ron.contains("name"));
-        assert!(ron.contains("x"));
-        assert!(ron.contains("y"));
-        // Should NOT be nested
-        assert!(!ron.contains("inner"));
+        // Fields appear at top level, not nested under `inner`
+        assert_eq!(ron, r#"OuterWithFlatten(name:"test",x:10,y:20)"#);
     }
 
     #[test]
@@ -1059,13 +1060,8 @@ mod field_flatten {
         let ron_flat = flattened.to_ron_with(&FormatConfig::minimal()).unwrap();
         let ron_inlined = inlined.to_ron_with(&FormatConfig::minimal()).unwrap();
 
-        // Parse both as unordered field sets (field order may differ)
-        assert!(ron_flat.contains("name:\"test\"") || ron_flat.contains(r#"name:"test""#));
-        assert!(ron_flat.contains("x:1"));
-        assert!(ron_flat.contains("y:2"));
-        assert!(ron_inlined.contains("name:\"test\"") || ron_inlined.contains(r#"name:"test""#));
-        assert!(ron_inlined.contains("x:1"));
-        assert!(ron_inlined.contains("y:2"));
+        assert_eq!(ron_flat, r#"OuterWithFlatten(name:"test",x:1,y:2)"#);
+        assert_eq!(ron_inlined, r#"OuterInlined(name:"test",x:1,y:2)"#);
     }
 
     #[test]
@@ -1083,16 +1079,14 @@ mod field_flatten {
         assert_eq!(inlined.y, 10);
 
         // Both should serialize to the same field structure (ignoring type name)
-        let flattened_ron = flattened.to_ron().unwrap();
-        let inlined_ron = inlined.to_ron().unwrap();
-
-        // Both should contain the same fields
-        assert!(flattened_ron.contains("name"));
-        assert!(flattened_ron.contains("x"));
-        assert!(flattened_ron.contains("y"));
-        assert!(inlined_ron.contains("name"));
-        assert!(inlined_ron.contains("x"));
-        assert!(inlined_ron.contains("y"));
+        assert_eq!(
+            flattened.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"OuterWithFlatten(name:"test",x:5,y:10)"#
+        );
+        assert_eq!(
+            inlined.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"OuterInlined(name:"test",x:5,y:10)"#
+        );
     }
 
     // Multiple flattened fields
@@ -1125,15 +1119,10 @@ mod field_flatten {
             position: Position { x: 10.0, y: 20.0 },
             color: Color { r: 255, g: 0, b: 0 },
         };
-        let ron = sprite.to_ron().unwrap();
+        let ron = sprite.to_ron_with(&FormatConfig::minimal()).unwrap();
 
         // All fields at top level
-        assert!(ron.contains("name"));
-        assert!(ron.contains("x"));
-        assert!(ron.contains("y"));
-        assert!(ron.contains("r"));
-        assert!(ron.contains("g"));
-        assert!(ron.contains("b"));
+        assert_eq!(ron, r#"Sprite(name:"player",x:10.0,y:20.0,r:255,g:0,b:0)"#);
 
         let parsed: Sprite = Sprite::from_ron(&ron).unwrap();
         assert_eq!(sprite, parsed);
@@ -1168,12 +1157,10 @@ mod field_flatten {
                 level2: Level2 { value: 42 },
             },
         };
-        let ron = nested.to_ron().unwrap();
+        let ron = nested.to_ron_with(&FormatConfig::minimal()).unwrap();
 
         // All fields should be at top level
-        assert!(ron.contains("name"));
-        assert!(ron.contains("id"));
-        assert!(ron.contains("value"));
+        assert_eq!(ron, r#"Level0(name:"top",id:"middle",value:42)"#);
 
         let parsed: Level0 = Level0::from_ron(&ron).unwrap();
         assert_eq!(nested, parsed);
@@ -1199,21 +1186,19 @@ mod field_flatten {
             name: "none".to_string(),
             inner: None,
         };
-        let none_ron = none.to_ron().unwrap();
-        assert!(none_ron.contains("name"));
-        assert!(!none_ron.contains("x"));
-        assert!(!none_ron.contains("y"));
-        assert!(!none_ron.contains("inner"));
+        assert_eq!(
+            none.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"OuterWithOptionalFlatten(name:"none")"#
+        );
 
         let some = OuterWithOptionalFlatten {
             name: "some".to_string(),
             inner: Some(OptionalInner { x: 1, y: 2 }),
         };
-        let some_ron = some.to_ron().unwrap();
-        assert!(some_ron.contains("name"));
-        assert!(some_ron.contains("x"));
-        assert!(some_ron.contains("y"));
-        assert!(!some_ron.contains("inner"));
+        assert_eq!(
+            some.to_ron_with(&FormatConfig::minimal()).unwrap(),
+            r#"OuterWithOptionalFlatten(name:"some",x:1,y:2)"#
+        );
     }
 
     #[test]
@@ -1405,7 +1390,7 @@ mod variant_skip {
 
     #[test]
     fn serializing_skipped_variant_is_an_error() {
-        assert!(Mode::Active.to_ron().is_ok());
+        assert_eq!(Mode::Active.to_ron().unwrap(), "Active");
         assert!(Mode::Legacy.to_ron().is_err());
     }
 }
@@ -1488,8 +1473,8 @@ mod combinations {
             name: "user".to_string(),
             password: "secret".to_string(),
         };
-        let ron = w.to_ron().unwrap();
-        assert!(!ron.contains("password"));
+        let ron = w.to_ron_with(&FormatConfig::minimal()).unwrap();
+        assert_eq!(ron, r#"WriteOnly(name:"user")"#);
 
         let parsed: WriteOnly = WriteOnly::from_ron(&ron).unwrap();
         assert_eq!(parsed.password, ""); // lost
@@ -1548,7 +1533,7 @@ mod edge_cases {
         };
         let ron = s.to_ron().unwrap();
         // Should serialize as empty struct
-        assert!(ron.contains("()") || ron.contains("(  )"));
+        assert_eq!(ron, "AllSkipped()");
 
         let parsed: AllSkipped = AllSkipped::from_ron("()").unwrap();
         assert_eq!(parsed.a, 0);
