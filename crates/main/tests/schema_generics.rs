@@ -164,6 +164,20 @@ fn write_schemas_writes_referenced_types() {
     );
 }
 
+/// Generic instantiations are written under the storage's encoding of their
+/// path and read back by it.
+#[test]
+fn write_schemas_writes_generic_instantiations() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let output_dir = temp_dir.path().to_str().expect("utf-8 temp dir");
+    let written = write_schemas::<Root>(Some(output_dir)).expect("write schemas");
+    assert_eq!(written.len(), 3);
+
+    let rel = type_path_to_file_path(path::<GenericContainer<u32>>()).unwrap();
+    let schema = read_schema(&temp_dir.path().join(rel)).expect("read schema");
+    assert_eq!(schema, GenericContainer::<u32>::schema());
+}
+
 /// A recursive type is referenced by `TypeRef`, so its schema is finite and
 /// collection terminates.
 #[allow(dead_code)]
