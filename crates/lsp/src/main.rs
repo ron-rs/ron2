@@ -2,6 +2,10 @@
 //!
 //! A Language Server Protocol implementation for RON (Rusty Object Notation) files.
 //! Provides auto-completion, diagnostics, and hover documentation based on schemas.
+//!
+//! Work that may touch the file system (schema lookup, which can stat and
+//! read schema files when the cache revalidates) runs on Tokio's blocking
+//! pool via [`off_executor`]; handlers hold no lock while awaiting it.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -34,8 +38,9 @@ pub struct Config {
 pub struct RonLanguageServer {
     /// LSP client for sending notifications.
     client: Client,
-    /// Cache of open documents.
-    documents: Arc<RwLock<HashMap<Url, Document>>>,
+    /// Cache of open documents. Shared with blocking tasks, which get their
+    /// own `Arc` so that no lock is held while they run.
+    documents: Arc<RwLock<HashMap<Url, Arc<Document>>>>,
     /// Schema resolver for loading schemas.
     schema_resolver: Arc<SchemaResolver>,
     /// Workspace root folders.
@@ -53,20 +58,40 @@ impl RonLanguageServer {
         }
     }
 
+    /// The open document at `uri`; the documents lock is released on return.
+    async fn document(&self, uri: &Url) -> Option<Arc<Document>> {
+        self.documents.read().await.get(uri).cloned()
+    }
+
+    /// Run `f` on the document at `uri` and the schema resolver, off the
+    /// async executor.
+    async fn with_document<T: Send + 'static>(
+        &self,
+        uri: &Url,
+        f: impl FnOnce(&Document, &SchemaResolver) -> T + Send + 'static,
+    ) -> Option<T> {
+        let doc = self.document(uri).await?;
+        let resolver = Arc::clone(&self.schema_resolver);
+        off_executor(move || f(&doc, &resolver)).await
+    }
+
     /// Validate a document and publish diagnostics.
     async fn validate_document(&self, uri: &Url) {
-        // Release the documents lock before awaiting the client.
-        let result = self.documents.read().await.get(uri).map(|doc| {
-            (
-                diagnostics::validate_document(doc, &self.schema_resolver),
-                doc.version,
-            )
-        });
-        if let Some((diagnostics, version)) = result {
-            self.client
-                .publish_diagnostics(uri.clone(), diagnostics, Some(version))
-                .await;
+        let Some((diagnostics, version)) = self
+            .with_document(uri, |doc, resolver| {
+                (diagnostics::validate_document(doc, resolver), doc.version)
+            })
+            .await
+        else {
+            return;
+        };
+        // A newer edit arrived while validating: its own validation publishes.
+        if self.document(uri).await.map(|doc| doc.version) != Some(version) {
+            return;
         }
+        self.client
+            .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+            .await;
     }
 
     /// Apply settings from `initializationOptions` or `workspace/didChangeConfiguration`.
@@ -75,7 +100,12 @@ impl RonLanguageServer {
             return;
         };
         let roots = self.workspace_roots.read().await.clone();
-        let (dirs, unresolved) = resolve_schema_dirs(&config.schema_dirs, &roots);
+        let (dirs, unresolved) = {
+            let roots = roots.clone();
+            off_executor(move || resolve_schema_dirs(&config.schema_dirs, &roots))
+                .await
+                .unwrap_or_default()
+        };
 
         for dir in unresolved {
             self.client
@@ -184,19 +214,24 @@ impl LanguageServer for RonLanguageServer {
             params.text_document.text,
             params.text_document.version,
         );
-        self.documents.write().await.insert(uri.clone(), doc);
+        self.documents
+            .write()
+            .await
+            .insert(uri.clone(), Arc::new(doc));
         self.validate_document(&uri).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        let uri = params.text_document.uri.clone();
+        let uri = params.text_document.uri;
+        // We use full sync, so take the last change
+        let Some(change) = params.content_changes.into_iter().last() else {
+            return;
+        };
+        let doc = Document::new(uri.clone(), change.text, params.text_document.version);
         let mut documents = self.documents.write().await;
-
-        if let Some(doc) = documents.get_mut(&uri) {
-            // We use full sync, so take the last change
-            if let Some(change) = params.content_changes.into_iter().last() {
-                doc.update(change.text, params.text_document.version);
-            }
+        if let Some(entry) = documents.get_mut(&uri) {
+            // Blocking tasks still reading the old version keep their `Arc`.
+            *entry = Arc::new(doc);
         }
         drop(documents);
         self.validate_document(&uri).await;
@@ -217,26 +252,32 @@ impl LanguageServer for RonLanguageServer {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
 
-        let documents = self.documents.read().await;
-        if let Some(doc) = documents.get(uri) {
-            let items = provide_completions(doc, position, &self.schema_resolver);
-            if !items.is_empty() {
-                return Ok(Some(CompletionResponse::Array(items)));
-            }
-        }
-        Ok(None)
+        let items = self
+            .with_document(uri, move |doc, resolver| {
+                provide_completions(doc, position, resolver)
+            })
+            .await
+            .unwrap_or_default();
+        Ok((!items.is_empty()).then_some(CompletionResponse::Array(items)))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        let documents = self.documents.read().await;
-        if let Some(doc) = documents.get(uri) {
-            return Ok(hover::provide_hover(doc, position, &self.schema_resolver));
-        }
-        Ok(None)
+        Ok(self
+            .with_document(uri, move |doc, resolver| {
+                hover::provide_hover(doc, position, resolver)
+            })
+            .await
+            .flatten())
     }
+}
+
+/// Run blocking work (file system access, schema lookups) on Tokio's
+/// blocking pool so it does not stall the executor. `None` if `f` panicked.
+async fn off_executor<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    tokio::task::spawn_blocking(f).await.ok()
 }
 
 /// Read [`Config`] from settings, which may be nested under a `ron` key.
@@ -286,7 +327,89 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
+    use ron2::schema::{Field, Schema, TypeKind, write_schema};
+
     use super::*;
+
+    /// On a single-threaded runtime, any blocking file system access in a
+    /// handler would run on the executor's only thread.
+    #[tokio::test(flavor = "current_thread")]
+    async fn schema_work_runs_off_the_executor() {
+        let executor = std::thread::current().id();
+        let worker = off_executor(|| std::thread::current().id()).await;
+        assert!(worker.is_some_and(|worker| worker != executor));
+
+        let dir = std::env::temp_dir().join(format!("ron2-lsp-main-{}", std::process::id()));
+        let schema = Schema::new(TypeKind::Struct {
+            fields: vec![
+                Field::new("port", TypeKind::U16).with_doc("Server port"),
+                Field::new("host", TypeKind::String),
+            ],
+        });
+        write_schema("app::Config", &schema, Some(&dir)).unwrap();
+
+        let (service, _socket) = LspService::new(RonLanguageServer::new);
+        let server = service.inner();
+        server.schema_resolver.set_schema_dirs(vec![dir.clone()]);
+        let uri = Url::parse("file:///config.ron").unwrap();
+        server
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(
+                    uri.clone(),
+                    "ron".into(),
+                    1,
+                    "#![type = \"app::Config\"]\n(\n    port: 1,\n    \n)".into(),
+                ),
+            })
+            .await;
+
+        let at = |line, character| TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier::new(uri.clone()),
+            position: Position::new(line, character),
+        };
+        let hover = server
+            .hover(HoverParams {
+                text_document_position_params: at(2, 6),
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("expected markup, got {:?}", hover.contents);
+        };
+        assert!(markup.value.contains("Server port"), "{}", markup.value);
+
+        // `port` is used, so only `host` is left to complete.
+        let completion = server
+            .completion(CompletionParams {
+                text_document_position: at(3, 4),
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+                context: None,
+            })
+            .await
+            .unwrap();
+        let Some(CompletionResponse::Array(items)) = completion else {
+            panic!("expected completion items, got {completion:?}");
+        };
+        let labels: Vec<_> = items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(labels, ["host"]);
+
+        // An unknown document has no answers.
+        let mut other = at(0, 0);
+        other.text_document.uri = Url::parse("file:///other.ron").unwrap();
+        let hover = server
+            .hover(HoverParams {
+                text_document_position_params: other,
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            })
+            .await
+            .unwrap();
+        assert!(hover.is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn parse_config_accepts_nested_and_flat_settings() {

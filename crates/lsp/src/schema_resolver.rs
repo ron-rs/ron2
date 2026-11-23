@@ -7,6 +7,11 @@
 //! is a hash-map hit, so validating on every keystroke does no disk I/O, and
 //! the lock is never held during I/O.
 //!
+//! Lookups are synchronous (the schema validator resolves type references
+//! through the synchronous [`SchemaResolverTrait`]); the server runs every
+//! lookup on Tokio's blocking pool, so a revalidation's file system calls
+//! never block the async executor.
+//!
 //! Misses are bounded: once the cache holds `MAX_ENTRIES` entries, misses
 //! and invalid entries are dropped (typing a `#![type]` creates one miss per
 //! keystroke).
