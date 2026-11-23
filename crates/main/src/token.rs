@@ -18,6 +18,8 @@ pub enum TokenKind {
     ByteString,
     /// A character literal (e.g., `'a'`, `'\n'`)
     Char,
+    /// A byte literal (e.g., `b'a'`, `b'\x7f'`)
+    Byte,
 
     // Punctuation
     /// `(`
@@ -54,8 +56,41 @@ pub enum TokenKind {
     // Special
     /// End of file
     Eof,
-    /// Lexer error - invalid token
-    Error,
+    /// Invalid input; the token text covers everything consumed for it.
+    Error(LexError),
+}
+
+/// Why the lexer produced an [`TokenKind::Error`] token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LexError {
+    /// A character that cannot start any token.
+    UnexpectedChar,
+    /// `/*` without matching `*/`.
+    UnclosedBlockComment,
+    /// String or byte string without closing quote.
+    UnterminatedString,
+    /// Raw string with more than 255 `#`.
+    TooManyHashes,
+    /// Character or byte literal without closing `'`.
+    UnterminatedChar,
+    /// `''`.
+    EmptyChar,
+    /// Base prefix (`0x`, `0o`, `0b`) without digits.
+    MissingDigits {
+        /// The number base of the prefix.
+        base: u8,
+    },
+    /// Base prefix followed by a digit that is invalid for that base.
+    InvalidDigit {
+        /// The number base of the prefix.
+        base: u8,
+        /// Byte offset of the invalid digit within the token text.
+        at: u8,
+    },
+    /// Exponent marker (`e`/`E`) without digits.
+    MissingExponent,
+    /// `r#` not followed by a raw identifier or raw string (e.g. `r#`, `r##foo`).
+    InvalidRawLiteral,
 }
 
 impl TokenKind {
@@ -76,7 +111,7 @@ impl TokenKind {
 ///
 /// Contains the token kind, the raw source text, and the span indicating
 /// where in the source this token was found.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Token<'a> {
     /// The kind of token.
     pub kind: TokenKind,
@@ -89,7 +124,6 @@ pub struct Token<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::Position;
 
     #[test]
     fn token_kind_is_trivia() {
@@ -101,31 +135,6 @@ mod tests {
         assert!(!TokenKind::Integer.is_trivia());
         assert!(!TokenKind::LParen.is_trivia());
         assert!(!TokenKind::Eof.is_trivia());
-        assert!(!TokenKind::Error.is_trivia());
-    }
-
-    #[test]
-    fn token_kind_copy() {
-        let kind = TokenKind::Ident;
-        let kind2 = kind; // Copy
-        assert_eq!(kind, kind2);
-    }
-
-    #[test]
-    fn token_clone() {
-        let token = Token {
-            kind: TokenKind::Ident,
-            text: "foo",
-            span: Span {
-                start: Position { line: 1, col: 1 },
-                end: Position { line: 1, col: 4 },
-                start_offset: 0,
-                end_offset: 3,
-            },
-        };
-        let token2 = token.clone();
-        assert_eq!(token.kind, token2.kind);
-        assert_eq!(token.text, token2.text);
-        assert_eq!(token.span, token2.span);
+        assert!(!TokenKind::Error(LexError::UnexpectedChar).is_trivia());
     }
 }

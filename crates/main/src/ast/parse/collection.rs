@@ -2,195 +2,91 @@
 
 use alloc::vec::Vec;
 
-use super::{AstParser, core::ParserCore};
+use super::{
+    AstParser,
+    core::{Delim, expected, span_at_end},
+};
 use crate::{
     ast::{ErrorExpr, Expr, MapEntry, MapExpr, SeqExpr, SeqItem, Trivia},
     error::{Error, Span},
     token::TokenKind,
 };
 
-/// Internal trait for parsing collection types.
-pub(super) trait CollectionParser<'a>: ParserCore<'a> {
-    fn parse_seq(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
-    fn parse_map(&mut self, errors: &mut Vec<Error>) -> Expr<'a>;
-}
-
-impl<'a> CollectionParser<'a> for AstParser<'a> {
-    /// Parse a sequence `[a, b, c]` with error recovery.
-    fn parse_seq(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        let open_bracket = self.next_token();
-        debug_assert_eq!(open_bracket.kind, TokenKind::LBracket);
-
-        let mut leading = self.collect_leading_trivia();
-        let mut items = Vec::new();
-
-        loop {
-            let kind = self.peek_kind();
-
-            // Always check for closing bracket (handles trailing commas)
-            if kind == TokenKind::RBracket {
-                break;
-            }
-            // Only check for EOF if we're not after a comma (allow error in strict mode)
-            if (items.is_empty()
-                || items
-                    .last()
-                    .is_some_and(|item: &SeqItem| item.comma.is_none()))
-                && kind == TokenKind::Eof
-            {
-                break;
-            }
-
-            let expr = self.parse_expr_lossy(errors);
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            items.push(SeqItem {
+impl<'a> AstParser<'a> {
+    /// Parse a sequence `[a, b, c]`.
+    pub(super) fn parse_seq(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+        let open = self.next_token();
+        let list = self.parse_list(Delim::Bracket, "array", errors, |p, leading, errors| {
+            SeqItem {
                 leading,
-                expr,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma && !self.handle_missing_comma("array", TokenKind::RBracket, errors) {
-                break;
+                expr: p.parse_expr(errors),
+                trailing: Trivia::empty(),
+                comma: None,
             }
-        }
-
-        let trailing = if items.is_empty() {
-            leading
-        } else {
-            self.collect_leading_trivia()
-        };
-
-        let close_bracket = self.consume_closing(
-            TokenKind::RBracket,
-            Self::expected("closing `]`", Some("array")),
-            errors,
-        );
-
+        });
         Expr::Seq(SeqExpr {
-            span: Span::between(&open_bracket.span, &close_bracket),
-            open_bracket: open_bracket.span,
+            span: Span::between(&open.span, &list.close),
+            open_bracket: open.span,
             leading: Trivia::empty(),
-            items,
-            trailing,
-            close_bracket,
+            items: list.items,
+            trailing: list.trailing,
+            close_bracket: list.close,
         })
     }
 
-    /// Parse a map `{key: value, ...}` with error recovery.
-    fn parse_map(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        let open_brace = self.next_token();
-        debug_assert_eq!(open_brace.kind, TokenKind::LBrace);
+    /// Parse a map `{key: value, ...}`.
+    pub(super) fn parse_map(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+        let open = self.next_token();
+        let list = self.parse_list(Delim::Brace, "map", errors, Self::parse_map_entry);
+        Expr::Map(MapExpr {
+            span: Span::between(&open.span, &list.close),
+            open_brace: open.span,
+            leading: Trivia::empty(),
+            entries: list.items,
+            trailing: list.trailing,
+            close_brace: list.close,
+        })
+    }
 
-        let mut leading = self.collect_leading_trivia();
-        let mut entries = Vec::new();
+    fn parse_map_entry(&mut self, leading: Trivia<'a>, errors: &mut Vec<Error>) -> MapEntry<'a> {
+        let key = self.parse_expr(errors);
+        let pre_colon = self.take_trivia();
 
-        loop {
-            let kind = self.peek_kind();
-
-            // Always check for closing brace (handles trailing commas)
-            if kind == TokenKind::RBrace {
-                break;
-            }
-            // Only check for EOF if not after a comma
-            if (entries.is_empty() || entries.last().is_some_and(|e: &MapEntry| e.comma.is_none()))
-                && kind == TokenKind::Eof
-            {
-                break;
-            }
-
-            let key = self.parse_expr_lossy(errors);
-            let pre_colon = self.collect_leading_trivia();
-
-            if self.peek_kind() != TokenKind::Colon {
-                // Missing colon - create error entry and recover
-                errors.push(Self::error(
-                    self.peek_span(),
-                    Self::expected("`:` after map key", Some("map entry")),
-                ));
-                self.recover_until(&[TokenKind::Comma, TokenKind::RBrace]);
-                let trailing = self.collect_leading_trivia();
-                let (comma, _) = self.consume_comma();
-                let colon_span = pre_colon.span.unwrap_or_else(|| self.eof_span());
-                let key_span = key.span();
-                let error_span = Self::span_at_end(key_span);
-                entries.push(MapEntry {
-                    leading,
-                    key,
-                    pre_colon,
-                    colon: Self::span_at_end(&colon_span),
-                    post_colon: Trivia::empty(),
-                    value: Expr::Error(ErrorExpr {
-                        span: error_span,
-                        error: Error::with_span(
-                            Self::expected("value", Some("map entry")),
-                            error_span,
-                        ),
-                    }),
-                    trailing,
-                    comma,
-                });
-                leading = self.collect_leading_trivia();
-                continue;
-            }
-            let colon_tok = self.next_token();
-
-            let post_colon = self.collect_leading_trivia();
-            let value = self.parse_expr_lossy(errors);
-            let trailing = self.collect_leading_trivia();
-
-            let (comma, has_comma) = self.consume_comma();
-
-            entries.push(MapEntry {
-                leading,
-                key,
-                pre_colon,
-                colon: colon_tok.span,
-                post_colon,
-                value,
-                trailing,
-                comma,
-            });
-
-            leading = self.collect_leading_trivia();
-
-            if !has_comma && !self.handle_missing_comma("map", TokenKind::RBrace, errors) {
-                break;
-            }
-        }
-
-        let trailing = if entries.is_empty() {
-            leading
+        let (colon, post_colon, value) = if let Some(colon) = self.eat(TokenKind::Colon) {
+            let post_colon = self.take_trivia();
+            (colon, post_colon, self.parse_value("map entry", errors))
         } else {
-            self.collect_leading_trivia()
+            let colon = span_at_end(key.span());
+            let error = Error::with_span(
+                expected("`:` after map key", Some("map entry")),
+                self.peek_span(),
+            );
+            // An invalid key was already reported (and recovered from).
+            if !matches!(key, Expr::Error(_)) {
+                errors.push(error.clone());
+                self.recover();
+            }
+            let value = Expr::Error(ErrorExpr { span: colon, error });
+            (colon, Trivia::empty(), value)
         };
 
-        let close_brace = self.consume_closing(
-            TokenKind::RBrace,
-            Self::expected("closing `}`", Some("map")),
-            errors,
-        );
-
-        Expr::Map(MapExpr {
-            span: Span::between(&open_brace.span, &close_brace),
-            open_brace: open_brace.span,
-            leading: Trivia::empty(),
-            entries,
-            trailing,
-            close_brace,
-        })
+        MapEntry {
+            leading,
+            key,
+            pre_colon,
+            colon,
+            post_colon,
+            value,
+            trailing: Trivia::empty(),
+            comma: None,
+        }
     }
 }
 
 #[cfg(test)]
 #[allow(clippy::panic)]
 mod tests {
-    use super::super::parse_document;
+    use super::super::{parse_document, parse_document_lossy};
     use crate::ast::Expr;
 
     #[test]
@@ -223,6 +119,30 @@ mod tests {
                 assert_eq!(map.entries.len(), 2);
             }
             _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn map_missing_value_keeps_closer() {
+        // The `}` used to be consumed as the missing value.
+        let (doc, errors) = parse_document_lossy(r#"[{"a": }, 2]"#);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        match doc.value {
+            Some(Expr::Seq(seq)) => {
+                assert_eq!(seq.items.len(), 2);
+                assert!(matches!(seq.items[1].expr, Expr::Number(_)));
+            }
+            other => panic!("expected seq, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_missing_colon_stops_at_outer_closer() {
+        let (doc, errors) = parse_document_lossy(r#"[{"a" ]"#);
+        assert_eq!(errors.len(), 2, "{errors:?}"); // missing `:` and missing `}`
+        match doc.value {
+            Some(Expr::Seq(seq)) => assert_eq!(seq.items.len(), 1),
+            other => panic!("expected seq, got {other:?}"),
         }
     }
 }

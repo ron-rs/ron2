@@ -10,19 +10,11 @@ mod literal;
 mod struct_field;
 mod tuple;
 
-use alloc::{borrow::Cow, vec::Vec};
+use alloc::{borrow::Cow, collections::VecDeque, vec::Vec};
 
-use ::core::iter::Peekable;
-
-use self::{
-    attribute::AttributeParser, collection::CollectionParser, core::ParserCore,
-    literal::LiteralParser, struct_field::StructFieldParser, tuple::TupleParser,
-};
-#[cfg(test)]
-use crate::ast::StructBody;
 use crate::{
     ast::{Document, Expr},
-    error::{Error, ErrorKind, Result},
+    error::{Error, ErrorKind, Result, Span},
     lexer::Lexer,
     token::{Token, TokenKind},
 };
@@ -37,64 +29,77 @@ const MAX_RECURSION_DEPTH: usize = 128;
 ///
 /// # Errors
 ///
-/// Returns an error if the source contains invalid RON syntax.
+/// Returns the first error if the source contains invalid RON syntax.
 pub fn parse_document(source: &str) -> Result<Document<'_>> {
-    let lexer = Lexer::new(source).with_trivia(true);
-    let mut parser = AstParser::new(source, lexer);
-    parser.parse_document()
+    let mut errors = Vec::new();
+    let doc = AstParser::new(source).parse_document(&mut errors);
+    match errors.into_iter().next() {
+        None => Ok(doc),
+        Some(err) => Err(err),
+    }
 }
 
 /// Parse RON source into an AST document with error recovery.
 ///
-/// Returns the parsed document plus any errors encountered.
+/// Returns the parsed document plus all errors encountered. Invalid parts of
+/// the document are represented by [`Expr::Error`] nodes.
 #[must_use]
 pub fn parse_document_lossy(source: &str) -> (Document<'_>, Vec<Error>) {
-    let lexer = Lexer::new(source).with_trivia(true);
-    let mut parser = AstParser::new(source, lexer);
-    parser.parse_document_lossy()
+    let mut errors = Vec::new();
+    let doc = AstParser::new(source).parse_document(&mut errors);
+    (doc, errors)
 }
 
 /// AST parser that consumes tokens and builds AST nodes.
+///
+/// It looks at one significant (non-trivia) token, `peeked`. Trivia before it
+/// is buffered in `trivia` until a node takes it; `peek_second_kind` reads
+/// further raw tokens into `ahead` for the one place that needs two tokens of
+/// lookahead (`ident:` field detection).
 struct AstParser<'a> {
-    pub(super) source: &'a str,
-    pub(super) tokens: Peekable<Lexer<'a>>,
-    /// Buffer for collecting trivia before a token.
-    pub(super) trivia_buffer: Vec<Token<'a>>,
-    /// Lookahead token that was peeked but needs to be returned.
-    pub(super) lookahead: Option<Token<'a>>,
-    /// Current recursion depth for nested structures.
+    source: &'a str,
+    lexer: Lexer<'a>,
+    /// The next non-trivia token.
+    peeked: Token<'a>,
+    /// Trivia tokens before `peeked`.
+    trivia: Vec<Token<'a>>,
+    /// Raw tokens after `peeked` that were read ahead.
+    ahead: VecDeque<Token<'a>>,
+    /// Current recursion depth for nested expressions.
     depth: usize,
+    /// Number of open containers per [`core::Delim`] awaiting their closer.
+    open: [usize; 3],
 }
 
 impl<'a> AstParser<'a> {
-    fn new(source: &'a str, lexer: Lexer<'a>) -> Self {
-        Self {
+    fn new(source: &'a str) -> Self {
+        let mut parser = Self {
             source,
-            tokens: lexer.peekable(),
-            trivia_buffer: Vec::new(),
-            lookahead: None,
+            lexer: Lexer::new(source),
+            peeked: Token {
+                kind: TokenKind::Eof,
+                text: "",
+                span: Span::default(),
+            },
+            trivia: Vec::new(),
+            ahead: VecDeque::new(),
             depth: 0,
-        }
+            open: [0; 3],
+        };
+        parser.peeked = parser.read_significant();
+        parser
     }
 
-    /// Parse a complete document.
-    /// Parse a complete document (internal unified implementation).
-    fn parse_document_inner(&mut self, errors: &mut Vec<Error>) -> Document<'a> {
-        let leading = self.collect_leading_trivia();
+    fn parse_document(&mut self, errors: &mut Vec<Error>) -> Document<'a> {
+        let leading = self.take_trivia();
         let attributes = self.parse_attributes(errors);
-        let pre_value = self.collect_leading_trivia();
-
-        let value = match self.peek_kind() {
-            TokenKind::Eof => None,
-            _ => Some(self.parse_expr_inner(errors)),
-        };
-
-        let trailing = self.collect_leading_trivia();
+        let pre_value = self.take_trivia();
+        let value = (self.peek_kind() != TokenKind::Eof).then(|| self.parse_expr(errors));
+        let trailing = self.take_trivia();
 
         if self.peek_kind() != TokenKind::Eof {
-            let tok = self.next_token();
-            errors.push(Self::error(tok.span, ErrorKind::TrailingCharacters));
-            self.recover_until(&[TokenKind::Eof]);
+            errors.push(self.unexpected(&self.peeked, ErrorKind::TrailingCharacters));
+            self.skip_until(&[]);
         }
 
         Document {
@@ -107,81 +112,48 @@ impl<'a> AstParser<'a> {
         }
     }
 
-    fn parse_document(&mut self) -> Result<Document<'a>> {
-        let mut errors = Vec::new();
-        let doc = self.parse_document_inner(&mut errors);
-        if errors.is_empty() {
-            Ok(doc)
-        } else {
-            Err(errors.remove(0))
+    /// Parse an expression; on errors, returns [`Expr::Error`] and recovers.
+    fn parse_expr(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
+        if self.depth >= MAX_RECURSION_DEPTH {
+            let err = Error::with_span(ErrorKind::ExceededRecursionLimit, self.peek_span());
+            return self.error_expr(err, errors);
         }
-    }
-
-    /// Parse a complete document with error recovery.
-    fn parse_document_lossy(&mut self) -> (Document<'a>, Vec<Error>) {
-        let mut errors = Vec::new();
-        let doc = self.parse_document_inner(&mut errors);
-        (doc, errors)
-    }
-
-    /// Parse an expression.
-    /// Parse an expression (internal unified implementation).
-    fn parse_expr_inner(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         self.depth += 1;
 
-        // Check recursion limit
-        if self.depth > MAX_RECURSION_DEPTH {
-            let span = self.peek_span();
-            let err = Self::error(span, ErrorKind::ExceededRecursionLimit);
-            self.depth -= 1;
-            return self.error_expr_from(err, errors);
-        }
-
-        let result = match self.peek_kind() {
-            TokenKind::LParen => self.parse_tuple_or_unit(errors),
+        let expr = match self.peek_kind() {
+            TokenKind::LParen => self.parse_paren(errors),
             TokenKind::LBracket => self.parse_seq(errors),
             TokenKind::LBrace => self.parse_map(errors),
             TokenKind::Ident => self.parse_ident_expr(errors),
-            TokenKind::Integer => self.parse_integer(),
-            TokenKind::Float => self.parse_float(),
-            TokenKind::String => match self.parse_string() {
-                Ok(expr) => expr,
-                Err(err) => self.error_expr_from(err, errors),
-            },
-            TokenKind::ByteString => match self.parse_bytes() {
-                Ok(expr) => expr,
-                Err(err) => self.error_expr_from(err, errors),
-            },
-            TokenKind::Char => match self.parse_char() {
-                Ok(expr) => expr,
-                Err(err) => self.error_expr_from(err, errors),
-            },
-            TokenKind::Eof => {
-                let err = Self::error(self.eof_span(), ErrorKind::Eof);
-                self.error_expr_from(err, errors)
+            TokenKind::Integer | TokenKind::Float => self.parse_number(),
+            TokenKind::String | TokenKind::ByteString | TokenKind::Char | TokenKind::Byte => {
+                self.parse_text_literal(errors)
             }
-            TokenKind::Error => {
-                let tok = self.next_token();
-                let err = Self::error_for_error_token(&tok);
-                self.error_expr_from(err, errors)
+            TokenKind::Eof => {
+                let err = Error::with_span(ErrorKind::Eof, self.peek_span());
+                self.error_expr(err, errors)
             }
             _ => {
                 let tok = self.next_token();
-                let err = Self::error(
-                    tok.span,
-                    ErrorKind::UnexpectedChar(tok.text.chars().next().unwrap_or('?')),
-                );
-                self.error_expr_from(err, errors)
+                let c = tok.text.chars().next().unwrap_or_default();
+                let err = self.unexpected(&tok, ErrorKind::UnexpectedChar(c));
+                self.error_expr(err, errors)
             }
         };
 
         self.depth -= 1;
-        result
+        expr
     }
 
-    /// Parse an expression with error recovery.
-    fn parse_expr_lossy(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
-        self.parse_expr_inner(errors)
+    /// Parse the value after a `:` or inside `Some(...)`, reporting a missing
+    /// value without consuming the comma or closer that follows.
+    fn parse_value(&mut self, context: &'static str, errors: &mut Vec<Error>) -> Expr<'a> {
+        match self.peek_kind() {
+            TokenKind::Comma | TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                self.missing_value(context, errors)
+            }
+            _ => self.parse_expr(errors),
+        }
     }
 }
 
@@ -189,6 +161,7 @@ impl<'a> AstParser<'a> {
 #[allow(clippy::panic)]
 mod tests {
     use super::*;
+    use crate::ast::StructBody;
 
     #[test]
     fn parse_empty_document() {
@@ -658,5 +631,90 @@ mod tests {
             result.unwrap_err().kind(),
             ErrorKind::ExceededRecursionLimit
         ));
+    }
+
+    // =========================================================================
+    // Trivia round-trips (serialize_document must reproduce the source)
+    // =========================================================================
+
+    fn assert_round_trip(source: &str) {
+        let doc = parse_document(source).unwrap();
+        let output = crate::ast::serialize_document(&doc).unwrap();
+        assert_eq!(output, source);
+    }
+
+    #[test]
+    fn trivia_after_trailing_comma_round_trips() {
+        // The comment after the last comma used to be dropped.
+        for source in [
+            "[\n 1,\n 2, // two\n]",
+            "{\n \"a\": 1, // one\n}",
+            "(\n x: 1, // one\n)",
+            "(\n 1,\n 2, // two\n)",
+            "Foo(\n 1, // one\n)",
+            "Foo(\n x: 1, // one\n)",
+            "[1, /* a */ 2 /* b */, /* c */]",
+        ] {
+            assert_round_trip(source);
+        }
+    }
+
+    #[test]
+    fn trivia_in_empty_containers_round_trips() {
+        for source in ["[ /* c */ ]", "{ // c\n}", "Foo( /* c */ )", "( )"] {
+            assert_round_trip(source);
+        }
+    }
+
+    #[test]
+    fn trailing_comment_is_in_container_trailing() {
+        let doc = parse_document("[\n 1,\n 2, // two\n]").unwrap();
+        match doc.value {
+            Some(Expr::Seq(seq)) => {
+                assert_eq!(seq.trailing.comments.len(), 1);
+                assert_eq!(seq.trailing.comments[0].text, "// two");
+            }
+            _ => panic!("expected seq"),
+        }
+    }
+
+    // =========================================================================
+    // Error recovery always terminates
+    // =========================================================================
+
+    #[test]
+    fn mismatched_closer_at_recursion_limit() {
+        // Used to loop forever: past the depth limit nothing was consumed and the
+        // container kept reporting a missing comma before the foreign closer.
+        let source = "[".repeat(128) + ")";
+        let (_, errors) = parse_document_lossy(&source);
+        // The stray `)`, then one missing `]` per array.
+        assert_eq!(errors.len(), 129);
+        assert_eq!(errors[0].kind(), &ErrorKind::UnexpectedChar(')'));
+        assert!(parse_document(&source).is_err());
+    }
+
+    #[test]
+    fn mismatched_closer_skipped_when_unexpected() {
+        let (doc, errors) = parse_document_lossy("[1 ) 2]");
+        assert_eq!(errors.len(), 2, "{errors:?}"); // stray `)` and missing comma
+        match doc.value {
+            Some(Expr::Seq(seq)) => assert_eq!(seq.items.len(), 2),
+            _ => panic!("expected seq"),
+        }
+    }
+
+    #[test]
+    fn mismatched_closer_closes_outer_container() {
+        let (doc, errors) = parse_document_lossy("[(1, 2], 3");
+        // Missing `)`, then the `]` closes the array and `, 3` is trailing input.
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        match doc.value {
+            Some(Expr::Seq(seq)) => {
+                assert_eq!(seq.items.len(), 1);
+                assert!(matches!(&seq.items[0].expr, Expr::Tuple(t) if t.elements.len() == 2));
+            }
+            _ => panic!("expected seq"),
+        }
     }
 }

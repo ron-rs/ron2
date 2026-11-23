@@ -134,20 +134,10 @@ fn bench_lexer(c: &mut Criterion) {
 
     group.throughput(Throughput::Bytes(input.len() as u64));
 
-    // Lexer without trivia (value parsing mode)
-    group.bench_function("lexer", |b| {
-        b.iter(|| {
-            let lexer = Lexer::new(&input);
-            for token in lexer {
-                black_box(token);
-            }
-        });
-    });
-
-    // Lexer with trivia (AST parsing mode)
+    // The lexer always emits trivia (whitespace and comments) tokens.
     group.bench_function("lexer_trivia", |b| {
         b.iter(|| {
-            let lexer = Lexer::new(&input).with_trivia(true);
+            let lexer = Lexer::new(&input);
             for token in lexer {
                 black_box(token);
             }

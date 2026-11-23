@@ -191,34 +191,33 @@ impl LineIndex {
             col: offset - line_start + 1,
         }
     }
-
-    /// Returns the line starts array for creating a cursor.
-    #[must_use]
-    pub fn line_starts(&self) -> &[usize] {
-        &self.line_starts
-    }
 }
 
 /// A cursor for efficient sequential position lookups.
 ///
-/// For lexers that compute positions sequentially (cursor only moves forward),
+/// For lexers that compute positions sequentially (offsets only move forward),
 /// this provides O(k) lookups where k = number of newlines crossed, rather
-/// than O(log L) binary search per lookup.
+/// than O(log L) binary search per lookup. The cursor does not borrow the
+/// [`LineIndex`], so it can live next to the index it scans in the same struct.
 #[derive(Clone, Debug)]
-pub struct LineIndexCursor<'a> {
-    line_starts: &'a [usize],
+pub struct LineIndexCursor {
     /// Current line (1-indexed).
     line: usize,
     /// Byte offset where current line starts.
     line_start: usize,
 }
 
-impl<'a> LineIndexCursor<'a> {
+impl Default for LineIndexCursor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LineIndexCursor {
     /// Create a cursor starting at position (1, 1).
     #[must_use]
-    pub fn new(line_index: &'a LineIndex) -> Self {
+    pub const fn new() -> Self {
         Self {
-            line_starts: &line_index.line_starts,
             line: 1,
             line_start: 0,
         }
@@ -226,13 +225,12 @@ impl<'a> LineIndexCursor<'a> {
 
     /// Convert a byte offset to position, scanning forward from the last lookup.
     ///
-    /// The offset must be >= the offset from the previous call (monotonic).
-    /// This is O(k) where k = number of newlines between the last and current offset.
+    /// `index` must be the same index on every call, and `offset` must be >= the
+    /// offset of the previous call (monotonic).
     #[must_use]
-    pub fn position(&mut self, offset: usize) -> Position {
-        // Scan forward through line starts to find which line we're on
-        while self.line < self.line_starts.len() {
-            let next_line_start = self.line_starts[self.line];
+    pub fn position(&mut self, index: &LineIndex, offset: usize) -> Position {
+        let line_starts = &index.line_starts;
+        while let Some(&next_line_start) = line_starts.get(self.line) {
             if offset < next_line_start {
                 break;
             }
@@ -347,6 +345,16 @@ mod tests {
     fn test_line_index_empty() {
         let idx = LineIndex::new("");
         assert_eq!(idx.position(0), Position { line: 1, col: 1 });
+    }
+
+    #[test]
+    fn test_line_index_cursor_matches_binary_search() {
+        let source = "a\n\nbc\nd";
+        let idx = LineIndex::new(source);
+        let mut cursor = LineIndexCursor::new();
+        for offset in 0..=source.len() {
+            assert_eq!(cursor.position(&idx, offset), idx.position(offset));
+        }
     }
 
     #[test]

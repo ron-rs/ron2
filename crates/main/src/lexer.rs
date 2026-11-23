@@ -1,940 +1,489 @@
-//! Lexer for RON (Rusty Object Notation)
+//! Lexer for RON (Rusty Object Notation).
 //!
-//! This module provides a tokenizer that converts RON source text into a stream of tokens.
-//! The lexer supports two modes:
-//! - **Skip trivia mode** (default): Whitespace is skipped, suitable for value parsing
-//! - **Emit trivia mode**: All tokens including whitespace are emitted, suitable for AST parsing
+//! Converts RON source text into a stream of tokens. Whitespace and comments
+//! are emitted as trivia tokens so the AST parser can preserve them.
+//!
+//! The lexer never fails: invalid input becomes a [`TokenKind::Error`] token
+//! whose [`LexError`] says what is wrong. Every call consumes at least one byte
+//! until the end of input, after which it keeps returning [`TokenKind::Eof`].
 
 use crate::{
     chars::{is_ident_continue_char, is_ident_first_char, is_ident_raw_char, is_whitespace_char},
-    error::{LineIndex, Position, Span},
-    token::{Token, TokenKind},
+    error::{LineIndex, LineIndexCursor, Span},
+    token::{LexError, Token, TokenKind},
 };
 
-extern crate alloc;
+/// Raw strings may use at most this many `#`, like in Rust.
+const MAX_RAW_HASHES: usize = 255;
 
-/// Pre-computed closing delimiters for raw strings with 0-8 hashes.
-/// This avoids heap allocation. More than 8 hashes is treated as an error.
-const RAW_STRING_CLOSING_DELIMITERS: [&str; 9] = [
-    "\"",
-    "\"#",
-    "\"##",
-    "\"###",
-    "\"####",
-    "\"#####",
-    "\"######",
-    "\"#######",
-    "\"########",
-];
-
-/// A lexer that tokenizes RON source text.
-///
-/// The lexer implements `Iterator` and produces `Token` items for each
-/// recognized construct in the source.
+/// A lexer that tokenizes RON source text, including trivia.
 pub struct Lexer<'a> {
-    /// The source text being tokenized
     source: &'a str,
-    /// Current byte offset in the source
+    /// Current byte offset; always on a UTF-8 char boundary.
     cursor: usize,
-    /// Line index for position calculation
     line_index: LineIndex,
-    /// Current line number (1-indexed) for fast sequential position lookups
-    current_line: usize,
-    /// Byte offset where current line starts
-    current_line_start: usize,
-    /// Whether to emit trivia tokens (whitespace, comments)
-    emit_trivia: bool,
-    /// Whether we've emitted the EOF token
-    eof_emitted: bool,
+    line_cursor: LineIndexCursor,
+    /// Whether the iterator has yielded `Eof`.
+    done: bool,
 }
 
 impl<'a> Lexer<'a> {
     /// Create a new lexer for the given source text.
-    ///
-    /// By default, trivia (whitespace and comments) is skipped.
-    /// Use [`with_trivia`](Self::with_trivia) to enable trivia emission.
     #[must_use]
     pub fn new(source: &'a str) -> Self {
         Self {
             source,
             cursor: 0,
             line_index: LineIndex::new(source),
-            current_line: 1,
-            current_line_start: 0,
-            emit_trivia: false,
-            eof_emitted: false,
+            line_cursor: LineIndexCursor::new(),
+            done: false,
         }
     }
 
-    /// Enable or disable trivia emission.
-    ///
-    /// When enabled, whitespace and comments are returned as tokens.
-    /// This is required for AST parsing that needs to preserve formatting.
+    /// The line index of the source, for converting byte offsets to positions.
     #[must_use]
-    pub fn with_trivia(mut self, emit: bool) -> Self {
-        self.emit_trivia = emit;
-        self
+    pub fn line_index(&self) -> &LineIndex {
+        &self.line_index
     }
 
-    /// Returns the current position in the source.
-    ///
-    /// Uses sequential scanning from the last known position, which is O(k)
-    /// where k = number of newlines crossed since last call.
-    #[must_use]
-    pub fn current_position(&mut self) -> Position {
-        let line_starts = self.line_index.line_starts();
-        // Scan forward through line starts to find which line we're on
-        while self.current_line < line_starts.len() {
-            let next_line_start = line_starts[self.current_line];
-            if self.cursor < next_line_start {
-                break;
-            }
-            self.current_line += 1;
-            self.current_line_start = next_line_start;
-        }
-        Position {
-            line: self.current_line,
-            col: self.cursor - self.current_line_start + 1,
+    /// Lex the next token. Returns `Eof` tokens forever once the input is exhausted.
+    pub fn next_token(&mut self) -> Token<'a> {
+        let start = self.cursor;
+        let start_pos = self.line_cursor.position(&self.line_index, start);
+        let kind = self.lex();
+        let end_pos = self.line_cursor.position(&self.line_index, self.cursor);
+        Token {
+            kind,
+            text: self.source.get(start..self.cursor).unwrap_or_default(),
+            span: Span {
+                start: start_pos,
+                end: end_pos,
+                start_offset: start,
+                end_offset: self.cursor,
+            },
         }
     }
 
-    /// Returns the remaining source text starting from the current cursor position.
-    #[must_use]
     fn remaining(&self) -> &'a str {
-        // SAFETY: cursor is always at a valid UTF-8 boundary because we only
-        // advance by char lengths or known ASCII byte counts
-        &self.source[self.cursor..]
+        self.source.get(self.cursor..).unwrap_or_default()
     }
 
-    /// Returns the next byte without consuming it, if any.
-    /// This is the fast path for ASCII-heavy content.
-    #[must_use]
     #[inline]
     fn peek_byte(&self) -> Option<u8> {
         self.source.as_bytes().get(self.cursor).copied()
     }
 
-    /// Returns the next character without consuming it, if any.
-    /// Uses a fast path for ASCII characters.
-    #[must_use]
+    /// The byte `n` bytes after the cursor.
+    #[inline]
+    fn peek_byte_at(&self, n: usize) -> Option<u8> {
+        self.source.as_bytes().get(self.cursor + n).copied()
+    }
+
     #[inline]
     fn peek_char(&self) -> Option<char> {
-        let b = self.peek_byte()?;
-        if b.is_ascii() {
-            Some(b as char)
-        } else {
-            // Non-ASCII: fall back to full UTF-8 decode
-            self.remaining().chars().next()
+        match self.peek_byte()? {
+            b if b.is_ascii() => Some(b as char),
+            _ => self.remaining().chars().next(),
         }
     }
 
-    /// Returns the second character without consuming anything, if any.
-    /// Uses a fast path for ASCII characters.
-    #[must_use]
-    fn peek_char_second(&self) -> Option<char> {
-        let bytes = self.source.as_bytes();
-        let first = *bytes.get(self.cursor)?;
-
-        // Compute offset of second character
-        let second_offset = if first.is_ascii() {
-            self.cursor + 1
-        } else {
-            // Non-ASCII first char: need to find its length
-            let first_char = self.remaining().chars().next()?;
-            self.cursor + first_char.len_utf8()
-        };
-
-        let second_byte = *bytes.get(second_offset)?;
-        if second_byte.is_ascii() {
-            Some(second_byte as char)
-        } else {
-            // Non-ASCII second char: decode it
-            self.source.get(second_offset..)?.chars().next()
-        }
-    }
-
-    /// Consumes and returns the next character.
-    /// Uses a fast path for ASCII characters.
     #[inline]
     fn next_char(&mut self) -> Option<char> {
-        let b = self.peek_byte()?;
-
-        if b.is_ascii() {
-            // Fast path for ASCII
-            self.cursor += 1;
-            Some(b as char)
-        } else {
-            // Slow path for non-ASCII
-            let c = self.remaining().chars().next()?;
-            self.cursor += c.len_utf8();
-            Some(c)
-        }
+        let c = self.peek_char()?;
+        self.cursor += c.len_utf8();
+        Some(c)
     }
 
-    /// Advances the cursor by the given number of bytes.
+    /// Advance by `bytes`, which must end on a char boundary.
     #[inline]
     fn advance(&mut self, bytes: usize) {
         self.cursor += bytes;
     }
 
-    /// Checks if the remaining source starts with the given string.
-    #[must_use]
-    fn check_str(&self, s: &str) -> bool {
-        self.remaining().starts_with(s)
-    }
-
-    /// Consumes the given string if it matches the start of the remaining source.
-    /// Returns true if consumed.
-    fn consume_str(&mut self, s: &str) -> bool {
-        if self.check_str(s) {
-            self.advance(s.len());
-            true
-        } else {
-            false
+    fn eat_while(&mut self, pred: impl Fn(char) -> bool) {
+        while self.peek_char().is_some_and(&pred) {
+            self.next_char();
         }
     }
 
-    /// Tokenize the next token from the source.
-    fn next_token(&mut self) -> Option<Token<'a>> {
-        if self.cursor >= self.source.len() {
-            if self.eof_emitted {
-                return None;
-            }
-            self.eof_emitted = true;
-            let pos = self.current_position();
-            return Some(Token {
-                kind: TokenKind::Eof,
-                text: "",
-                span: Span {
-                    start: pos,
-                    end: pos,
-                    start_offset: self.cursor,
-                    end_offset: self.cursor,
-                },
-            });
+    /// Consume `suffix` if it is not followed by an identifier char
+    /// (e.g. `f32` in `1.5f32`, but not in `1.5f32x`).
+    fn eat_suffix(&mut self, suffix: &str) -> bool {
+        let found = self
+            .remaining()
+            .strip_prefix(suffix)
+            .is_some_and(|rest| !rest.chars().next().is_some_and(is_ident_continue_char));
+        if found {
+            self.advance(suffix.len());
         }
-
-        let start = self.cursor;
-        let start_pos = self.current_position();
-
-        // Check for whitespace first
-        if let Some(c) = self.peek_char()
-            && is_whitespace_char(c)
-        {
-            let kind = self.whitespace();
-            if self.emit_trivia {
-                let text = &self.source[start..self.cursor];
-                return Some(Token {
-                    kind,
-                    text,
-                    span: Span {
-                        start: start_pos,
-                        end: self.current_position(),
-                        start_offset: start,
-                        end_offset: self.cursor,
-                    },
-                });
-            }
-            // Skip trivia and try again
-            return self.next_token();
-        }
-
-        // Check for comments
-        if (self.check_str("//") || self.check_str("/*"))
-            && let Some(kind) = self.try_comment()
-        {
-            if self.emit_trivia {
-                let text = &self.source[start..self.cursor];
-                return Some(Token {
-                    kind,
-                    text,
-                    span: Span {
-                        start: start_pos,
-                        end: self.current_position(),
-                        start_offset: start,
-                        end_offset: self.cursor,
-                    },
-                });
-            }
-            // Skip trivia and try again
-            return self.next_token();
-        }
-
-        // Try to match non-trivia token types
-        let kind = self.match_token();
-
-        let text = &self.source[start..self.cursor];
-        Some(Token {
-            kind,
-            text,
-            span: Span {
-                start: start_pos,
-                end: self.current_position(),
-                start_offset: start,
-                end_offset: self.cursor,
-            },
-        })
+        found
     }
 
-    /// Match whitespace sequence.
-    fn whitespace(&mut self) -> TokenKind {
-        while let Some(c) = self.peek_char() {
-            if is_whitespace_char(c) {
-                self.next_char();
-            } else {
-                break;
-            }
-        }
-        TokenKind::Whitespace
-    }
-
-    /// Match and consume the next token, returning its kind.
-    fn match_token(&mut self) -> TokenKind {
+    /// Consume the next token and return its kind.
+    fn lex(&mut self) -> TokenKind {
         let Some(c) = self.peek_char() else {
+            self.done = true;
             return TokenKind::Eof;
         };
 
-        // Single-character punctuation
+        let single = match c {
+            '(' => Some(TokenKind::LParen),
+            ')' => Some(TokenKind::RParen),
+            '{' => Some(TokenKind::LBrace),
+            '}' => Some(TokenKind::RBrace),
+            '[' => Some(TokenKind::LBracket),
+            ']' => Some(TokenKind::RBracket),
+            ':' => Some(TokenKind::Colon),
+            ',' => Some(TokenKind::Comma),
+            '#' => Some(TokenKind::Hash),
+            '!' => Some(TokenKind::Bang),
+            '=' => Some(TokenKind::Eq),
+            _ => None,
+        };
+        if let Some(kind) = single {
+            self.advance(1);
+            return kind;
+        }
+
         match c {
-            '(' => {
-                self.next_char();
-                return TokenKind::LParen;
+            _ if is_whitespace_char(c) => {
+                self.eat_while(is_whitespace_char);
+                TokenKind::Whitespace
             }
-            ')' => {
+            '/' if self.peek_byte_at(1) == Some(b'/') => self.line_comment(),
+            '/' if self.peek_byte_at(1) == Some(b'*') => self.block_comment(),
+            '"' => self.quoted(0, TokenKind::String),
+            '\'' => self.char_literal(0, TokenKind::Char),
+            '0'..='9' => self.number(),
+            '+' | '-' | '.' if self.is_number_ahead() => self.number(),
+            'r' => self.raw_string(1, TokenKind::String).unwrap_or_else(|| {
+                if self.peek_byte_at(1) == Some(b'#') {
+                    self.raw_identifier()
+                } else {
+                    self.identifier()
+                }
+            }),
+            'b' => match self.peek_byte_at(1) {
+                Some(b'"') => self.quoted(1, TokenKind::ByteString),
+                Some(b'\'') => self.char_literal(1, TokenKind::Byte),
+                Some(b'r') => self
+                    .raw_string(2, TokenKind::ByteString)
+                    .unwrap_or_else(|| self.identifier()),
+                _ => self.identifier(),
+            },
+            _ if is_ident_first_char(c) => self.identifier(),
+            _ => {
                 self.next_char();
-                return TokenKind::RParen;
+                TokenKind::Error(LexError::UnexpectedChar)
             }
-            '{' => {
-                self.next_char();
-                return TokenKind::LBrace;
-            }
-            '}' => {
-                self.next_char();
-                return TokenKind::RBrace;
-            }
-            '[' => {
-                self.next_char();
-                return TokenKind::LBracket;
-            }
-            ']' => {
-                self.next_char();
-                return TokenKind::RBracket;
-            }
-            ':' => {
-                self.next_char();
-                return TokenKind::Colon;
-            }
-            ',' => {
-                self.next_char();
-                return TokenKind::Comma;
-            }
-            '#' => {
-                self.next_char();
-                return TokenKind::Hash;
-            }
-            '!' => {
-                self.next_char();
-                return TokenKind::Bang;
-            }
-            '=' => {
-                self.next_char();
-                return TokenKind::Eq;
-            }
-            _ => {}
         }
-
-        // Strings (including raw strings)
-        if c == '"' {
-            return self.string();
-        }
-        if c == 'r'
-            && let Some(kind) = self.try_raw_string()
-        {
-            return kind;
-        }
-
-        // Byte strings
-        if c == 'b'
-            && let Some(kind) = self.try_byte_string()
-        {
-            return kind;
-        }
-
-        // Characters
-        if c == '\'' {
-            return self.char_literal();
-        }
-
-        // Numbers (including those starting with + or -)
-        if c.is_ascii_digit() || ((c == '+' || c == '-') && self.is_number_ahead()) {
-            return self.number();
-        }
-
-        // Identifiers (including raw identifiers r#...)
-        if is_ident_first_char(c) || c == 'r' {
-            return self.identifier();
-        }
-
-        // Unknown character - consume it and return error token
-        self.next_char();
-        TokenKind::Error
     }
 
-    /// Check if there's a number ahead (after + or -).
-    fn is_number_ahead(&self) -> bool {
-        let remaining = self.remaining();
-        if remaining.len() < 2 {
-            return false;
+    fn line_comment(&mut self) -> TokenKind {
+        let len = self
+            .remaining()
+            .bytes()
+            .position(|b| b == b'\n')
+            .unwrap_or(self.remaining().len());
+        self.advance(len);
+        TokenKind::LineComment
+    }
+
+    /// Lex a (possibly nested) block comment.
+    fn block_comment(&mut self) -> TokenKind {
+        self.advance(2);
+        let mut depth = 1usize;
+        let bytes = self.source.as_bytes();
+        while let Some(&b) = bytes.get(self.cursor) {
+            match (b, bytes.get(self.cursor + 1)) {
+                (b'/', Some(b'*')) => {
+                    depth += 1;
+                    self.advance(2);
+                }
+                (b'*', Some(b'/')) => {
+                    self.advance(2);
+                    depth -= 1;
+                    if depth == 0 {
+                        return TokenKind::BlockComment;
+                    }
+                }
+                _ => {
+                    self.next_char();
+                }
+            }
         }
-        // Check for digit after sign
-        if remaining.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
+        TokenKind::Error(LexError::UnclosedBlockComment)
+    }
+
+    /// Lex `"..."` after a prefix of `prefix_len` bytes (`b` for byte strings).
+    ///
+    /// Escapes are only skipped here; the parser validates and decodes them.
+    fn quoted(&mut self, prefix_len: usize, kind: TokenKind) -> TokenKind {
+        self.advance(prefix_len + 1);
+        loop {
+            let Some(len) = self
+                .remaining()
+                .bytes()
+                .position(|b| b == b'"' || b == b'\\')
+            else {
+                self.cursor = self.source.len();
+                return TokenKind::Error(LexError::UnterminatedString);
+            };
+            self.advance(len);
+            if self.next_char() == Some('"') {
+                return kind;
+            }
+            // Skip the escaped char so an escaped quote does not end the string.
+            self.next_char();
+        }
+    }
+
+    /// Lex `r#*"..."#*` after a prefix of `prefix_len` bytes (`r` or `br`).
+    ///
+    /// Returns `None` without consuming anything if the prefix and hashes are
+    /// not followed by `"`.
+    fn raw_string(&mut self, prefix_len: usize, kind: TokenKind) -> Option<TokenKind> {
+        let after_prefix = self.remaining().get(prefix_len..)?;
+        let hashes = after_prefix.bytes().take_while(|&b| b == b'#').count();
+        if after_prefix.as_bytes().get(hashes) != Some(&b'"') {
+            return None;
+        }
+        self.advance(prefix_len + hashes + 1);
+
+        let body = self.remaining().as_bytes();
+        let mut search = 0;
+        while let Some(quote) = body[search..].iter().position(|&b| b == b'"') {
+            let quote = search + quote;
+            let closing = body
+                .get(quote + 1..quote + 1 + hashes)
+                .is_some_and(|tail| tail.iter().all(|&b| b == b'#'));
+            if closing {
+                self.advance(quote + 1 + hashes);
+                return Some(if hashes > MAX_RAW_HASHES {
+                    TokenKind::Error(LexError::TooManyHashes)
+                } else {
+                    kind
+                });
+            }
+            search = quote + 1;
+        }
+        self.cursor = self.source.len();
+        Some(TokenKind::Error(LexError::UnterminatedString))
+    }
+
+    /// Lex `'...'` after a prefix of `prefix_len` bytes (`b` for byte literals).
+    ///
+    /// Only the extent is determined here; the parser decodes the content.
+    fn char_literal(&mut self, prefix_len: usize, kind: TokenKind) -> TokenKind {
+        self.advance(prefix_len + 1);
+        match self.next_char() {
+            None | Some('\n') => return TokenKind::Error(LexError::UnterminatedChar),
+            Some('\'') => return TokenKind::Error(LexError::EmptyChar),
+            Some('\\') => {
+                // Skip the escaped char, then the rest of the escape (`\x41`, `\u{41}`).
+                if self.next_char().is_some() {
+                    self.eat_while(|c| c != '\'' && c != '\n');
+                }
+            }
+            Some(_) => {}
+        }
+        if self.peek_byte() == Some(b'\'') {
+            self.advance(1);
+            kind
+        } else {
+            TokenKind::Error(LexError::UnterminatedChar)
+        }
+    }
+
+    /// Whether a number starts at a `+`, `-` or `.` under the cursor.
+    fn is_number_ahead(&self) -> bool {
+        let sign = usize::from(matches!(self.peek_byte(), Some(b'+' | b'-')));
+        if sign == 1 && self.special_float_len(1).is_some() {
             return true;
         }
-        // Check for inf/NaN after sign
-        let after_sign = &remaining[1..];
-        after_sign.starts_with("inf") || after_sign.starts_with("NaN")
-    }
-
-    /// Try to match a comment (line or block).
-    fn try_comment(&mut self) -> Option<TokenKind> {
-        if !self.check_str("/") {
-            return None;
-        }
-
-        let second = self.peek_char_second()?;
-
-        match second {
-            '/' => {
-                // Line comment
-                self.advance(2); // consume //
-                while let Some(c) = self.peek_char() {
-                    if c == '\n' {
-                        break;
-                    }
-                    self.next_char();
-                }
-                Some(TokenKind::LineComment)
-            }
-            '*' => {
-                // Block comment (supports nesting)
-                self.advance(2); // consume /*
-                let mut depth = 1;
-
-                while depth > 0 {
-                    if self.remaining().is_empty() {
-                        // Unclosed block comment
-                        return Some(TokenKind::Error);
-                    }
-
-                    if self.consume_str("/*") {
-                        depth += 1;
-                    } else if self.consume_str("*/") {
-                        depth -= 1;
-                    } else {
-                        self.next_char();
-                    }
-                }
-
-                Some(TokenKind::BlockComment)
-            }
-            _ => None,
+        match self.peek_byte_at(sign) {
+            Some(b'0'..=b'9') => true,
+            Some(b'.') => self
+                .peek_byte_at(sign + 1)
+                .is_some_and(|b| b.is_ascii_digit()),
+            _ => false,
         }
     }
 
-    /// Parse a regular string literal ("...").
-    fn string(&mut self) -> TokenKind {
-        self.next_char(); // consume opening "
-
-        loop {
-            match self.peek_char() {
-                None => {
-                    // Unterminated string
-                    return TokenKind::Error;
-                }
-                Some('"') => {
-                    self.next_char();
-                    return TokenKind::String;
-                }
-                Some('\\') => {
-                    // Escape sequence - consume backslash and next char
-                    self.next_char();
-                    if self.peek_char().is_some() {
-                        self.next_char();
-                    }
-                }
-                Some(_) => {
-                    self.next_char();
-                }
-            }
-        }
+    /// Length of `inf`/`NaN` (with optional `f32`/`f64` suffix) starting
+    /// `offset` bytes after the cursor, if it forms a complete word.
+    fn special_float_len(&self, offset: usize) -> Option<usize> {
+        let rest = self.remaining().get(offset..)?;
+        let word = ["inf", "NaN"].into_iter().find(|w| rest.starts_with(w))?;
+        let suffix = ["f32", "f64"]
+            .into_iter()
+            .find(|s| rest[word.len()..].starts_with(s))
+            .map_or(0, str::len);
+        let len = word.len() + suffix;
+        let complete = !rest[len..]
+            .chars()
+            .next()
+            .is_some_and(is_ident_continue_char);
+        complete.then_some(len)
     }
 
-    /// Try to match a raw string (r"..." or r#"..."# with any number of #).
-    fn try_raw_string(&mut self) -> Option<TokenKind> {
-        if !self.check_str("r") {
-            return None;
-        }
-
-        let remaining = self.remaining();
-        let mut chars = remaining.chars();
-        chars.next(); // skip 'r'
-
-        // Count leading hashes
-        let mut hash_count = 0;
-        for c in chars.by_ref() {
-            if c == '#' {
-                hash_count += 1;
-            } else {
-                break;
+    /// Consume digits (and `_` separators) valid for `base`, returning how many
+    /// digits were consumed.
+    fn eat_digits(&mut self, base: u8) -> usize {
+        let mut digits = 0;
+        while let Some(b) = self.peek_byte() {
+            match b {
+                b'_' => {}
+                _ if char::from(b).is_digit(u32::from(base)) => digits += 1,
+                _ => break,
             }
+            self.advance(1);
         }
-
-        // Check for opening quote
-        let prefix_len = 1 + hash_count; // 'r' + hashes
-        if !remaining[prefix_len..].starts_with('"') {
-            // Not a raw string - might be a raw identifier
-            return None;
-        }
-
-        // Reject more than 8 hashes (extremely rare in practice)
-        if hash_count >= RAW_STRING_CLOSING_DELIMITERS.len() {
-            self.advance(prefix_len + 1);
-            // Consume rest of string-like content for error recovery
-            while !self.remaining().is_empty() {
-                if self.peek_char() == Some('"') {
-                    self.next_char();
-                    break;
-                }
-                self.next_char();
-            }
-            return Some(TokenKind::Error);
-        }
-
-        self.advance(prefix_len + 1); // consume r###..."
-
-        // Find the closing sequence: " followed by same number of #
-        let closing = RAW_STRING_CLOSING_DELIMITERS[hash_count];
-        loop {
-            if self.remaining().is_empty() {
-                return Some(TokenKind::Error);
-            }
-            if self.check_str(closing) {
-                self.advance(closing.len());
-                return Some(TokenKind::String);
-            }
-            self.next_char();
-        }
+        digits
     }
 
-    /// Try to match a byte string (b"..." or br"..." or br#"..."#).
-    fn try_byte_string(&mut self) -> Option<TokenKind> {
-        if !self.check_str("b") {
-            return None;
-        }
-
-        let remaining = self.remaining();
-
-        // b"..." - regular byte string
-        if remaining.starts_with("b\"") {
-            self.advance(2); // consume b"
-            return Some(self.byte_string_contents());
-        }
-
-        // br"..." or br#"..."# - raw byte string
-        if let Some(after_br) = remaining.strip_prefix("br") {
-            let mut chars = after_br.chars();
-
-            // Count leading hashes
-            let mut hash_count = 0;
-            for c in chars.by_ref() {
-                if c == '#' {
-                    hash_count += 1;
-                } else {
-                    break;
-                }
-            }
-
-            // Check for opening quote
-            let prefix_len = 2 + hash_count; // "br" + hashes
-            if remaining.len() > prefix_len && remaining[prefix_len..].starts_with('"') {
-                // Reject more than 8 hashes
-                if hash_count >= RAW_STRING_CLOSING_DELIMITERS.len() {
-                    self.advance(prefix_len + 1);
-                    // Consume rest of string-like content for error recovery
-                    while !self.remaining().is_empty() {
-                        if self.peek_char() == Some('"') {
-                            self.next_char();
-                            break;
-                        }
-                        self.next_char();
-                    }
-                    return Some(TokenKind::Error);
-                }
-
-                self.advance(prefix_len + 1); // consume br###..."
-
-                // Find the closing sequence
-                let closing = RAW_STRING_CLOSING_DELIMITERS[hash_count];
-                loop {
-                    if self.remaining().is_empty() {
-                        return Some(TokenKind::Error);
-                    }
-                    if self.check_str(closing) {
-                        self.advance(closing.len());
-                        return Some(TokenKind::ByteString);
-                    }
-                    self.next_char();
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Parse the contents of a byte string (after b").
-    fn byte_string_contents(&mut self) -> TokenKind {
-        loop {
-            match self.peek_char() {
-                None => {
-                    return TokenKind::Error;
-                }
-                Some('"') => {
-                    self.next_char();
-                    return TokenKind::ByteString;
-                }
-                Some('\\') => {
-                    self.next_char();
-                    if self.peek_char().is_some() {
-                        self.next_char();
-                    }
-                }
-                Some(_) => {
-                    self.next_char();
-                }
-            }
-        }
-    }
-
-    /// Parse a character literal ('x').
-    fn char_literal(&mut self) -> TokenKind {
-        self.next_char(); // consume opening '
-
-        match self.peek_char() {
-            None => TokenKind::Error,
-            Some('\\') => {
-                // Escape sequence
-                self.next_char();
-                if let Some(c) = self.peek_char() {
-                    self.next_char();
-                    // For \x, \u escapes, consume additional characters
-                    if c == 'x' {
-                        // \xNN
-                        for _ in 0..2 {
-                            if self.peek_char().is_some() {
-                                self.next_char();
-                            }
-                        }
-                    } else if c == 'u' {
-                        // \u{NNNN}
-                        if self.consume_str("{") {
-                            while let Some(ch) = self.peek_char() {
-                                if ch == '}' {
-                                    self.next_char();
-                                    break;
-                                }
-                                self.next_char();
-                            }
-                        }
-                    }
-                }
-                // Expect closing '
-                if self.peek_char() == Some('\'') {
-                    self.next_char();
-                    TokenKind::Char
-                } else {
-                    TokenKind::Error
-                }
-            }
-            Some('\'') => {
-                // Empty char literal
-                self.next_char();
-                TokenKind::Error
-            }
-            Some(_) => {
-                self.next_char();
-                if self.peek_char() == Some('\'') {
-                    self.next_char();
-                    TokenKind::Char
-                } else {
-                    TokenKind::Error
-                }
-            }
-        }
-    }
-
-    /// Parse a number (integer or float).
+    /// Lex an integer or float, optionally signed.
     fn number(&mut self) -> TokenKind {
-        // Handle optional sign
-        if self.peek_char() == Some('+') || self.peek_char() == Some('-') {
-            self.next_char();
+        let start = self.cursor;
+        if matches!(self.peek_byte(), Some(b'+' | b'-')) {
+            self.advance(1);
         }
-
-        // Check for special float literals: inf, NaN
-        if self.check_str("inf") {
-            self.advance(3);
-            return self.consume_float_suffix();
-        }
-        if self.check_str("NaN") {
-            self.advance(3);
-            return self.consume_float_suffix();
-        }
-
-        // Check for base prefixes
-        let base = if self.consume_str("0x") || self.consume_str("0X") {
-            16
-        } else if self.consume_str("0o") || self.consume_str("0O") {
-            8
-        } else if self.consume_str("0b") || self.consume_str("0B") {
-            2
-        } else {
-            10
-        };
-
-        // Consume digits according to base
-        let mut has_digits = false;
-        while let Some(c) = self.peek_char() {
-            if c == '_' || is_digit_for_base(c, base) {
-                self.next_char();
-                has_digits = true;
-            } else {
-                break;
-            }
-        }
-
-        if !has_digits {
-            // No valid digits found after prefix - consume any alphanumeric chars
-            // that might have been intended as digits for better error reporting
-            while let Some(c) = self.peek_char() {
-                if c.is_ascii_alphanumeric() || c == '_' {
-                    self.next_char();
-                } else {
-                    break;
-                }
-            }
-            return TokenKind::Error;
-        }
-
-        // For decimal numbers, check for float components
-        if base == 10 {
-            let mut is_float = false;
-
-            // Decimal point
-            if self.peek_char() == Some('.') {
-                // Look ahead to see if this is a float or something else
-                if self.remaining().len() > 1 {
-                    let next = self.remaining().chars().nth(1);
-                    if next.is_some_and(|c| c.is_ascii_digit()) {
-                        self.next_char(); // consume '.'
-                        is_float = true;
-                        // Consume fractional digits
-                        while let Some(c) = self.peek_char() {
-                            if c == '_' || c.is_ascii_digit() {
-                                self.next_char();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Exponent
-            if self.peek_char() == Some('e') || self.peek_char() == Some('E') {
-                self.next_char();
-                is_float = true;
-                // Optional sign
-                if self.peek_char() == Some('+') || self.peek_char() == Some('-') {
-                    self.next_char();
-                }
-                // Exponent digits
-                while let Some(c) = self.peek_char() {
-                    if c == '_' || c.is_ascii_digit() {
-                        self.next_char();
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            // Float suffix
-            if self.check_str("f32") || self.check_str("f64") {
-                let suffix_end = self.cursor + 3;
-                if suffix_end >= self.source.len()
-                    || !is_ident_continue_char(
-                        self.source[suffix_end..].chars().next().unwrap_or(' '),
-                    )
-                {
-                    self.advance(3);
-                    return TokenKind::Float;
-                }
-            }
-
-            if is_float {
-                return TokenKind::Float;
-            }
-        }
-
-        // Integer suffix
-        self.consume_integer_suffix();
-
-        TokenKind::Integer
-    }
-
-    /// Consume an optional integer type suffix (i8, u32, etc.).
-    fn consume_integer_suffix(&mut self) {
-        let suffixes = [
-            "i128", "i64", "i32", "i16", "i8", // longer first to avoid partial matches
-            "u128", "u64", "u32", "u16", "u8",
-        ];
-
-        for suffix in &suffixes {
-            if self.check_str(suffix) {
-                // Make sure suffix is not followed by identifier char
-                let suffix_end = self.cursor + suffix.len();
-                if suffix_end >= self.source.len()
-                    || !is_ident_continue_char(
-                        self.source[suffix_end..].chars().next().unwrap_or(' '),
-                    )
-                {
-                    self.advance(suffix.len());
-                    return;
-                }
-            }
-        }
-    }
-
-    /// Consume an optional float type suffix and return the token kind.
-    fn consume_float_suffix(&mut self) -> TokenKind {
-        if self.check_str("f32") || self.check_str("f64") {
-            let suffix_end = self.cursor + 3;
-            if suffix_end >= self.source.len()
-                || !is_ident_continue_char(self.source[suffix_end..].chars().next().unwrap_or(' '))
-            {
-                self.advance(3);
-            }
-        }
-        TokenKind::Float
-    }
-
-    /// Parse an identifier (standard or raw r#...).
-    fn identifier(&mut self) -> TokenKind {
-        // Check for raw identifier (r#ident)
-        if self.check_str("r#") {
-            let remaining = &self.remaining()[2..];
-            // Check if it's a raw string (r#") or raw identifier
-            if remaining.starts_with('"') {
-                // It's a raw string, not an identifier
-                return TokenKind::Error;
-            }
-
-            // It's a raw identifier
-            self.advance(2); // consume r#
-            while let Some(c) = self.peek_char() {
-                if is_ident_raw_char(c) {
-                    self.next_char();
-                } else {
-                    break;
-                }
-            }
-            return TokenKind::Ident;
-        }
-
-        // Check for special float literals: inf, NaN (without sign)
-        if self.check_ident("inf") || self.check_ident("NaN") {
-            self.advance(3);
-            // Check for optional float suffix
-            if self.check_str("f32") || self.check_str("f64") {
-                let suffix_end = self.cursor + 3;
-                if suffix_end >= self.source.len()
-                    || !is_ident_continue_char(
-                        self.source[suffix_end..].chars().next().unwrap_or(' '),
-                    )
-                {
-                    self.advance(3);
-                }
-            }
+        if let Some(len) = self.special_float_len(0) {
+            self.advance(len);
             return TokenKind::Float;
         }
 
-        // Standard identifier
-        let first = self.peek_char();
-        if !first.is_some_and(is_ident_first_char) {
-            return TokenKind::Error;
+        let base = match (self.peek_byte(), self.peek_byte_at(1)) {
+            (Some(b'0'), Some(b'x' | b'X')) => 16,
+            (Some(b'0'), Some(b'o' | b'O')) => 8,
+            (Some(b'0'), Some(b'b' | b'B')) => 2,
+            _ => 10,
+        };
+        if base != 10 {
+            self.advance(2);
+            if self.eat_digits(base) == 0 {
+                let at = u8::try_from(self.cursor - start).unwrap_or(u8::MAX);
+                return if self.peek_char().is_some_and(is_ident_continue_char) {
+                    self.eat_while(is_ident_continue_char);
+                    TokenKind::Error(LexError::InvalidDigit { base, at })
+                } else {
+                    TokenKind::Error(LexError::MissingDigits { base })
+                };
+            }
+            self.eat_integer_suffix();
+            return TokenKind::Integer;
         }
 
-        self.next_char(); // consume first char
+        // Upstream RON accepts `1.`, `.5` and `1.e3`, so the integer and
+        // fraction digits are both optional (`is_number_ahead` ensured one exists).
+        self.eat_digits(10);
+        let mut is_float = false;
+        if self.peek_byte() == Some(b'.') {
+            self.advance(1);
+            self.eat_digits(10);
+            is_float = true;
+        }
+        if matches!(self.peek_byte(), Some(b'e' | b'E')) {
+            self.advance(1);
+            if matches!(self.peek_byte(), Some(b'+' | b'-')) {
+                self.advance(1);
+            }
+            if self.eat_digits(10) == 0 {
+                return TokenKind::Error(LexError::MissingExponent);
+            }
+            is_float = true;
+        }
+        if self.eat_suffix("f32") || self.eat_suffix("f64") || is_float {
+            return TokenKind::Float;
+        }
+        self.eat_integer_suffix();
+        TokenKind::Integer
+    }
 
-        while let Some(c) = self.peek_char() {
-            if is_ident_continue_char(c) {
-                self.next_char();
-            } else {
-                break;
+    fn eat_integer_suffix(&mut self) {
+        const SUFFIXES: [&str; 10] = [
+            "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128",
+        ];
+        for suffix in SUFFIXES {
+            if self.eat_suffix(suffix) {
+                return;
             }
         }
+    }
 
+    /// Lex an identifier, or the special floats `inf` and `NaN`.
+    fn identifier(&mut self) -> TokenKind {
+        if let Some(len) = self.special_float_len(0) {
+            self.advance(len);
+            return TokenKind::Float;
+        }
+        self.next_char();
+        self.eat_while(is_ident_continue_char);
         TokenKind::Ident
     }
 
-    /// Check if remaining text starts with the given identifier
-    /// (not followed by identifier continuation chars).
-    fn check_ident(&self, ident: &str) -> bool {
-        if !self.check_str(ident) {
-            return false;
+    /// Lex `r#ident` (the cursor is on `r`, followed by `#`).
+    fn raw_identifier(&mut self) -> TokenKind {
+        self.advance(2);
+        if self.peek_char().is_some_and(is_ident_raw_char) {
+            self.eat_while(is_ident_raw_char);
+            return TokenKind::Ident;
         }
-        let after = self.cursor + ident.len();
-        if after >= self.source.len() {
-            return true;
-        }
-        !self.source[after..]
-            .chars()
-            .next()
-            .is_some_and(is_ident_continue_char)
+        // `r#` alone or `r##foo`: consume the whole malformed literal.
+        self.eat_while(|c| c == '#');
+        self.eat_while(is_ident_raw_char);
+        TokenKind::Error(LexError::InvalidRawLiteral)
     }
 }
 
 impl<'a> Iterator for Lexer<'a> {
     type Item = Token<'a>;
 
+    /// Yields all tokens up to and including the first `Eof`.
     fn next(&mut self) -> Option<Self::Item> {
-        self.next_token()
-    }
-}
-
-/// Check if a character is a valid digit for the given base.
-const fn is_digit_for_base(c: char, base: u8) -> bool {
-    match base {
-        2 => matches!(c, '0' | '1'),
-        8 => matches!(c, '0'..='7'),
-        10 => c.is_ascii_digit(),
-        16 => c.is_ascii_hexdigit(),
-        _ => false,
+        if self.done {
+            return None;
+        }
+        Some(self.next_token())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use alloc::{string::String, vec::Vec};
 
-    fn tokenize(source: &str) -> alloc::vec::Vec<TokenKind> {
+    use super::*;
+    use crate::error::Position;
+
+    /// Non-trivia token kinds, including the final `Eof`.
+    fn tokenize(source: &str) -> Vec<TokenKind> {
+        Lexer::new(source)
+            .map(|t| t.kind)
+            .filter(|k| !k.is_trivia())
+            .collect()
+    }
+
+    fn tokenize_with_trivia(source: &str) -> Vec<TokenKind> {
         Lexer::new(source).map(|t| t.kind).collect()
     }
 
-    fn tokenize_with_trivia(source: &str) -> alloc::vec::Vec<TokenKind> {
+    /// Kind and text of every non-trivia token before `Eof`.
+    fn lex_texts(source: &str) -> Vec<(TokenKind, &str)> {
         Lexer::new(source)
-            .with_trivia(true)
-            .map(|t| t.kind)
+            .filter(|t| !t.kind.is_trivia() && t.kind != TokenKind::Eof)
+            .map(|t| (t.kind, t.text))
             .collect()
     }
+
+    /// Asserts that `source` lexes as exactly one token and returns its kind.
+    fn single(source: &str) -> TokenKind {
+        let tokens = lex_texts(source);
+        assert_eq!(tokens.len(), 1, "{source:?} lexed as {tokens:?}");
+        assert_eq!(tokens[0].1, source, "{source:?} lexed as {tokens:?}");
+        tokens[0].0
+    }
+
+    use TokenKind::{ByteString, Eof, Float, Ident, Integer};
 
     #[test]
     fn test_punctuation() {
@@ -952,306 +501,281 @@ mod tests {
                 TokenKind::Hash,
                 TokenKind::Bang,
                 TokenKind::Eq,
-                TokenKind::Eof,
+                Eof,
             ]
         );
     }
 
     #[test]
-    fn test_line_comment() {
-        // Without trivia - comments skipped
-        assert_eq!(
-            tokenize("// comment\n42"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-
-        // With trivia - comments preserved
+    fn test_comments() {
         assert_eq!(
             tokenize_with_trivia("// comment\n42"),
-            alloc::vec![
-                TokenKind::LineComment,
-                TokenKind::Whitespace,
-                TokenKind::Integer,
-                TokenKind::Eof
-            ]
+            alloc::vec![TokenKind::LineComment, TokenKind::Whitespace, Integer, Eof]
         );
-    }
-
-    #[test]
-    fn test_block_comment() {
-        assert_eq!(
-            tokenize("/* comment */42"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-
         assert_eq!(
             tokenize_with_trivia("/* comment */42"),
-            alloc::vec![TokenKind::BlockComment, TokenKind::Integer, TokenKind::Eof]
+            alloc::vec![TokenKind::BlockComment, Integer, Eof]
+        );
+        assert_eq!(
+            tokenize_with_trivia("/* outer /* inner */ */42"),
+            alloc::vec![TokenKind::BlockComment, Integer, Eof]
         );
     }
 
     #[test]
-    fn test_nested_block_comment() {
+    fn unclosed_block_comment_is_error() {
         assert_eq!(
-            tokenize("/* outer /* inner */ */42"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
+            single("/* a /* b */"),
+            TokenKind::Error(LexError::UnclosedBlockComment)
         );
     }
 
     #[test]
-    fn test_string() {
+    fn many_comments_do_not_overflow_the_stack() {
+        let source = "/**/".repeat(2_000_000);
+        assert_eq!(Lexer::new(&source).count(), 2_000_001);
+    }
+
+    #[test]
+    fn test_strings() {
+        assert_eq!(single("\"hello\""), TokenKind::String);
+        assert_eq!(single("\"hello\\nworld\""), TokenKind::String);
+        assert_eq!(single("\"say \\\"hi\\\"\""), TokenKind::String);
+        assert_eq!(single("\"\\\\\""), TokenKind::String);
+        assert_eq!(single("r\"hello\""), TokenKind::String);
+        assert_eq!(single("r#\"hello\"#"), TokenKind::String);
+        assert_eq!(single("r##\"a \"# b\"##"), TokenKind::String);
+        assert_eq!(single("b\"hello\""), ByteString);
+        assert_eq!(single("br\"hello\""), ByteString);
+        assert_eq!(single("br#\"hello\"#"), ByteString);
+    }
+
+    #[test]
+    fn raw_strings_allow_up_to_255_hashes() {
+        let hashes = "#".repeat(255);
+        let source = alloc::format!("r{hashes}\"x\"{hashes}");
+        assert_eq!(single(&source), TokenKind::String);
+        let source = alloc::format!("br{hashes}\"x\"{hashes}");
+        assert_eq!(single(&source), ByteString);
+
+        let hashes = "#".repeat(256);
+        let source = alloc::format!("r{hashes}\"x\"{hashes}");
+        assert_eq!(single(&source), TokenKind::Error(LexError::TooManyHashes));
+    }
+
+    #[test]
+    fn unterminated_strings_are_errors() {
+        let unterminated = TokenKind::Error(LexError::UnterminatedString);
+        assert_eq!(single("\"abc"), unterminated);
+        assert_eq!(single("\"abc\\"), unterminated);
+        assert_eq!(single("r\"abc"), unterminated);
+        assert_eq!(single("r#\"abc\""), unterminated);
+        assert_eq!(single("b\"abc"), unterminated);
+        assert_eq!(single("br\"abc"), unterminated);
+    }
+
+    #[test]
+    fn test_chars() {
+        assert_eq!(single("'a'"), TokenKind::Char);
+        assert_eq!(single("'\\n'"), TokenKind::Char);
+        assert_eq!(single("'\\''"), TokenKind::Char);
+        assert_eq!(single("'\\x41'"), TokenKind::Char);
+        assert_eq!(single("'\\u{1F600}'"), TokenKind::Char);
+        assert_eq!(single("'é'"), TokenKind::Char);
+        assert_eq!(single("''"), TokenKind::Error(LexError::EmptyChar));
+        assert_eq!(single("'a"), TokenKind::Error(LexError::UnterminatedChar));
+        assert_eq!(single("'"), TokenKind::Error(LexError::UnterminatedChar));
+    }
+
+    #[test]
+    fn byte_literals_lex_as_byte_tokens() {
+        assert_eq!(single("b'a'"), TokenKind::Byte);
+        assert_eq!(single("b'\\x7f'"), TokenKind::Byte);
+        assert_eq!(single("b'\\''"), TokenKind::Byte);
+        assert_eq!(single("b'a"), TokenKind::Error(LexError::UnterminatedChar));
+        // Identifiers starting with `b` or `r` are unaffected.
+        assert_eq!(single("bar"), Ident);
+        assert_eq!(single("break"), Ident);
+        assert_eq!(single("raw"), Ident);
+    }
+
+    #[test]
+    fn test_integers() {
+        for source in [
+            "42", "0x2A", "0o52", "0b101010", "42i32", "-42", "+42", "1_000", "0xFFu8",
+        ] {
+            assert_eq!(single(source), Integer, "{source}");
+        }
+    }
+
+    #[test]
+    fn test_floats() {
+        for source in [
+            "3.14", "3.14f32", "3e10", "3.14e-10", "1f64", "inf", "NaN", "-inf", "+inf", "-NaN",
+            "inff32", "NaNf64", "-inff32",
+        ] {
+            assert_eq!(single(source), Float, "{source}");
+        }
+    }
+
+    #[test]
+    fn floats_without_leading_or_trailing_digits() {
+        // Matches upstream `ron` 0.12, which accepts all of these.
+        for source in ["1.", ".5", "1.e3", "-.5", "+.5", "1.f32", "0."] {
+            assert_eq!(single(source), Float, "{source}");
+        }
         assert_eq!(
-            tokenize("\"hello\""),
-            alloc::vec![TokenKind::String, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("\"hello\\nworld\""),
-            alloc::vec![TokenKind::String, TokenKind::Eof]
+            lex_texts("[1.,2.]"),
+            alloc::vec![
+                (TokenKind::LBracket, "["),
+                (Float, "1."),
+                (TokenKind::Comma, ","),
+                (Float, "2."),
+                (TokenKind::RBracket, "]"),
+            ]
         );
     }
 
     #[test]
-    fn test_raw_string() {
+    fn exponent_requires_digits() {
+        assert_eq!(single("1e"), TokenKind::Error(LexError::MissingExponent));
+        assert_eq!(single("1.5e+"), TokenKind::Error(LexError::MissingExponent));
+    }
+
+    #[test]
+    fn special_float_words_need_word_boundary() {
+        assert_eq!(single("infinity"), Ident);
+        assert_eq!(single("inf_"), Ident);
+        assert_eq!(single("NaNa"), Ident);
+        // `-infinity` used to lex as Float `-inf` followed by Ident `inity`.
         assert_eq!(
-            tokenize("r\"hello\""),
-            alloc::vec![TokenKind::String, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("r#\"hello\"#"),
-            alloc::vec![TokenKind::String, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("r##\"hello\"##"),
-            alloc::vec![TokenKind::String, TokenKind::Eof]
+            lex_texts("-infinity"),
+            alloc::vec![
+                (TokenKind::Error(LexError::UnexpectedChar), "-"),
+                (Ident, "infinity"),
+            ]
         );
     }
 
     #[test]
-    fn test_byte_string() {
+    fn base_prefix_errors() {
         assert_eq!(
-            tokenize("b\"hello\""),
-            alloc::vec![TokenKind::ByteString, TokenKind::Eof]
+            single("0x"),
+            TokenKind::Error(LexError::MissingDigits { base: 16 })
+        );
+        assert_eq!(
+            single("0b"),
+            TokenKind::Error(LexError::MissingDigits { base: 2 })
+        );
+        assert_eq!(
+            single("0xg"),
+            TokenKind::Error(LexError::InvalidDigit { base: 16, at: 2 })
+        );
+        assert_eq!(
+            single("-0xg"),
+            TokenKind::Error(LexError::InvalidDigit { base: 16, at: 3 })
+        );
+        assert_eq!(
+            single("0b2"),
+            TokenKind::Error(LexError::InvalidDigit { base: 2, at: 2 })
         );
     }
 
     #[test]
-    fn test_raw_byte_string() {
+    fn test_identifiers() {
+        for source in [
+            "foo",
+            "_bar",
+            "foo123",
+            "r#foo",
+            "r#foo.bar",
+            "r#a-b+c",
+            "rust",
+        ] {
+            assert_eq!(single(source), Ident, "{source}");
+        }
+    }
+
+    #[test]
+    fn malformed_raw_literals_are_errors() {
+        let invalid = TokenKind::Error(LexError::InvalidRawLiteral);
+        assert_eq!(single("r#"), invalid);
+        assert_eq!(single("r##foo"), invalid);
         assert_eq!(
-            tokenize("br\"hello\""),
-            alloc::vec![TokenKind::ByteString, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("br#\"hello\"#"),
-            alloc::vec![TokenKind::ByteString, TokenKind::Eof]
+            lex_texts("r# x"),
+            alloc::vec![(invalid, "r#"), (Ident, "x")]
         );
     }
 
     #[test]
-    fn test_char() {
-        assert_eq!(
-            tokenize("'a'"),
-            alloc::vec![TokenKind::Char, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("'\\n'"),
-            alloc::vec![TokenKind::Char, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("'\\x41'"),
-            alloc::vec![TokenKind::Char, TokenKind::Eof]
-        );
+    fn unexpected_char_is_error() {
+        assert_eq!(single("@"), TokenKind::Error(LexError::UnexpectedChar));
+        assert_eq!(single("é"), Ident);
+        assert_eq!(single("§"), TokenKind::Error(LexError::UnexpectedChar));
     }
 
     #[test]
-    fn test_integer() {
-        assert_eq!(
-            tokenize("42"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("0x2A"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("0o52"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("0b101010"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("42i32"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("-42"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("+42"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-    }
-
-    #[test]
-    fn test_float() {
-        assert_eq!(
-            tokenize("3.14"),
-            alloc::vec![TokenKind::Float, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("3.14f32"),
-            alloc::vec![TokenKind::Float, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("3e10"),
-            alloc::vec![TokenKind::Float, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("3.14e-10"),
-            alloc::vec![TokenKind::Float, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("inf"),
-            alloc::vec![TokenKind::Float, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("NaN"),
-            alloc::vec![TokenKind::Float, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("-inf"),
-            alloc::vec![TokenKind::Float, TokenKind::Eof]
-        );
-    }
-
-    #[test]
-    fn test_identifier() {
-        assert_eq!(
-            tokenize("foo"),
-            alloc::vec![TokenKind::Ident, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("_bar"),
-            alloc::vec![TokenKind::Ident, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("foo123"),
-            alloc::vec![TokenKind::Ident, TokenKind::Eof]
-        );
-    }
-
-    #[test]
-    fn test_raw_identifier() {
-        assert_eq!(
-            tokenize("r#foo"),
-            alloc::vec![TokenKind::Ident, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("r#foo.bar"),
-            alloc::vec![TokenKind::Ident, TokenKind::Eof]
-        );
-    }
-
-    #[test]
-    fn test_whitespace_handling() {
-        // Without trivia - whitespace skipped
-        assert_eq!(
-            tokenize("  42  "),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-        assert_eq!(
-            tokenize("\t\n42"),
-            alloc::vec![TokenKind::Integer, TokenKind::Eof]
-        );
-
-        // With trivia - whitespace preserved
+    fn test_whitespace() {
+        assert_eq!(tokenize("\t\n42"), alloc::vec![Integer, Eof]);
         assert_eq!(
             tokenize_with_trivia("  42  "),
-            alloc::vec![
-                TokenKind::Whitespace,
-                TokenKind::Integer,
-                TokenKind::Whitespace,
-                TokenKind::Eof
-            ]
+            alloc::vec![TokenKind::Whitespace, Integer, TokenKind::Whitespace, Eof]
         );
     }
 
     #[test]
     fn test_complete_ron() {
-        let tokens = tokenize("Config(name: \"test\", value: 42)");
         assert_eq!(
-            tokens,
+            tokenize("Config(name: \"test\", value: 42)"),
             alloc::vec![
-                TokenKind::Ident,   // Config
-                TokenKind::LParen,  // (
-                TokenKind::Ident,   // name
-                TokenKind::Colon,   // :
-                TokenKind::String,  // "test"
-                TokenKind::Comma,   // ,
-                TokenKind::Ident,   // value
-                TokenKind::Colon,   // :
-                TokenKind::Integer, // 42
-                TokenKind::RParen,  // )
-                TokenKind::Eof,
+                Ident,
+                TokenKind::LParen,
+                Ident,
+                TokenKind::Colon,
+                TokenKind::String,
+                TokenKind::Comma,
+                Ident,
+                TokenKind::Colon,
+                Integer,
+                TokenKind::RParen,
+                Eof,
             ]
         );
     }
 
     #[test]
     fn test_token_spans() {
-        let mut lexer = Lexer::new("foo 123");
-
-        let token1 = lexer.next().unwrap();
-        assert_eq!(token1.kind, TokenKind::Ident);
-        assert_eq!(token1.text, "foo");
-        assert_eq!(token1.span.start.line, 1);
-        assert_eq!(token1.span.start.col, 1);
-        assert_eq!(token1.span.end.line, 1);
-        assert_eq!(token1.span.end.col, 4);
-
-        let token2 = lexer.next().unwrap();
-        assert_eq!(token2.kind, TokenKind::Integer);
-        assert_eq!(token2.text, "123");
-        assert_eq!(token2.span.start.line, 1);
-        assert_eq!(token2.span.start.col, 5);
-        assert_eq!(token2.span.end.line, 1);
-        assert_eq!(token2.span.end.col, 8);
-    }
-
-    #[test]
-    fn test_multiline_spans() {
-        let mut lexer = Lexer::new("foo\nbar");
-
-        let token1 = lexer.next().unwrap();
-        assert_eq!(token1.kind, TokenKind::Ident);
-        assert_eq!(token1.text, "foo");
-        assert_eq!(token1.span.start.line, 1);
-        assert_eq!(token1.span.end.line, 1);
-
-        let token2 = lexer.next().unwrap();
-        assert_eq!(token2.kind, TokenKind::Ident);
-        assert_eq!(token2.text, "bar");
-        assert_eq!(token2.span.start.line, 2);
-        assert_eq!(token2.span.start.col, 1);
+        let pos = |line, col| Position { line, col };
+        let spans: Vec<_> = Lexer::new("foo 123\nbé x")
+            .filter(|t| !t.kind.is_trivia() && t.kind != Eof)
+            .map(|t| (t.text, t.span.start, t.span.end))
+            .collect();
+        assert_eq!(
+            spans,
+            alloc::vec![
+                ("foo", pos(1, 1), pos(1, 4)),
+                ("123", pos(1, 5), pos(1, 8)),
+                // Columns are byte-based.
+                ("bé", pos(2, 1), pos(2, 4)),
+                ("x", pos(2, 5), pos(2, 6)),
+            ]
+        );
     }
 
     #[test]
     fn test_eof_token() {
         let mut lexer = Lexer::new("");
-        let token = lexer.next().unwrap();
-        assert_eq!(token.kind, TokenKind::Eof);
+        assert_eq!(lexer.next().map(|t| t.kind), Some(Eof));
         assert!(lexer.next().is_none());
+        // `next_token` keeps returning `Eof`.
+        assert_eq!(lexer.next_token().kind, Eof);
     }
 
     #[test]
-    fn test_trivia_round_trip() {
-        let source = "// comment\nfoo /* block */ bar";
-        let tokens: alloc::vec::Vec<_> = Lexer::new(source).with_trivia(true).collect();
-
-        // Reconstruct source from tokens
-        let reconstructed: alloc::string::String = tokens.iter().map(|t| t.text).collect();
-        assert_eq!(source, reconstructed);
+    fn tokens_cover_source_exactly() {
+        let source =
+            "// c\n#![type = \"x\"]\n(a: [1., .5, -inf], b: r#\"q\"#, c: b'x', d: '\\'', e: @ /* x";
+        let text: String = Lexer::new(source).map(|t| t.text).collect();
+        assert_eq!(text, source);
     }
 }

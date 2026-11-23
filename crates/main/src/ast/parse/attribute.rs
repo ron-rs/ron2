@@ -1,35 +1,27 @@
-//! Parsing for inner attributes (#![...]).
+//! Parsing for inner attributes (`#![...]`).
 
 use alloc::{borrow::Cow, vec::Vec};
 
-use super::{AstParser, core::ParserCore};
+use super::{AstParser, core::expected};
 use crate::{
     ast::{Attribute, AttributeContent, Trivia},
     error::{Error, Result, Span},
     token::TokenKind,
 };
 
-/// Internal trait for parsing attributes.
-pub(super) trait AttributeParser<'a>: ParserCore<'a> {
-    fn parse_attributes(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>>;
-    fn parse_attribute(&mut self, leading: Trivia<'a>) -> Result<Attribute<'a>>;
-}
-
-impl<'a> AttributeParser<'a> for AstParser<'a> {
-    /// Parse inner attributes (`#![...]`) with error recovery.
-    fn parse_attributes(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>> {
+impl<'a> AstParser<'a> {
+    /// Parse inner attributes (`#![...]`), skipping to the next `]` after an error.
+    pub(super) fn parse_attributes(&mut self, errors: &mut Vec<Error>) -> Vec<Attribute<'a>> {
         let mut attributes = Vec::new();
 
         while self.peek_kind() == TokenKind::Hash {
-            let leading = self.drain_trivia();
+            let leading = self.take_trivia();
             match self.parse_attribute(leading) {
                 Ok(attr) => attributes.push(attr),
                 Err(err) => {
                     errors.push(err);
-                    self.recover_until(&[TokenKind::RBracket, TokenKind::Eof]);
-                    if self.peek_kind() == TokenKind::RBracket {
-                        let _ = self.next_token();
-                    }
+                    self.skip_until(&[TokenKind::RBracket]);
+                    self.eat(TokenKind::RBracket);
                 }
             }
         }
@@ -37,92 +29,53 @@ impl<'a> AttributeParser<'a> for AstParser<'a> {
         attributes
     }
 
-    /// Parse a single attribute.
+    /// Parse a single attribute. Its text is reproduced from its span, so
+    /// trivia inside it is not kept separately.
     fn parse_attribute(&mut self, leading: Trivia<'a>) -> Result<Attribute<'a>> {
         let hash = self.next_token();
-        debug_assert_eq!(hash.kind, TokenKind::Hash);
 
-        // Expect `!`
-        if self.peek_kind() != TokenKind::Bang {
-            return Err(Self::error(hash.span, Self::expected("attribute", None)));
+        if self.eat(TokenKind::Bang).is_none() || self.eat(TokenKind::LBracket).is_none() {
+            return Err(Error::with_span(expected("attribute", None), hash.span));
         }
-        let _bang = self.next_token();
 
-        // Expect `[`
-        if self.peek_kind() != TokenKind::LBracket {
-            return Err(Self::error(hash.span, Self::expected("attribute", None)));
-        }
-        let _lbracket = self.next_token();
-
-        // Expect identifier
         if self.peek_kind() != TokenKind::Ident {
-            return Err(Self::error(hash.span, Self::expected("identifier", None)));
+            return Err(Error::with_span(expected("identifier", None), hash.span));
         }
-        let name_tok = self.next_token();
-        let name = name_tok.text;
+        let name = self.next_token();
 
-        // Parse content based on what follows
-        let content = match self.peek_kind() {
-            TokenKind::Eq => {
-                let _eq = self.next_token();
-                // Expect string value
-                if self.peek_kind() != TokenKind::String {
-                    return Err(Self::error(name_tok.span, Self::expected("string", None)));
-                }
-                let value_tok = self.next_token();
-                AttributeContent::Value(Cow::Borrowed(value_tok.text))
+        let content = if self.eat(TokenKind::Eq).is_some() {
+            if self.peek_kind() != TokenKind::String {
+                return Err(Error::with_span(expected("string", None), name.span));
             }
-            TokenKind::LParen => {
-                let _lparen = self.next_token();
-                let mut args = Vec::new();
-
-                // Parse comma-separated identifiers
-                loop {
-                    match self.peek_kind() {
-                        TokenKind::RParen => break,
-                        TokenKind::Ident => {
-                            let arg_tok = self.next_token();
-                            args.push(Cow::Borrowed(arg_tok.text));
-
-                            // Check for comma
-                            if self.peek_kind() == TokenKind::Comma {
-                                let _comma = self.next_token();
-                            }
-                        }
-                        _ => {
-                            let tok = self.next_token();
-                            return Err(Self::error(tok.span, Self::expected("identifier", None)));
-                        }
-                    }
-                }
-
-                // Expect `)`
-                if self.peek_kind() != TokenKind::RParen {
-                    return Err(Self::error(
-                        name_tok.span,
-                        Self::expected("closing `)`", Some("attribute")),
+            AttributeContent::Value(Cow::Borrowed(self.next_token().text))
+        } else if self.eat(TokenKind::LParen).is_some() {
+            let mut args = Vec::new();
+            while self.eat(TokenKind::RParen).is_none() {
+                if self.peek_kind() != TokenKind::Ident {
+                    return Err(Error::with_span(
+                        expected("identifier", None),
+                        self.peek_span(),
                     ));
                 }
-                let _rparen = self.next_token();
-
-                AttributeContent::Args(args)
+                args.push(Cow::Borrowed(self.next_token().text));
+                self.eat(TokenKind::Comma);
             }
-            _ => AttributeContent::None,
+            AttributeContent::Args(args)
+        } else {
+            AttributeContent::None
         };
 
-        // Expect `]`
-        if self.peek_kind() != TokenKind::RBracket {
-            return Err(Self::error(
+        let Some(close) = self.eat(TokenKind::RBracket) else {
+            return Err(Error::with_span(
+                expected("closing `]`", Some("attribute")),
                 hash.span,
-                Self::expected("closing `]`", Some("attribute")),
             ));
-        }
-        let rbracket = self.next_token();
+        };
 
         Ok(Attribute {
-            span: Span::between(&hash.span, &rbracket.span),
+            span: Span::between(&hash.span, &close),
             leading,
-            name: Cow::Borrowed(name),
+            name: Cow::Borrowed(name.text),
             content,
         })
     }
@@ -131,8 +84,8 @@ impl<'a> AttributeParser<'a> for AstParser<'a> {
 #[cfg(test)]
 #[allow(clippy::panic)]
 mod tests {
-    use super::super::parse_document;
-    use crate::ast::AttributeContent;
+    use super::super::{parse_document, parse_document_lossy};
+    use crate::ast::{AttributeContent, serialize_document};
 
     #[test]
     fn parse_attribute() {
@@ -145,5 +98,31 @@ mod tests {
             }
             _ => panic!("expected args"),
         }
+    }
+
+    #[test]
+    fn attribute_with_inner_whitespace_round_trips() {
+        // Trivia inside the attribute used to leak into the following trivia span,
+        // duplicating part of the attribute on serialization.
+        let source = "#![type = \"a::B\"]\n#![enable( x , y )]\n\n42\n";
+        let doc = parse_document(source).unwrap();
+        assert_eq!(serialize_document(&doc).unwrap(), source);
+        let attr_end = doc.attributes[1].span.end_offset;
+        let pre_value = doc.pre_value.span.unwrap();
+        assert_eq!(pre_value.start_offset, attr_end);
+        assert_eq!(pre_value.slice(source), "\n\n");
+
+        let source = "#![ type = \"x\" ]\n42";
+        let doc = parse_document(source).unwrap();
+        assert_eq!(serialize_document(&doc).unwrap(), source);
+        assert_eq!(doc.pre_value.span.unwrap().slice(source), "\n");
+    }
+
+    #[test]
+    fn invalid_attribute_recovers() {
+        let (doc, errors) = parse_document_lossy("#![enable(1)]\n#![type = \"x\"]\n42");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(doc.attributes.len(), 1);
+        assert!(doc.value.is_some());
     }
 }
