@@ -10,7 +10,29 @@ use core::{
 ///
 /// To ensure that feature unification does not break `match`ing over `Number`,
 /// the `Number` enum is non-exhaustive.
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Hash, Ord)]
+///
+/// # Equality and ordering
+///
+/// Numbers compare by value, not by variant:
+///
+/// - Integers of any width are equal when their values are: `1u8 == 1i64`.
+/// - Floats compare with [`f64::total_cmp`] after widening `f32` (exact), so
+///   `0.5f32 == 0.5f64`, `NaN` equals itself and `-0.0 < 0.0`.
+/// - An integer never equals a float (`1 != 1.0`), mirroring RON's distinct
+///   integer and float literals. Ordering is still numeric across both
+///   (`-1 < -0.5 < 0 < 0.5 < 1`); an integer sorts just before a float of the
+///   same value.
+/// - [`Hash`] agrees with [`Eq`], so numbers work as map keys across variants.
+///
+/// ```
+/// use ron2::value::Number;
+///
+/// assert_eq!(Number::from(1u8), Number::from(1i64));
+/// assert_ne!(Number::from(1u8), Number::from(1.0f64));
+/// assert!(Number::from(-1000i16) < Number::from(-1i8));
+/// assert!(Number::from(0.5f32) < Number::from(2u8));
+/// ```
+#[derive(Copy, Clone, Debug)]
 #[cfg_attr(doc, non_exhaustive)]
 pub enum Number {
     I8(i8),
@@ -33,10 +55,10 @@ pub enum Number {
 }
 
 mod private {
-    #[derive(Debug, PartialEq, PartialOrd, Eq, Hash, Ord)]
+    #[derive(Debug)]
     enum _Never {}
 
-    #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Eq, Hash, Ord)]
+    #[derive(Copy, Clone, Debug)]
     pub struct Never {
         never: &'static _Never,
     }
@@ -185,6 +207,155 @@ impl Number {
     }
 }
 
+/// A number reduced to the form its equality and ordering are defined on.
+#[derive(Clone, Copy)]
+enum Canonical {
+    Int { negative: bool, magnitude: u128 },
+    Float(f64),
+}
+
+impl Canonical {
+    fn signed(v: impl Into<i128>) -> Self {
+        let v = v.into();
+        Canonical::Int {
+            negative: v < 0,
+            magnitude: v.unsigned_abs(),
+        }
+    }
+
+    fn unsigned(v: impl Into<u128>) -> Self {
+        Canonical::Int {
+            negative: false,
+            magnitude: v.into(),
+        }
+    }
+}
+
+impl Number {
+    fn canonical(self) -> Canonical {
+        match self {
+            Self::I8(v) => Canonical::signed(v),
+            Self::I16(v) => Canonical::signed(v),
+            Self::I32(v) => Canonical::signed(v),
+            Self::I64(v) => Canonical::signed(v),
+            #[cfg(feature = "integer128")]
+            Self::I128(v) => Canonical::signed(v),
+            Self::U8(v) => Canonical::unsigned(v),
+            Self::U16(v) => Canonical::unsigned(v),
+            Self::U32(v) => Canonical::unsigned(v),
+            Self::U64(v) => Canonical::unsigned(v),
+            #[cfg(feature = "integer128")]
+            Self::U128(v) => Canonical::unsigned(v),
+            Self::F32(v) => Canonical::Float(f64::from(v.0)),
+            Self::F64(v) => Canonical::Float(v.0),
+            #[cfg(not(doc))]
+            Self::__NonExhaustive(never) => never.never(),
+        }
+    }
+}
+
+fn cmp_ints(a: (bool, u128), b: (bool, u128)) -> Ordering {
+    match (a.0, b.0) {
+        (false, false) => a.1.cmp(&b.1),
+        (true, true) => b.1.cmp(&a.1),
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+    }
+}
+
+/// Compare an integer with a float by value; on a tie the integer is less.
+fn cmp_int_float(int: (bool, u128), f: f64) -> Ordering {
+    // 2^128: every integer magnitude is below it.
+    const INT_LIMIT: f64 = 340_282_366_920_938_463_463_374_607_431_768_211_456.0;
+
+    if f.is_nan() || f.abs() >= INT_LIMIT {
+        // Positive NaN sorts above +inf and negative NaN below -inf.
+        return if f.is_sign_negative() {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        };
+    }
+
+    let whole = f.trunc();
+    // Exact: `whole` is integral and its magnitude is below 2^128.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let whole_int = (whole < 0.0, whole.abs() as u128);
+    match cmp_ints(int, whole_int) {
+        Ordering::Equal if f > whole => Ordering::Less,
+        Ordering::Equal if f < whole => Ordering::Greater,
+        Ordering::Equal => Ordering::Less,
+        unequal => unequal,
+    }
+}
+
+impl Ord for Number {
+    fn cmp(&self, other: &Self) -> Ordering {
+        use Canonical::{Float, Int};
+
+        match (self.canonical(), other.canonical()) {
+            (
+                Int {
+                    negative,
+                    magnitude,
+                },
+                Int {
+                    negative: other_negative,
+                    magnitude: other_magnitude,
+                },
+            ) => cmp_ints((negative, magnitude), (other_negative, other_magnitude)),
+            (Float(a), Float(b)) => a.total_cmp(&b),
+            (
+                Int {
+                    negative,
+                    magnitude,
+                },
+                Float(f),
+            ) => cmp_int_float((negative, magnitude), f),
+            (
+                Float(f),
+                Int {
+                    negative,
+                    magnitude,
+                },
+            ) => cmp_int_float((negative, magnitude), f).reverse(),
+        }
+    }
+}
+
+impl PartialOrd for Number {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Number {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Number {}
+
+impl Hash for Number {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self.canonical() {
+            Canonical::Int {
+                negative,
+                magnitude,
+            } => {
+                state.write_u8(0);
+                negative.hash(state);
+                magnitude.hash(state);
+            }
+            Canonical::Float(f) => {
+                state.write_u8(1);
+                f.to_bits().hash(state);
+            }
+        }
+    }
+}
+
 macro_rules! number_from_impl {
     (Number::$variant:ident($wrap:ident($ty:ty))) => {
         impl From<$ty> for Number {
@@ -249,5 +420,113 @@ mod tests {
         assert!(F32(f32::NAN) > F32(f32::INFINITY));
         assert!(F32(-f32::NAN) < F32(f32::NEG_INFINITY));
         assert_eq!(F32(f32::NAN), F32(f32::NAN));
+    }
+
+    fn hash(n: Number) -> u64 {
+        use core::hash::BuildHasher;
+        std::collections::hash_map::RandomState::new().hash_one(n)
+    }
+
+    fn hash_with(state: &std::collections::hash_map::RandomState, n: Number) -> u64 {
+        use core::hash::BuildHasher;
+        state.hash_one(n)
+    }
+
+    #[test]
+    fn integers_compare_by_value_across_widths() {
+        let state = std::collections::hash_map::RandomState::new();
+        let ones = [
+            Number::from(1u8),
+            Number::from(1u16),
+            Number::from(1u32),
+            Number::from(1u64),
+            Number::from(1i8),
+            Number::from(1i16),
+            Number::from(1i32),
+            Number::from(1i64),
+        ];
+        for a in ones {
+            for b in ones {
+                assert_eq!(a, b);
+                assert_eq!(hash_with(&state, a), hash_with(&state, b));
+            }
+        }
+        assert_eq!(Number::from(u64::MAX), Number::from(u64::MAX));
+        assert!(Number::from(i64::MIN) < Number::from(0u8));
+        assert!(Number::from(-1i8) < Number::from(u64::MAX));
+    }
+
+    #[test]
+    fn floats_compare_by_value_across_widths() {
+        let state = std::collections::hash_map::RandomState::new();
+        assert_eq!(Number::from(0.5f32), Number::from(0.5f64));
+        assert_eq!(
+            hash_with(&state, Number::from(0.5f32)),
+            hash_with(&state, Number::from(0.5f64))
+        );
+        // 0.1f32 is not the same value as 0.1f64.
+        assert_ne!(Number::from(0.1f32), Number::from(0.1f64));
+        assert_eq!(Number::from(f32::NAN), Number::from(f64::NAN));
+        assert!(Number::from(-0.0f64) < Number::from(0.0f32));
+        assert_ne!(Number::from(-0.0f64), Number::from(0.0f64));
+    }
+
+    #[test]
+    fn integers_and_floats_are_distinct_but_ordered_numerically() {
+        assert_ne!(Number::from(1u8), Number::from(1.0f64));
+        assert_ne!(Number::from(0u8), Number::from(0.0f64));
+        assert_ne!(hash(Number::from(1u8)), hash(Number::from(1.0f64)));
+
+        let mut numbers = alloc::vec![
+            Number::from(300u16),
+            Number::from(2u8),
+            Number::from(0.5f64),
+            Number::from(-1i8),
+            Number::from(-1000i16),
+            Number::from(f64::INFINITY),
+            Number::from(f64::NEG_INFINITY),
+            Number::from(f64::NAN),
+            Number::from(-f64::NAN),
+            Number::from(2.0f32),
+            Number::from(-0.0f64),
+            Number::from(0u8),
+            Number::from(1e30f64),
+            Number::from(-1.5f64),
+        ];
+        numbers.sort();
+        assert_eq!(
+            numbers,
+            alloc::vec![
+                Number::from(-f64::NAN),
+                Number::from(f64::NEG_INFINITY),
+                Number::from(-1000i16),
+                Number::from(-1.5f64),
+                Number::from(-1i8),
+                Number::from(0u8),
+                Number::from(-0.0f64),
+                Number::from(0.5f64),
+                Number::from(2u8),
+                Number::from(2.0f32),
+                Number::from(300u16),
+                Number::from(1e30f64),
+                Number::from(f64::INFINITY),
+                Number::from(f64::NAN),
+            ]
+        );
+        // Sorting must agree with pairwise comparison (total order).
+        for (i, a) in numbers.iter().enumerate() {
+            for (j, b) in numbers.iter().enumerate() {
+                assert_eq!(a.cmp(b), i.cmp(&j), "{a:?} vs {b:?}");
+            }
+        }
+    }
+
+    #[cfg(feature = "integer128")]
+    #[test]
+    fn wide_integers_against_floats() {
+        assert!(Number::from(u128::MAX) < Number::from(1e39f64));
+        assert!(Number::from(i128::MIN) > Number::from(-1e39f64));
+        assert!(Number::from(u128::MAX) > Number::from(1e38f64));
+        assert_eq!(Number::from(u128::MAX), Number::from(u128::MAX));
     }
 }
