@@ -69,7 +69,6 @@ pub mod fmt;
 pub(crate) mod lexer;
 pub mod schema;
 pub(crate) mod token;
-mod util;
 pub mod value;
 
 // Re-export derive macros when the derive feature is enabled

@@ -13,14 +13,14 @@ authors = [
 ]
 description = "RON parser with full AST access, perfect round-trip fidelity, and formatting tools"
 categories = ["encoding"]
-rust-version = "1.90.0"
+rust-version.workspace = true
+readme.workspace = true
 
 [features]
 default = ["derive"]
 derive = ["dep:ron2-derive"]
 integer128 = []
 xdg = ["dep:dirs"]
-internal-span-substring-test = ["dep:unicode-segmentation"]
 
 [dependencies]
 ahash.workspace = true
@@ -30,7 +30,6 @@ indexmap = { version = "2.13", default-features = false, features = ["std"] }
 itoa.workspace = true
 ron2-derive = { workspace = true, optional = true }
 unicode-ident = { version = "1.0", default-features = false }
-unicode-segmentation = { version = "1.12", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

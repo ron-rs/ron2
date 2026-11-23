@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 description = "Derive macros for RON serialization, deserialization, and schema generation"
 
 [lib]
@@ -13,7 +14,6 @@ proc-macro = true
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
-dirs = "6"
 
 [dev-dependencies]
 ron2 = { path = "../main" }
