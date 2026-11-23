@@ -11,15 +11,15 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ron2 = "0.1"  # Includes derive macros by default
+ron2 = "0.3"  # Includes derive macros by default
 ```
 
 Or for standalone use:
 
 ```toml
 [dependencies]
-ron2-derive = "0.1"
-ron2 = { version = "0.1", default-features = false }
+ron2-derive = "0.3"
+ron2 = { version = "0.3", default-features = false }
 ```
 
 ## Derive Macros
@@ -27,7 +27,9 @@ ron2 = { version = "0.1", default-features = false }
 - `#[derive(Ron)]` - Implements ToRon, FromRon, and RonSchema (all three)
 - `#[derive(ToRon)]` - Serialize to RON
 - `#[derive(FromRon)]` - Deserialize from RON
-- `#[derive(RonSchema)]` - Generate RON schema files
+- `#[derive(RonSchema)]` - Describe the type for schema files (written with `write_schemas`), validation and the LSP
+
+Unknown, misplaced or conflicting `#[ron(...)]` attributes are compile errors.
 
 ```rust
 use ron2_derive::Ron;
@@ -54,14 +56,17 @@ fn main() {
 
 | Attribute | Description |
 |-----------|-------------|
-| `rename = "Name"` | Use different name in RON |
-| `rename_all = "..."` | Apply rename rule to all fields |
+| `rename = "Name"` | Struct name in RON (structs only) |
+| `rename_all = "..."` | Rename the fields of a struct, or the variants of an enum |
 | `deny_unknown_fields` | Error on unknown fields |
-| `transparent` | Serialize as the single inner field |
+| `transparent` | Serialize as the single non-skipped field |
+| `bound = "T: Trait"` | Replace the inferred where-clause (also `bound(ser = "..", de = "..", schema = "..")`) |
 
 Rename rules: `camelCase`, `snake_case`, `PascalCase`, `SCREAMING_SNAKE_CASE`, `lowercase`, `UPPERCASE`
 
 ## Field Attributes
+
+Named fields only; tuple fields allow just `skip` and `skip, default = "path"`.
 
 | Attribute | Description |
 |-----------|-------------|
@@ -70,8 +75,8 @@ Rename rules: `camelCase`, `snake_case`, `PascalCase`, `SCREAMING_SNAKE_CASE`, `
 | `skip_serializing` | Skip during serialization |
 | `skip_deserializing` | Skip during deserialization |
 | `default` | Use `Default::default()` if missing |
-| `default = "path"` | Use custom function if missing |
-| `flatten` | Flatten nested struct into parent |
+| `default = "path"` | Use custom function if missing (or skipped) |
+| `flatten` | Flatten nested struct (or `Option`, or map as catch-all) into parent |
 | `skip_serializing_if = "fn"` | Skip if predicate returns true |
 | `explicit` | Require explicit `Some(...)` or `None` |
 | `opt` | Default if missing, skip if equals default |
@@ -81,7 +86,8 @@ Rename rules: `camelCase`, `snake_case`, `PascalCase`, `SCREAMING_SNAKE_CASE`, `
 | Attribute | Description |
 |-----------|-------------|
 | `rename = "Name"` | Use different name in RON |
-| `skip` | Skip this variant |
+| `rename_all = "..."` | Rename the fields of this struct variant |
+| `skip` | Never deserialize this variant; serializing it is an error |
 
 ## Extension Behavior
 
@@ -125,7 +131,8 @@ struct Config {
 
 Flattened `Option<T>` fields are presence-based: if none of `T`'s fields are
 present in the parent struct, the value is `None`. If any inner field is
-present, the value is `Some(T)` (and missing inner fields use defaults).
+present, the value is `Some(T)` (missing inner fields use their defaults,
+or are errors if they have none).
 This means `None` and `Some(T::default())` are indistinguishable in input
 when `T` has defaults. Use a non-flattened `Option<T>` or an explicit marker
 field if you need to preserve that distinction.

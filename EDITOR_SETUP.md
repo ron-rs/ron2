@@ -75,14 +75,15 @@
    }
 
    fn main() -> Result<(), Box<dyn std::error::Error>> {
-       // Writes schemas/my_crate/config/AppConfig.schema.ron and every type it references.
+       // Writes schemas/<module path>/AppConfig.schema.ron and every type it references.
        AppConfig::write_schemas(Some("schemas"))?;
        Ok(())
    }
    ```
 
-   `write_schemas(None)` writes to `RON_SCHEMA_DIR` or the XDG default
-   (`~/.local/share/ron-schemas/`), which the LSP also searches.
+   `write_schemas(None)` writes to `RON_SCHEMA_DIR` or, with ron2's `xdg`
+   feature, the XDG data directory (e.g. `~/.local/share/ron-schemas/`); the
+   LSP searches both.
 
 ## VS Code
 

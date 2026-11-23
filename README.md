@@ -38,7 +38,7 @@ See [Derive Attributes](crates/derive/README.md#container-attributes) for the fu
 | ------------- | ----------------------------------------------------------- |
 | `ron2`        | Core parser with AST and Value APIs                         |
 | `ron2-derive` | Derive macros for `FromRon`, `ToRon`, and schema generation |
-| `ron2-lsp`    | Language server with completions and diagnostics            |
+| `ron2-lsp`    | Language server with completions, diagnostics and hover     |
 | `ron2-doc`    | Documentation generator from schema files                   |
 | `ron2-cli`    | CLI tools (`ron fmt`, `ron doc`)                            |
 
@@ -97,7 +97,8 @@ use ron2::schema::RonSchema;
 // Write to a specific directory
 Config::write_schemas(Some("./schemas"))?;
 
-// Or use the default XDG location (~/.local/share/ron-schemas/)
+// Or $RON_SCHEMA_DIR, falling back to the XDG data directory
+// (e.g. ~/.local/share/ron-schemas/; needs ron2's `xdg` feature)
 Config::write_schemas(None)?;
 ```
 
@@ -105,7 +106,7 @@ The LSP searches for schemas in this order:
 
 1. Configured `schemaDirs` (from editor settings)
 2. `RON_SCHEMA_DIR` environment variable
-3. XDG default (`~/.local/share/ron-schemas/`)
+3. XDG data directory (e.g. `~/.local/share/ron-schemas/`)
 
 Add the `#![type]` attribute to your RON files to enable completions:
 
