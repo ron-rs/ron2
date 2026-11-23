@@ -4,9 +4,9 @@
 //! - RON parsing errors (from ron2 library)
 //! - Custom validation errors (user-defined logic)
 //!
-//! Run with: `cargo run --bin error_report`
+//! Run with: `cargo run -p example-error-report`
 
-use ariadne::{Color, Label, Report, ReportKind, Source};
+use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 use ron2::{Error as RonError, FromRon, Span, Spanned};
 
 // Simple config struct with validation requirements
@@ -42,16 +42,24 @@ impl ValidationError {
     }
 }
 
-// Convert RON error to ariadne Report
-fn ron_error_to_report<'a>(
-    error: &RonError,
+type ReportSpan<'a> = (&'a str, std::ops::Range<usize>);
+
+/// Start a report. ron2 spans are byte offsets, while ariadne counts chars by default.
+fn report_builder<'a>(
     source_name: &'a str,
-) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
+    range: std::ops::Range<usize>,
+) -> ariadne::ReportBuilder<'a, ReportSpan<'a>> {
+    Report::build(ReportKind::Error, (source_name, range))
+        .with_config(Config::default().with_index_type(IndexType::Byte))
+}
+
+// Convert RON error to ariadne Report
+fn ron_error_to_report<'a>(error: &RonError, source_name: &'a str) -> Report<'a, ReportSpan<'a>> {
     let span = error.span();
     let range = span.start_offset..span.end_offset;
 
-    let mut report = Report::build(ReportKind::Error, (source_name, range.clone()))
-        .with_message(error.kind().to_string());
+    let mut report =
+        report_builder(source_name, range.clone()).with_message(error.kind().to_string());
 
     // Add main error label
     report = report.with_label(
@@ -83,10 +91,10 @@ fn ron_error_to_report<'a>(
 fn validation_error_to_report<'a>(
     error: &ValidationError,
     source_name: &'a str,
-) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
+) -> Report<'a, ReportSpan<'a>> {
     let range = error.span.start_offset..error.span.end_offset;
 
-    let mut report = Report::build(ReportKind::Error, (source_name, range.clone()))
+    let mut report = report_builder(source_name, range.clone())
         .with_message(&error.message)
         .with_label(
             Label::new((source_name, range))
@@ -171,7 +179,7 @@ fn main() {
 
     let valid_ron_invalid_config = r#"
 (
-    host: "localhost",
+    host: "café.local",  // Non-ASCII text before an error must not shift labels
     port: 0,  // Invalid: port cannot be 0
     max_connections: 10,
     min_connections: 100,  // Invalid: min > max
@@ -200,5 +208,49 @@ fn main() {
                 .eprint(("config.ron", Source::from(valid_ron_invalid_config)))
                 .unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn labels_point_at_the_value_after_non_ascii_text() {
+        let source = "(host: \"héllo wörld\", port: 0, max_connections: 1, min_connections: 1)";
+        let config = ServerConfig::from_ron(source).expect("valid config");
+        let errors = validate_config(&config);
+        let mut out = Vec::new();
+        validation_error_to_report(&errors[0], "config.ron")
+            .write(("config.ron", Source::from(source)), &mut out)
+            .expect("render report");
+        let rendered = String::from_utf8(out).expect("utf-8");
+        let plain: String = strip_ansi(&rendered);
+
+        let lines: Vec<&str> = plain.lines().collect();
+        let source_line = lines
+            .iter()
+            .position(|l| l.contains("port: 0"))
+            .expect("source line");
+        let value_col = lines[source_line].chars().position(|c| c == '0');
+        let marker_col = lines[source_line + 1].chars().position(|c| c == '┬');
+        assert_eq!(marker_col, value_col, "label misplaced:\n{plain}");
+    }
+
+    fn strip_ansi(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
     }
 }

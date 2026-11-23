@@ -7,7 +7,7 @@
 //! - Pretty-printing with customizable formatting
 //! - Schema-driven serialization output
 
-use std::{collections::BTreeMap, fs};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use example_showcase::GameConfig;
 use ron2::{
@@ -29,7 +29,8 @@ impl SchemaResolver for CatalogResolver {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RON2 Showcase ===\n");
 
-    let ron_content = fs::read_to_string("data/game.ron")?;
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/game.ron");
+    let ron_content = fs::read_to_string(&path)?;
     let value: ron2::Value = ron_content.parse()?;
 
     println!("1. Loading and validating config...");
