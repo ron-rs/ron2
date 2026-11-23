@@ -11,13 +11,16 @@ use crate::{
 
 impl<'a> AstParser<'a> {
     /// Parse `()` (unit), `(x: 1, ...)` (anonymous struct) or `(1, ...)` (tuple).
+    #[inline(never)]
     pub(super) fn parse_paren(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open = self.next_token();
 
         if self.peek_kind() == TokenKind::RParen {
+            let inner = self.take_trivia();
             let close = self.next_token();
             return Expr::Unit(UnitExpr {
                 span: Span::between(&open.span, &close.span),
+                inner,
             });
         }
 

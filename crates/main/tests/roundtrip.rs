@@ -1108,12 +1108,12 @@ fn roundtrip_enum_variants_various() {
 
 #[test]
 fn roundtrip_raw_identifier() {
-    // Raw identifier (r#type is valid) - the r# prefix is preserved
+    // Raw identifier (r#type is valid) - the name is `type`, like upstream RON
     let value = roundtrip("r#type");
     assert_eq!(
         value,
         Value::Named {
-            name: String::from("r#type"),
+            name: String::from("type"),
             content: NamedContent::Unit,
         }
     );

@@ -452,7 +452,10 @@ fn fields_body_into_struct_fields(fields: FieldsBody<'_>) -> Result<StructFields
 pub fn value_to_expr(value: Value) -> Expr<'static> {
     let span = Span::synthetic();
     match value {
-        Value::Unit => Expr::Unit(UnitExpr { span }),
+        Value::Unit => Expr::Unit(UnitExpr {
+            span,
+            inner: Trivia::empty(),
+        }),
         Value::Bool(b) => Expr::Bool(BoolExpr { span, value: b }),
         Value::Char(c) => Expr::Char(CharExpr {
             span,
@@ -486,10 +489,13 @@ pub fn value_to_expr(value: Value) -> Expr<'static> {
                 OptionExpr {
                     span,
                     value: Some(OptionValue {
+                        pre_paren: Trivia::empty(),
                         open_paren: Span::synthetic(),
                         leading: Trivia::empty(),
                         expr: inner_expr,
                         trailing: Trivia::empty(),
+                        comma: None,
+                        post_comma: Trivia::empty(),
                         close_paren: Span::synthetic(),
                     }),
                 }
@@ -682,6 +688,7 @@ pub fn synthetic_string(value: String) -> Expr<'static> {
 pub fn synthetic_unit() -> Expr<'static> {
     Expr::Unit(UnitExpr {
         span: Span::synthetic(),
+        inner: Trivia::empty(),
     })
 }
 
@@ -813,10 +820,13 @@ pub fn synthetic_option(inner: Option<Expr<'static>>) -> Expr<'static> {
         Some(expr) => OptionExpr {
             span: Span::synthetic(),
             value: Some(OptionValue {
+                pre_paren: Trivia::empty(),
                 open_paren: Span::synthetic(),
                 leading: Trivia::empty(),
                 expr,
                 trailing: Trivia::empty(),
+                comma: None,
+                post_comma: Trivia::empty(),
                 close_paren: Span::synthetic(),
             }),
         },

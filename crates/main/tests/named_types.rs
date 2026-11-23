@@ -66,12 +66,12 @@ fn named_unit_with_numbers() {
 
 #[test]
 fn named_unit_raw_identifier() {
-    // Raw identifiers preserve the r# prefix in the parsed name
+    // Raw identifiers drop the r# prefix, like upstream RON
     let value: Value = "r#type".parse().unwrap();
     assert_eq!(
         value,
         Value::Named {
-            name: String::from("r#type"),
+            name: String::from("type"),
             content: NamedContent::Unit,
         }
     );
@@ -83,7 +83,7 @@ fn named_unit_raw_identifier_match() {
     assert_eq!(
         value,
         Value::Named {
-            name: String::from("r#match"),
+            name: String::from("match"),
             content: NamedContent::Unit,
         }
     );

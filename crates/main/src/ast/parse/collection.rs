@@ -14,6 +14,7 @@ use crate::{
 
 impl<'a> AstParser<'a> {
     /// Parse a sequence `[a, b, c]`.
+    #[inline(never)]
     pub(super) fn parse_seq(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open = self.next_token();
         let list = self.parse_list(Delim::Bracket, "array", errors, |p, leading, errors| {
@@ -35,6 +36,7 @@ impl<'a> AstParser<'a> {
     }
 
     /// Parse a map `{key: value, ...}`.
+    #[inline(never)]
     pub(super) fn parse_map(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open = self.next_token();
         let list = self.parse_list(Delim::Brace, "map", errors, Self::parse_map_entry);

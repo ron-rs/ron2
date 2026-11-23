@@ -89,6 +89,8 @@ pub enum LexError {
     },
     /// Exponent marker (`e`/`E`) without digits.
     MissingExponent,
+    /// `_` directly after the decimal point (`1._5`).
+    FloatUnderscore,
     /// `r#` not followed by a raw identifier or raw string (e.g. `r#`, `r##foo`).
     InvalidRawLiteral,
 }

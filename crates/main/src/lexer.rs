@@ -278,7 +278,10 @@ impl<'a> Lexer<'a> {
         self.advance(prefix_len + 1);
         match self.next_char() {
             None | Some('\n') => return TokenKind::Error(LexError::UnterminatedChar),
-            Some('\'') => return TokenKind::Error(LexError::EmptyChar),
+            // `'''` is the quote char, as in upstream RON; `''` is empty.
+            Some('\'') if self.peek_byte() != Some(b'\'') => {
+                return TokenKind::Error(LexError::EmptyChar);
+            }
             Some('\\') => {
                 // Skip the escaped char, then the rest of the escape (`\x41`, `\u{41}`).
                 if self.next_char().is_some() {
@@ -361,14 +364,21 @@ impl<'a> Lexer<'a> {
         };
         if base != 10 {
             self.advance(2);
-            if self.eat_digits(base) == 0 {
+            let digits = self.eat_digits(base);
+            // An invalid digit is any char after the prefix, or a decimal digit
+            // after valid ones (`0b102`); letters there are suffixes or trailing input.
+            let invalid_digit = if digits == 0 {
+                self.peek_char().is_some_and(is_ident_continue_char)
+            } else {
+                self.peek_byte().is_some_and(|b| b.is_ascii_digit())
+            };
+            if invalid_digit {
                 let at = u8::try_from(self.cursor - start).unwrap_or(u8::MAX);
-                return if self.peek_char().is_some_and(is_ident_continue_char) {
-                    self.eat_while(is_ident_continue_char);
-                    TokenKind::Error(LexError::InvalidDigit { base, at })
-                } else {
-                    TokenKind::Error(LexError::MissingDigits { base })
-                };
+                self.eat_while(is_ident_continue_char);
+                return TokenKind::Error(LexError::InvalidDigit { base, at });
+            }
+            if digits == 0 {
+                return TokenKind::Error(LexError::MissingDigits { base });
             }
             self.eat_integer_suffix();
             return TokenKind::Integer;
@@ -380,6 +390,11 @@ impl<'a> Lexer<'a> {
         let mut is_float = false;
         if self.peek_byte() == Some(b'.') {
             self.advance(1);
+            if self.peek_byte() == Some(b'_') {
+                // Rejected like upstream RON (`1._5`); `_` elsewhere is a separator.
+                self.eat_digits(10);
+                return TokenKind::Error(LexError::FloatUnderscore);
+            }
             self.eat_digits(10);
             is_float = true;
         }
@@ -694,6 +709,41 @@ mod tests {
         ] {
             assert_eq!(single(source), Ident, "{source}");
         }
+    }
+
+    #[test]
+    fn raw_identifiers_for_literal_words() {
+        for source in [
+            "r#true", "r#None", "r#Some", "r#inf", "r#NaN", "r#inff32", "r#a.b-c",
+        ] {
+            assert_eq!(single(source), Ident, "{source}");
+        }
+    }
+
+    #[test]
+    fn number_digit_and_underscore_rules() {
+        assert_eq!(single("1._5"), TokenKind::Error(LexError::FloatUnderscore));
+        assert_eq!(single("1._"), TokenKind::Error(LexError::FloatUnderscore));
+        for source in ["1_.5", "1.5_", "1_e3", "1e_3"] {
+            assert_eq!(single(source), Float, "{source}");
+        }
+        assert_eq!(
+            single("0b102"),
+            TokenKind::Error(LexError::InvalidDigit { base: 2, at: 4 })
+        );
+        assert_eq!(single("0b1u8"), Integer);
+        assert_eq!(single("0xFFu8"), Integer);
+        assert_eq!(
+            lex_texts("0x1g"),
+            alloc::vec![(Integer, "0x1"), (Ident, "g")]
+        );
+    }
+
+    #[test]
+    fn quote_char_literal() {
+        assert_eq!(single("'''"), TokenKind::Char);
+        assert_eq!(single("b'''"), TokenKind::Byte);
+        assert_eq!(single("''"), TokenKind::Error(LexError::EmptyChar));
     }
 
     #[test]

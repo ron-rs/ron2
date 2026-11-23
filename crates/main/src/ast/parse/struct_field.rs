@@ -16,8 +16,18 @@ use crate::{
     token::{Token, TokenKind},
 };
 
+/// The AST identifier for an identifier token. Raw identifiers lose their
+/// `r#` prefix (`r#type` is named `type`); the span keeps the source text.
+fn ident<'a>(tok: &Token<'a>) -> Ident<'a> {
+    Ident {
+        span: tok.span,
+        name: Cow::Borrowed(tok.text.strip_prefix("r#").unwrap_or(tok.text)),
+    }
+}
+
 impl<'a> AstParser<'a> {
     /// Parse an expression starting with an identifier.
+    #[inline(never)]
     pub(super) fn parse_ident_expr(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let tok = self.next_token();
         match tok.text {
@@ -34,32 +44,42 @@ impl<'a> AstParser<'a> {
         }
     }
 
-    /// Parse `Some(value)` after the `Some` token.
+    /// Parse `Some(value)` after the `Some` token. Like upstream RON, one
+    /// trailing comma is allowed: `Some(1,)`.
+    #[inline(never)]
     fn parse_some(&mut self, some: &Token<'a>, errors: &mut Vec<Error>) -> Expr<'a> {
-        let Some(open_paren) = self.eat(TokenKind::LParen) else {
+        if self.peek_kind() != TokenKind::LParen {
             let err = Error::with_span(expected("`(` after `Some`", None), self.peek_span());
             return self.error_expr(err, errors);
-        };
-        let (leading, expr, trailing, close_paren) = self.with_open(Delim::Paren, |p| {
+        }
+        let pre_paren = self.take_trivia();
+        let open_paren = self.next_token().span;
+        let value = self.with_open(Delim::Paren, |p| {
             let leading = p.take_trivia();
             let expr = p.parse_value("option", errors);
             let trailing = p.take_trivia();
-            let close = p.expect_closer(Delim::Paren, "option", errors);
-            (leading, expr, trailing, close)
-        });
-        Expr::Option(Box::new(OptionExpr {
-            span: Span::between(&some.span, &close_paren),
-            value: Some(OptionValue {
+            let comma = p.eat(TokenKind::Comma);
+            let post_comma = p.take_trivia();
+            let close_paren = p.expect_closer(Delim::Paren, "option", errors);
+            OptionValue {
+                pre_paren,
                 open_paren,
                 leading,
                 expr,
                 trailing,
+                comma,
+                post_comma,
                 close_paren,
-            }),
+            }
+        });
+        Expr::Option(Box::new(OptionExpr {
+            span: Span::between(&some.span, &value.close_paren),
+            value: Some(value),
         }))
     }
 
     /// Parse a struct or enum variant: `Name`, `Name(a, b)` or `Name(x: a)`.
+    #[inline(never)]
     fn parse_struct(&mut self, name: &Token<'a>, errors: &mut Vec<Error>) -> Expr<'a> {
         let (pre_body, body) = if self.peek_kind() == TokenKind::LParen {
             (self.take_trivia(), Some(self.parse_struct_body(errors)))
@@ -75,10 +95,7 @@ impl<'a> AstParser<'a> {
         };
         Expr::Struct(StructExpr {
             span,
-            name: Ident {
-                span: name.span,
-                name: Cow::Borrowed(name.text),
-            },
+            name: ident(name),
             pre_body,
             body,
         })
@@ -150,10 +167,7 @@ impl<'a> AstParser<'a> {
 
         StructField {
             leading,
-            name: Ident {
-                span: name.span,
-                name: Cow::Borrowed(name.text),
-            },
+            name: ident(&name),
             pre_colon,
             colon,
             post_colon,
@@ -168,7 +182,7 @@ impl<'a> AstParser<'a> {
 #[allow(clippy::panic)]
 mod tests {
     use super::super::{parse_document, parse_document_lossy};
-    use crate::ast::{Expr, StructBody};
+    use crate::ast::{Expr, StructBody, serialize_document};
 
     #[test]
     fn parse_named_struct_bodies() {
@@ -254,5 +268,84 @@ mod tests {
         };
         assert_eq!(s.fields.len(), 2);
         assert!(matches!(s.fields[1].value, Expr::Number(_)));
+    }
+
+    fn assert_round_trip(source: &str) {
+        let doc = parse_document(source).unwrap();
+        assert_eq!(serialize_document(&doc).unwrap(), source);
+    }
+
+    #[test]
+    fn some_keeps_trivia_before_paren() {
+        // Used to serialize as `Some(1)`.
+        assert_round_trip("Some (1)");
+        assert_round_trip("Some /* c */ (1)");
+        assert_round_trip("[Some\n(1), Some( 2 )]");
+    }
+
+    #[test]
+    fn some_accepts_one_trailing_comma() {
+        // Accepted by upstream RON.
+        assert_round_trip("Some(1,)");
+        assert_round_trip("Some(\n    5, // five\n)");
+        let doc = parse_document("Some(1 , )").unwrap();
+        let Some(Expr::Option(opt)) = doc.value else {
+            panic!("expected option");
+        };
+        assert!(opt.value.is_some_and(|v| v.comma.is_some()));
+        assert!(parse_document("Some(1,,)").is_err());
+        assert!(parse_document("Some(,)").is_err());
+    }
+
+    #[test]
+    fn raw_identifiers_are_unraw_in_the_ast() {
+        let source = "Foo(r#type: r#Bar(1), r#a.b: r#true)";
+        let doc = parse_document(source).unwrap();
+        let Some(Expr::Struct(s)) = &doc.value else {
+            panic!("expected struct");
+        };
+        let Some(StructBody::Fields(fields)) = &s.body else {
+            panic!("expected fields");
+        };
+        let names: Vec<_> = fields.fields.iter().map(|f| &*f.name.name).collect();
+        assert_eq!(names, ["type", "a.b"]);
+        assert_eq!(fields.fields[0].name.span.slice(source), "r#type");
+        assert!(matches!(&fields.fields[0].value, Expr::Struct(v) if v.name.name == "Bar"));
+        assert_eq!(serialize_document(&doc).unwrap(), source);
+    }
+
+    #[test]
+    fn raw_identifiers_escape_literal_keywords() {
+        // `r#` turns words that would be literals into plain identifiers.
+        for (source, name) in [
+            ("r#true", "true"),
+            ("r#false", "false"),
+            ("r#None", "None"),
+            ("r#inf", "inf"),
+            ("r#NaN", "NaN"),
+            ("r#inff32", "inff32"),
+            ("r#Some", "Some"),
+        ] {
+            match parse_document(source).unwrap().value {
+                Some(Expr::Struct(s)) => assert_eq!(s.name.name, name),
+                other => panic!("expected struct for {source}, got {other:?}"),
+            }
+        }
+        match parse_document("r#Some(1)").unwrap().value {
+            Some(Expr::Struct(s)) => assert_eq!(s.name.name, "Some"),
+            other => panic!("expected struct, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_field_recovery_skips_nested_groups() {
+        // Used to close the struct at the inner `)`.
+        let (doc, errors) = parse_document_lossy("(a: 1, (2), b: 3)");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        let Some(Expr::AnonStruct(s)) = doc.value else {
+            panic!("expected anon struct");
+        };
+        let names: Vec<_> = s.fields.iter().map(|f| &*f.name.name).collect();
+        assert_eq!(names, ["a", "", "b"]);
     }
 }

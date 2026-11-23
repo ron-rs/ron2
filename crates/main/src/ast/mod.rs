@@ -323,7 +323,7 @@ impl AttributeContent<'_> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<'a> {
     /// Unit value: `()`.
-    Unit(UnitExpr),
+    Unit(UnitExpr<'a>),
     /// Boolean value: `true` or `false`.
     Bool(BoolExpr),
     /// Character literal: `'a'`.
@@ -378,7 +378,7 @@ impl Expr<'_> {
     #[must_use]
     pub fn into_owned(self) -> Expr<'static> {
         match self {
-            Self::Unit(u) => Expr::Unit(u),
+            Self::Unit(u) => Expr::Unit(u.into_owned()),
             Self::Bool(b) => Expr::Bool(b),
             Self::Char(c) => Expr::Char(c.into_owned()),
             Self::Byte(b) => Expr::Byte(b.into_owned()),
@@ -411,10 +411,17 @@ pub struct ErrorExpr {
 
 /// Unit expression: `()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UnitExpr {
+pub struct UnitExpr<'a> {
     /// The span of `()`.
     pub span: Span,
+    /// Trivia between `(` and `)`, e.g. the comment in `( /* c */ )`.
+    pub inner: Trivia<'a>,
 }
+
+impl_into_owned!(UnitExpr {
+    span: copy,
+    inner: owned(Trivia),
+});
 
 /// Boolean expression: `true` or `false`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -577,23 +584,32 @@ impl_into_owned!(OptionExpr {
 /// The inner value of a `Some(...)` expression.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OptionValue<'a> {
+    /// Trivia between `Some` and the opening parenthesis.
+    pub pre_paren: Trivia<'a>,
     /// Span of the opening parenthesis.
     pub open_paren: Span,
     /// Leading trivia before the inner value.
     pub leading: Trivia<'a>,
     /// The inner expression.
     pub expr: Expr<'a>,
-    /// Trailing trivia after the inner value.
+    /// Trailing trivia after the inner value (before the comma, if any).
     pub trailing: Trivia<'a>,
+    /// Span of the optional trailing comma: `Some(1,)`.
+    pub comma: Option<Span>,
+    /// Trivia between the trailing comma and the closing parenthesis.
+    pub post_comma: Trivia<'a>,
     /// Span of the closing parenthesis.
     pub close_paren: Span,
 }
 
 impl_into_owned!(OptionValue {
+    pre_paren: owned(Trivia),
     open_paren: copy,
     leading: owned(Trivia),
     expr: owned(Expr),
     trailing: owned(Trivia),
+    comma: copy,
+    post_comma: owned(Trivia),
     close_paren: copy,
 });
 
@@ -815,9 +831,10 @@ impl_into_owned!(StructExpr {
 /// An identifier (struct name, enum variant, field name).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ident<'a> {
-    /// The span of the identifier.
+    /// The span of the identifier as written, including any `r#` prefix.
     pub span: Span,
-    /// The identifier text.
+    /// The identifier name, without the `r#` prefix of a raw identifier
+    /// (`r#type` has the name `type`).
     pub name: Cow<'a, str>,
 }
 

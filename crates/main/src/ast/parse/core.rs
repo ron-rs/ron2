@@ -185,14 +185,19 @@ impl<'a> AstParser<'a> {
         };
         let span = Span::between(&first.span, &last.span);
 
-        let mut whitespace = None;
+        // All whitespace between the comments; borrowed unless split by a comment.
+        let mut whitespace = Cow::Borrowed("");
         let mut comments = Vec::new();
         for tok in self.trivia.drain(..) {
             let kind = match tok.kind {
                 TokenKind::LineComment => CommentKind::Line,
                 TokenKind::BlockComment => CommentKind::Block,
                 _ => {
-                    whitespace.get_or_insert(tok.text);
+                    if whitespace.is_empty() {
+                        whitespace = Cow::Borrowed(tok.text);
+                    } else {
+                        whitespace.to_mut().push_str(tok.text);
+                    }
                     continue;
                 }
             };
@@ -205,7 +210,7 @@ impl<'a> AstParser<'a> {
 
         Trivia {
             span: Some(span),
-            whitespace: Cow::Borrowed(whitespace.unwrap_or_default()),
+            whitespace,
             comments,
         }
     }
@@ -253,6 +258,7 @@ impl<'a> AstParser<'a> {
                 Some("integer"),
             ),
             LexError::MissingExponent => expected("exponent digits", Some("float")),
+            LexError::FloatUnderscore => ErrorKind::FloatUnderscore,
             LexError::InvalidRawLiteral => ErrorKind::InvalidIdentifier(tok.text.into()),
             LexError::InvalidDigit { base, at } => {
                 let at = usize::from(at);
@@ -292,9 +298,30 @@ impl<'a> AstParser<'a> {
     // Recovery
     // ------------------------------------------------------------------
 
-    /// Skip tokens until EOF or a token in `sync`.
+    /// Skip tokens until EOF or a token in `sync` outside any bracketed group
+    /// opened while skipping, so `(a: 1, (2))` resumes after `(2)`, not inside it.
+    ///
+    /// A closer that does not match the innermost skipped group but closes an
+    /// enclosing container also stops skipping, leaving the group unclosed.
     pub(super) fn skip_until(&mut self, sync: &[TokenKind]) {
-        while self.peek_kind() != TokenKind::Eof && !sync.contains(&self.peek_kind()) {
+        let mut groups = Vec::new();
+        loop {
+            let kind = self.peek_kind();
+            match (kind, Delim::of_closer(kind)) {
+                (TokenKind::Eof, _) => return,
+                (TokenKind::LParen, _) => groups.push(Delim::Paren),
+                (TokenKind::LBracket, _) => groups.push(Delim::Bracket),
+                (TokenKind::LBrace, _) => groups.push(Delim::Brace),
+                (_, Some(delim)) if !groups.is_empty() => {
+                    if groups.last() == Some(&delim) {
+                        groups.pop();
+                    } else if self.expects_closer(kind) {
+                        return;
+                    }
+                }
+                _ if groups.is_empty() && sync.contains(&kind) => return,
+                _ => {}
+            }
             self.next_token();
         }
     }

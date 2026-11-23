@@ -9,10 +9,12 @@
 //!   one UTF-8 character, so `"\xC3\xA9"` is `"é"` and `"\xE9"` is an error.
 //!   Character literals only accept ASCII `\x` escapes; byte literals and byte
 //!   strings accept any byte.
-//! - `\u{N}` takes 1 to 6 hex digits and is not allowed in byte literals or
-//!   byte strings.
-//! - Byte literals and byte strings, raw or not, must be ASCII, like in Rust.
-//!   (Upstream `ron` accepts non-ASCII UTF-8 in byte strings; Rust does not.)
+//! - `\u{N}` takes 1 to 6 hex digits. It is not allowed in byte literals
+//!   (`b'a'`); in byte strings it stands for the UTF-8 encoding of the char.
+//! - Byte strings, raw or not, may contain non-ASCII text, which stands for
+//!   its UTF-8 bytes (`b"é"` is `[0xC3, 0xA9]`). Rust rejects both of these;
+//!   upstream `ron` accepts them, and RON files written for it must keep working.
+//! - Byte literals must be ASCII.
 
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use core::ops::Range;
@@ -72,8 +74,6 @@ pub(crate) fn decode_str(raw: &str) -> Result<(String, StringKind), LiteralError
 pub(crate) fn decode_bytes(raw: &str) -> Result<(Vec<u8>, BytesKind), LiteralError> {
     if let Some(rest) = raw.strip_prefix("br") {
         let (content, hash_count) = raw_content(raw, rest)?;
-        let start = raw.len() - rest.len() + usize::from(hash_count) + 1;
-        check_ascii(content, start)?;
         return Ok((content.as_bytes().to_vec(), BytesKind::Raw { hash_count }));
     }
     let content = delimited(raw, "b\"", '"')?;
@@ -245,7 +245,7 @@ fn text(
     literal: Literal,
     out: &mut impl FnMut(Piece<'_>),
 ) -> Result<(), LiteralError> {
-    if literal.is_bytes() {
+    if literal == Literal::Byte {
         check_ascii(text, offset)?;
     }
     if !text.is_empty() {
@@ -282,7 +282,7 @@ fn escape(s: &str, at: usize, literal: Literal) -> Result<(Piece<'static>, usize
         b'\'' => b'\'',
         b'"' => b'"',
         b'x' => return hex_escape(bytes, at, literal),
-        b'u' if literal.is_bytes() => {
+        b'u' if literal == Literal::Byte => {
             return Err(LiteralError::invalid(
                 "unicode escape in byte literal",
                 at..at + 2,
@@ -478,7 +478,8 @@ mod tests {
             string(r#""\u{D800}""#),
             Err(invalid("invalid unicode code point", 1..9))
         );
-        assert!(decode_bytes(r#"b"\u{41}""#).is_err());
+        // Like upstream `ron`, byte strings take `\u` as UTF-8 bytes; byte literals don't.
+        assert_eq!(decode_bytes(r#"b"\u{41}\u{e9}""#).unwrap().0, b"A\xC3\xA9");
         assert!(decode_byte(r"b'\u{41}'").is_err());
     }
 
@@ -495,12 +496,15 @@ mod tests {
     }
 
     #[test]
-    fn byte_literals_must_be_ascii() {
-        let err = |range| invalid("non-ASCII character in byte literal", range);
-        assert_eq!(decode_bytes("b\"aé\""), Err(err(3..5)));
-        assert_eq!(decode_bytes("br\"aé\""), Err(err(4..6)));
-        assert_eq!(decode_bytes("br#\"é\"#"), Err(err(4..6)));
-        assert_eq!(decode_byte("b'é'"), Err(err(2..4)));
+    fn byte_strings_take_utf8_and_byte_literals_must_be_ascii() {
+        // Matches upstream `ron` 0.12.
+        assert_eq!(decode_bytes("b\"aé\"").unwrap().0, "aé".as_bytes());
+        assert_eq!(decode_bytes("br\"aé\"").unwrap().0, "aé".as_bytes());
+        assert_eq!(decode_bytes("br#\"é\"#").unwrap().0, "é".as_bytes());
+        assert_eq!(
+            decode_byte("b'é'"),
+            Err(invalid("non-ASCII character in byte literal", 2..4))
+        );
         assert_eq!(
             decode_bytes(r##"br#"a"b"#"##).unwrap(),
             (b"a\"b".to_vec(), BytesKind::Raw { hash_count: 1 })

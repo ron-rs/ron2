@@ -33,6 +33,7 @@ impl<'a> AstParser<'a> {
     /// Parse a string, byte string, char or byte literal.
     ///
     /// An invalid escape yields an [`Expr::Error`] whose error points at the escape.
+    #[inline(never)]
     pub(super) fn parse_text_literal(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let tok = self.next_token();
         let span = tok.span;
@@ -222,9 +223,76 @@ mod tests {
     }
 
     #[test]
-    fn escape_error_in_byte_string_points_at_escape() {
-        let (start, end, _) = first_error("[\n  b\"ab\\u{41}\"]");
+    fn escape_error_in_byte_literals_points_at_escape() {
+        let (start, end, _) = first_error("[\n  b\"ab\\q\"]");
         assert_eq!((start, end), (pos(2, 7), pos(2, 9)));
+        let (start, end, _) = first_error("[\n  b'\\u{41}']");
+        assert_eq!((start, end), (pos(2, 5), pos(2, 7)));
+    }
+
+    #[test]
+    fn byte_strings_accept_utf8_like_upstream_ron() {
+        for (source, expected) in [
+            ("b\"é\"", "é".as_bytes()),
+            ("br#\"aé\"#", "aé".as_bytes()),
+            ("b\"\\u{e9}\"", "é".as_bytes()),
+        ] {
+            match parse_document(source).unwrap().value {
+                Some(Expr::Bytes(b)) => assert_eq!(b.value, expected, "{source}"),
+                other => panic!("expected bytes for {source}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn quote_char_without_escape() {
+        // Upstream RON accepts `'''` as the quote character.
+        for source in ["'''", "'\\''"] {
+            match parse_document(source).unwrap().value {
+                Some(Expr::Char(c)) => assert_eq!(c.value, '\'', "{source}"),
+                other => panic!("expected char for {source}, got {other:?}"),
+            }
+        }
+        match parse_document("b'''").unwrap().value {
+            Some(Expr::Byte(b)) => assert_eq!(b.value, b'\''),
+            other => panic!("expected byte, got {other:?}"),
+        }
+        assert!(parse_document("''").is_err());
+    }
+
+    #[test]
+    fn underscore_right_after_decimal_point_is_rejected() {
+        for source in ["1._5", "1._"] {
+            let (_, _, kind) = first_error(source);
+            assert_eq!(kind, ErrorKind::FloatUnderscore, "{source}");
+        }
+        for source in ["1_.5", "1.5_", "1_e3", "1e_3"] {
+            assert!(parse_document(source).is_ok(), "{source}");
+        }
+    }
+
+    #[test]
+    fn invalid_digit_after_valid_digits() {
+        for (source, col, digit) in [
+            ("0b102", 5, '2'),
+            ("0b12", 4, '2'),
+            ("0o79", 4, '9'),
+            ("0b1_2", 5, '2'),
+        ] {
+            let (start, _, kind) = first_error(source);
+            assert_eq!(start, pos(1, col), "{source}");
+            assert_eq!(
+                kind,
+                ErrorKind::InvalidIntegerDigit {
+                    digit,
+                    base: if source.starts_with("0o") { 8 } else { 2 }
+                },
+                "{source}"
+            );
+        }
+        // Letters after valid digits are suffixes or trailing input, as upstream.
+        assert!(parse_document("0b1u8").is_ok());
+        assert_eq!(first_error("0x1g").2, ErrorKind::TrailingCharacters);
     }
 
     #[test]

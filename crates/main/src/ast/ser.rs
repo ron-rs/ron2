@@ -163,6 +163,7 @@ impl<'a, W: Write> AstSerializer<'a, W> {
         if let Some(inner) = &opt.value {
             // Write "Some"
             self.writer.write_str("Some")?;
+            self.write_trivia(&inner.pre_paren)?;
 
             // Write opening paren using span
             let open_text = inner.open_paren.slice(self.source);
@@ -176,6 +177,10 @@ impl<'a, W: Write> AstSerializer<'a, W> {
 
             // Write trailing trivia
             self.write_trivia(&inner.trailing)?;
+            if let Some(comma) = inner.comma {
+                self.writer.write_str(comma.slice(self.source))?;
+                self.write_trivia(&inner.post_comma)?;
+            }
 
             // Write closing paren using span
             let close_text = inner.close_paren.slice(self.source);

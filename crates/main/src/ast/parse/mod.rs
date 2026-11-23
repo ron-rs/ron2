@@ -667,6 +667,29 @@ mod tests {
     }
 
     #[test]
+    fn unit_stores_inner_trivia() {
+        let doc = parse_document("( /* c */ )").unwrap();
+        match doc.value {
+            Some(Expr::Unit(u)) => {
+                assert_eq!(u.inner.comments.len(), 1);
+                assert_eq!(u.inner.comments[0].text, "/* c */");
+                assert_eq!(u.inner.whitespace, "  ");
+            }
+            _ => panic!("expected unit"),
+        }
+    }
+
+    #[test]
+    fn trivia_whitespace_covers_all_whitespace() {
+        // `whitespace` used to hold only the first whitespace run.
+        let doc = parse_document(" \n/* a */\t// b\n  1").unwrap();
+        assert_eq!(doc.leading.whitespace, " \n\t\n  ");
+        assert_eq!(doc.leading.comments.len(), 2);
+        let doc = parse_document("  1").unwrap();
+        assert!(matches!(doc.leading.whitespace, Cow::Borrowed("  ")));
+    }
+
+    #[test]
     fn trailing_comment_is_in_container_trailing() {
         let doc = parse_document("[\n 1,\n 2, // two\n]").unwrap();
         match doc.value {
