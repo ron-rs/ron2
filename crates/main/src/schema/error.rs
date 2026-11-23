@@ -22,6 +22,12 @@ pub enum StorageError {
     NoSchemaDir,
     /// Schema file not found for the given type.
     SchemaNotFound(String),
+    /// The type path is not a `::`-separated list of Rust identifiers, so it
+    /// cannot be mapped to a schema file.
+    InvalidTypePath(String),
+    /// The type has no type path (primitives, std types), so it has no schema
+    /// file of its own.
+    NoTypePath,
 }
 
 impl fmt::Display for StorageError {
@@ -31,6 +37,8 @@ impl fmt::Display for StorageError {
             StorageError::Parse(msg) => write!(f, "parse error: {msg}"),
             StorageError::NoSchemaDir => write!(f, "could not determine schema directory"),
             StorageError::SchemaNotFound(ty) => write!(f, "schema not found for type: {ty}"),
+            StorageError::InvalidTypePath(ty) => write!(f, "invalid type path: {ty}"),
+            StorageError::NoTypePath => write!(f, "type does not support schema storage"),
         }
     }
 }
@@ -74,10 +82,6 @@ impl SchemaError {
         matches!(self, SchemaError::Validation(_))
     }
 
-    // =========================================================================
-    // Convenience constructors for storage errors
-    // =========================================================================
-
     /// Create a schema not found error.
     #[must_use]
     pub fn schema_not_found(type_path: impl Into<String>) -> Self {
@@ -108,9 +112,8 @@ impl From<io::Error> for SchemaError {
     }
 }
 
-impl From<crate::Error> for SchemaError {
-    fn from(e: crate::Error) -> Self {
-        // Wrap as validation error (Error is now ValidationError)
+impl From<ValidationError> for SchemaError {
+    fn from(e: ValidationError) -> Self {
         SchemaError::Validation(Box::new(e))
     }
 }
@@ -123,9 +126,6 @@ impl From<StorageError> for SchemaError {
 
 /// Result type for schema operations.
 pub type Result<T> = core::result::Result<T, SchemaError>;
-
-/// Result type for validation-only operations.
-pub type ValidationResult<T> = core::result::Result<T, ValidationError>;
 
 #[cfg(test)]
 mod tests {

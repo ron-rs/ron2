@@ -486,6 +486,12 @@ pub enum ErrorKind {
     // =========================================================================
     /// Exceeded recursion limit.
     ExceededRecursionLimit,
+
+    // =========================================================================
+    // Schema Errors
+    // =========================================================================
+    /// A schema `TypeRef` could not be resolved, so the value was not checked.
+    UnresolvedTypeRef(String),
 }
 
 impl ErrorKind {
@@ -654,14 +660,7 @@ impl fmt::Display for ErrorKind {
                 if let Some(outer) = outer {
                     write!(f, " in {}", Identifier(outer))?;
                 }
-                write!(
-                    f,
-                    ", {}",
-                    OneOf {
-                        alts: expected,
-                        none: "fields"
-                    }
-                )
+                write!(f, "{}", OneOf(expected))
             }
             ErrorKind::DuplicateField { field, outer } => {
                 write!(f, "Duplicate field {}", Identifier(field))?;
@@ -684,14 +683,7 @@ impl fmt::Display for ErrorKind {
                 if let Some(outer) = outer {
                     write!(f, " in enum {}", Identifier(outer))?;
                 }
-                write!(
-                    f,
-                    ", {}",
-                    OneOf {
-                        alts: expected,
-                        none: "variants"
-                    }
-                )
+                write!(f, "{}", OneOf(expected))
             }
             // Numeric
             ErrorKind::IntegerOutOfBounds { value, target_type } => {
@@ -703,6 +695,11 @@ impl fmt::Display for ErrorKind {
 
             // Limits
             ErrorKind::ExceededRecursionLimit => f.write_str("Exceeded recursion limit"),
+
+            // Schema
+            ErrorKind::UnresolvedTypeRef(path) => {
+                write!(f, "No schema found for type `{path}`; value not checked")
+            }
         }
     }
 }
@@ -769,24 +766,23 @@ impl From<io::Error> for Error {
 // Helper display types
 // =============================================================================
 
-struct OneOf {
-    alts: &'static [&'static str],
-    none: &'static str,
-}
+/// `, expected ...` suffix listing the alternatives. Empty when the
+/// alternatives are unknown (e.g. errors built from a runtime schema).
+struct OneOf(&'static [&'static str]);
 
 impl fmt::Display for OneOf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.alts {
-            [] => write!(f, "there are no {}", self.none),
-            [a1] => write!(f, "expected {} instead", Identifier(a1)),
+        match self.0 {
+            [] => Ok(()),
+            [a1] => write!(f, ", expected {} instead", Identifier(a1)),
             [a1, a2] => write!(
                 f,
-                "expected either {} or {} instead",
+                ", expected either {} or {} instead",
                 Identifier(a1),
                 Identifier(a2)
             ),
             [a1, alts @ .., an] => {
-                write!(f, "expected one of {}", Identifier(a1))?;
+                write!(f, ", expected one of {}", Identifier(a1))?;
                 for alt in alts {
                     write!(f, ", {}", Identifier(alt))?;
                 }

@@ -1,6 +1,10 @@
 use core::fmt;
 
 /// Root schema definition for a Rust type.
+///
+/// The metadata fields (`name`, `deny_unknown_fields`) default to their most
+/// lenient value, so schema files written before they existed still load and
+/// validate without false errors.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "derive", derive(ron2_derive::FromRon, ron2_derive::ToRon))]
 pub struct Schema {
@@ -10,20 +14,30 @@ pub struct Schema {
         ron(default, skip_serializing_if = "Option::is_none")
     )]
     pub doc: Option<String>,
+    /// The name a struct is written with in RON (`Point` in `Point(x: 1)`),
+    /// after `#[ron(rename)]`.
+    ///
+    /// `None` means unknown: validation then accepts any struct name. Unused
+    /// for enums (variants carry their own names) and transparent types.
+    #[cfg_attr(
+        feature = "derive",
+        ron(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub name: Option<String>,
+    /// Whether the type rejects unknown fields (`#[ron(deny_unknown_fields)]`).
+    ///
+    /// Applies to a struct's fields and to the fields of an enum's struct
+    /// variants. When `false`, validation reports unknown fields as warnings.
+    #[cfg_attr(
+        feature = "derive",
+        ron(default, skip_serializing_if = "std::ops::Not::not")
+    )]
+    pub deny_unknown_fields: bool,
     /// The kind of type this schema represents.
     pub kind: TypeKind,
 }
 
 /// Represents all possible Rust types that can be serialized to RON.
-///
-/// # Trait-Based Design
-///
-/// This enum works alongside the trait system in `crate::traits`:
-/// - `List` represents any type implementing `RonList` (`Vec`, `VecDeque`, custom types)
-/// - `Map` represents any type implementing `RonMap` (`HashMap`, `BTreeMap`, custom types)
-///
-/// Custom types implementing these traits will serialize to the same `TypeKind`
-/// variants, allowing the validation and LSP systems to work uniformly.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "derive", derive(ron2_derive::FromRon, ron2_derive::ToRon))]
 pub enum TypeKind {
@@ -50,16 +64,17 @@ pub enum TypeKind {
     // Compound types
     Option(Box<TypeKind>),
 
-    /// List/sequence type - represents any type implementing `RonList`.
-    ///
-    /// This includes `Vec<T>`, `VecDeque<T>`, `HashSet<T>`, `BTreeSet<T>`,
-    /// arrays, and any custom types implementing `RonList`.
+    /// List/sequence type: `Vec<T>`, `VecDeque<T>`, `HashSet<T>`,
+    /// `BTreeSet<T>` and slices.
     List(Box<TypeKind>),
 
-    /// Map/dictionary type - represents any type implementing `RonMap`.
-    ///
-    /// This includes `HashMap<K, V>`, `BTreeMap<K, V>`, and any custom types
-    /// implementing `RonMap`.
+    /// Fixed-length array `[T; N]`: a sequence of exactly `len` elements.
+    Array {
+        element: Box<TypeKind>,
+        len: usize,
+    },
+
+    /// Map/dictionary type: `HashMap<K, V>`, `BTreeMap<K, V>`.
     Map {
         key: Box<TypeKind>,
         value: Box<TypeKind>,
@@ -83,7 +98,9 @@ impl TypeKind {
     #[must_use]
     pub fn inner_type(&self) -> Option<&TypeKind> {
         match self {
-            TypeKind::Option(inner) | TypeKind::List(inner) => Some(inner),
+            TypeKind::Option(inner)
+            | TypeKind::List(inner)
+            | TypeKind::Array { element: inner, .. } => Some(inner),
             _ => None,
         }
     }
@@ -179,6 +196,7 @@ impl fmt::Display for TypeKind {
             TypeKind::Unit => write!(f, "()"),
             TypeKind::Option(inner) => write!(f, "Option<{inner}>"),
             TypeKind::List(inner) => write!(f, "List<{inner}>"),
+            TypeKind::Array { element, len } => write!(f, "[{element}; {len}]"),
             TypeKind::Map { key, value } => write!(f, "Map<{key}, {value}>"),
             TypeKind::Tuple(types) => {
                 write!(f, "(")?;
@@ -258,7 +276,12 @@ impl Schema {
     /// Create a new schema with the given kind.
     #[must_use]
     pub fn new(kind: TypeKind) -> Self {
-        Self { doc: None, kind }
+        Self {
+            doc: None,
+            name: None,
+            deny_unknown_fields: false,
+            kind,
+        }
     }
 
     /// Create a new schema with documentation.
@@ -266,8 +289,22 @@ impl Schema {
     pub fn with_doc(doc: impl Into<String>, kind: TypeKind) -> Self {
         Self {
             doc: Some(doc.into()),
-            kind,
+            ..Self::new(kind)
         }
+    }
+
+    /// Set the name the type is written with in RON.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Mark the type as rejecting unknown fields.
+    #[must_use]
+    pub fn with_deny_unknown_fields(mut self) -> Self {
+        self.deny_unknown_fields = true;
+        self
     }
 }
 
@@ -288,11 +325,8 @@ impl Field {
     #[must_use]
     pub fn optional(name: impl Into<String>, ty: TypeKind) -> Self {
         Self {
-            name: name.into(),
-            ty,
-            doc: None,
             optional: true,
-            flattened: false,
+            ..Self::new(name, ty)
         }
     }
 
@@ -301,11 +335,8 @@ impl Field {
     #[must_use]
     pub fn flattened(name: impl Into<String>, ty: TypeKind) -> Self {
         Self {
-            name: name.into(),
-            ty,
-            doc: None,
-            optional: false,
             flattened: true,
+            ..Self::new(name, ty)
         }
     }
 

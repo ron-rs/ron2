@@ -11,12 +11,19 @@ use std::{env, ffi::OsStr, fs};
 
 use ron2::{
     FromRon,
+    ast::parse_document,
     schema::{
-        Field, SCHEMA_DIR_ENV, Schema, TypeKind, Variant, find_schema_in, read_schema, validate,
-        write_schema,
+        Field, NoResolver, SCHEMA_DIR_ENV, Schema, TypeKind, ValidationError, Variant, find_schema,
+        read_schema, validate, write_schema,
     },
 };
 use serial_test::serial;
+
+/// Parse `src` and validate it against `schema`.
+fn check(src: &str, schema: &Schema) -> Result<(), ValidationError> {
+    let doc = parse_document(src).expect("valid RON");
+    validate(doc.value.as_ref().expect("a value"), schema, &NoResolver)
+}
 
 /// Create a temporary directory for testing.
 fn create_temp_dir() -> tempfile::TempDir {
@@ -69,19 +76,15 @@ fn test_complete_workflow_simple_struct() {
     assert_eq!(schema, loaded_schema);
 
     // Step 4: Validate a RON value against the schema
-    let valid_ron = r#"(username: "alice", port: 8080)"#;
-    let value: ron2::Value = valid_ron.parse::<ron2::Value>().unwrap();
-    assert!(validate(&value, &loaded_schema).is_ok());
+    assert!(check(r#"(username: "alice", port: 8080)"#, &loaded_schema).is_ok());
 
     // Step 5: Validate with optional field
     let valid_ron_with_optional = r#"(username: "bob", port: 9000, debug: true)"#;
-    let value: ron2::Value = valid_ron_with_optional.parse::<ron2::Value>().unwrap();
-    assert!(validate(&value, &loaded_schema).is_ok());
+    assert!(check(valid_ron_with_optional, &loaded_schema).is_ok());
 
     // Step 6: Invalid RON should fail validation
     let invalid_ron = r#"(username: "charlie")"#; // missing required 'port'
-    let value: ron2::Value = invalid_ron.parse::<ron2::Value>().unwrap();
-    assert!(validate(&value, &loaded_schema).is_err());
+    assert!(check(invalid_ron, &loaded_schema).is_err());
 }
 
 #[test]
@@ -125,28 +128,22 @@ fn test_complete_workflow_complex_enum() {
     let loaded_schema = read_schema(&schema_path).unwrap();
 
     // Test unit variant
-    let loading: ron2::Value = r#""Loading""#.parse::<ron2::Value>().unwrap();
-    assert!(validate(&loading, &loaded_schema).is_ok());
+    assert!(check("Loading", &loaded_schema).is_ok());
 
     // Test struct variant with all fields
-    let success: ron2::Value = r#"{ "Success": (data: "hello", metadata: { "key": "value" }) }"#
-        .parse::<ron2::Value>()
-        .unwrap();
-    assert!(validate(&success, &loaded_schema).is_ok());
+    let success = r#"Success(data: "hello", metadata: { "key": "value" })"#;
+    assert!(check(success, &loaded_schema).is_ok());
 
     // Test struct variant with optional field omitted
-    let success_minimal: ron2::Value =
-        r#"{ "Success": (data: "hello") }"#.parse::<ron2::Value>().unwrap();
-    assert!(validate(&success_minimal, &loaded_schema).is_ok());
+    assert!(check(r#"Success(data: "hello")"#, &loaded_schema).is_ok());
 
     // Test error variant
-    let error: ron2::Value =
-        r#"{ "Error": (code: 404, message: "Not found") }"#.parse::<ron2::Value>().unwrap();
-    assert!(validate(&error, &loaded_schema).is_ok());
+    assert!(check(r#"Error(code: 404, message: "Not found")"#, &loaded_schema).is_ok());
 
-    // Test invalid variant
-    let invalid: ron2::Value = r#""Unknown""#.parse::<ron2::Value>().unwrap();
-    assert!(validate(&invalid, &loaded_schema).is_err());
+    // Test invalid variants
+    assert!(check("Unknown", &loaded_schema).is_err());
+    // A string is not an enum variant in RON.
+    assert!(check(r#""Loading""#, &loaded_schema).is_err());
 }
 
 #[test]
@@ -196,16 +193,14 @@ fn test_complete_workflow_nested_structures() {
             "optional_feature": None
         }
     )"#;
-    let value: ron2::Value = valid_config.parse::<ron2::Value>().unwrap();
-    assert!(validate(&value, &loaded_schema).is_ok());
+    assert!(check(valid_config, &loaded_schema).is_ok());
 
     // Minimal valid configuration
     let minimal_config = r#"(
         app_name: "Minimal",
         servers: []
     )"#;
-    let value: ron2::Value = minimal_config.parse::<ron2::Value>().unwrap();
-    assert!(validate(&value, &loaded_schema).is_ok());
+    assert!(check(minimal_config, &loaded_schema).is_ok());
 
     // Invalid: wrong type in nested structure
     let invalid_config = r#"(
@@ -214,8 +209,7 @@ fn test_complete_workflow_nested_structures() {
             (host: "localhost", port: "not a number")
         ]
     )"#;
-    let value: ron2::Value = invalid_config.parse::<ron2::Value>().unwrap();
-    assert!(validate(&value, &loaded_schema).is_err());
+    assert!(check(invalid_config, &loaded_schema).is_err());
 }
 
 // ============================================================================
@@ -229,7 +223,7 @@ fn test_find_schema_in_specific_directory() {
 
     write_schema("test::Type", &schema, Some(temp_dir.path())).unwrap();
 
-    let found = find_schema_in("test::Type", temp_dir.path()).unwrap();
+    let found = find_schema("test::Type", &[temp_dir.path().to_path_buf()]).unwrap();
     assert_eq!(schema, found);
 }
 
@@ -346,9 +340,10 @@ fn test_multiple_schemas_in_project() {
     write_schema("blog::Feed", &feed_schema, Some(temp_dir.path())).unwrap();
 
     // Verify all schemas can be found
-    let found_user = find_schema_in("blog::User", temp_dir.path()).unwrap();
-    let found_post = find_schema_in("blog::Post", temp_dir.path()).unwrap();
-    let found_feed = find_schema_in("blog::Feed", temp_dir.path()).unwrap();
+    let dirs = [temp_dir.path().to_path_buf()];
+    let found_user = find_schema("blog::User", &dirs).unwrap();
+    let found_post = find_schema("blog::Post", &dirs).unwrap();
+    let found_feed = find_schema("blog::Feed", &dirs).unwrap();
 
     assert_eq!(user_schema, found_user);
     assert_eq!(post_schema, found_post);
@@ -356,8 +351,7 @@ fn test_multiple_schemas_in_project() {
 
     // Validate data against schemas
     let user_data = r#"(id: 1, name: "Alice", email: "alice@example.com")"#;
-    let user_value: ron2::Value = user_data.parse::<ron2::Value>().unwrap();
-    assert!(validate(&user_value, &found_user).is_ok());
+    assert!(check(user_data, &found_user).is_ok());
 
     let post_data = r#"(
         id: 1,
@@ -366,8 +360,7 @@ fn test_multiple_schemas_in_project() {
         author_id: 1,
         tags: ["intro", "hello"]
     )"#;
-    let post_value: ron2::Value = post_data.parse::<ron2::Value>().unwrap();
-    assert!(validate(&post_value, &found_post).is_ok());
+    assert!(check(post_data, &found_post).is_ok());
 }
 
 // ============================================================================
@@ -453,7 +446,7 @@ fn test_validation_error_provides_useful_context() {
     });
 
     write_schema("error_test::Type", &schema, Some(temp_dir.path())).unwrap();
-    let loaded = find_schema_in("error_test::Type", temp_dir.path()).unwrap();
+    let loaded = find_schema("error_test::Type", &[temp_dir.path().to_path_buf()]).unwrap();
 
     // Invalid data with error deep in structure
     let invalid_data = r#"(
@@ -462,8 +455,7 @@ fn test_validation_error_provides_useful_context() {
             (id: "not an int", name: "second")
         ]
     )"#;
-    let value: ron2::Value = invalid_data.parse::<ron2::Value>().unwrap();
-    let result = validate(&value, &loaded);
+    let result = check(invalid_data, &loaded);
 
     // Error should provide context about where the error occurred
     let error = result.unwrap_err();

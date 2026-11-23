@@ -154,6 +154,9 @@ impl<'a> LinkResolver<'a> {
         match kind {
             TypeKind::Option(inner) => format!("Option<{}>", self.type_to_markdown(inner, from)),
             TypeKind::List(inner) => format!("List<{}>", self.type_to_markdown(inner, from)),
+            TypeKind::Array { element, len } => {
+                format!("[{}; {len}]", self.type_to_markdown(element, from))
+            }
             TypeKind::Map { key, value } => format!(
                 "Map<{}, {}>",
                 self.type_to_markdown(key, from),

@@ -23,7 +23,7 @@ fn showcase_schemas() -> Vec<DiscoveredSchema> {
         .map(|(type_path, schema)| DiscoveredSchema {
             path: PathBuf::from(format!("{type_path}.schema.ron")),
             type_path,
-            schema,
+            schema: std::sync::Arc::unwrap_or_clone(schema),
         })
         .collect()
 }

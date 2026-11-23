@@ -15,4 +15,4 @@ mod schema_utils;
 pub use completion::provide_completions;
 pub use cursor::{CursorContext, Ident, PathStep};
 pub use document::Document;
-pub use schema_resolver::SchemaResolver;
+pub use schema_resolver::{SchemaLookupError, SchemaResolver};

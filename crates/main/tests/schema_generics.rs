@@ -42,8 +42,8 @@ fn test_write_schemas_for_generic_container() {
 
     let container_path = <GenericContainer<u32> as RonSchemaTrait>::type_path().unwrap();
     let child_path = Child::type_path().unwrap();
-    let container_rel = type_path_to_file_path(container_path);
-    let child_rel = type_path_to_file_path(child_path);
+    let container_rel = type_path_to_file_path(container_path).unwrap();
+    let child_rel = type_path_to_file_path(child_path).unwrap();
 
     assert_eq!(written.len(), 2);
     assert!(written.iter().any(|p| p.ends_with(&container_rel)));

@@ -7,46 +7,35 @@
 //! - Pretty-printing with customizable formatting
 //! - Schema-driven serialization output
 
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{fs, path::Path};
 
 use example_showcase::GameConfig;
 use ron2::{
     FromRon, ToRon,
+    ast::parse_document,
     fmt::FormatConfig,
-    schema::{RonSchema, Schema, SchemaResolver, collect::collect_schemas, validate_with_resolver},
+    schema::{RonSchema, collect::collect_schemas, validate},
 };
-
-struct CatalogResolver {
-    schemas: BTreeMap<String, Schema>,
-}
-
-impl SchemaResolver for CatalogResolver {
-    fn resolve(&self, type_path: &str) -> Option<Schema> {
-        self.schemas.get(type_path).cloned()
-    }
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RON2 Showcase ===\n");
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/game.ron");
     let ron_content = fs::read_to_string(&path)?;
-    let value: ron2::Value = ron_content.parse()?;
+    let document = parse_document(&ron_content)?;
+    let value = document.value.as_ref().ok_or("empty document")?;
 
     println!("1. Loading and validating config...");
 
+    // The catalog holds GameConfig's schema and every schema it references.
     let catalog = collect_schemas::<GameConfig>()?;
     let root_path = GameConfig::type_path().ok_or("missing GameConfig type path")?;
     let root_schema = catalog
         .schemas
         .get(root_path)
-        .ok_or("missing GameConfig schema")?
-        .clone();
-    let resolver = CatalogResolver {
-        schemas: catalog.schemas,
-    };
+        .ok_or("missing GameConfig schema")?;
 
-    validate_with_resolver(&value, &root_schema, &resolver)?;
+    validate(value, root_schema, &catalog)?;
 
     let config: GameConfig = GameConfig::from_ron(&ron_content)?;
 

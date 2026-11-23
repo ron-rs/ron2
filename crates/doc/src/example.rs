@@ -30,6 +30,10 @@ impl Example<'_, '_> {
         match kind {
             TypeKind::Option(inner) => format!("Some({})", self.value(inner, depth, indent)),
             TypeKind::List(inner) => format!("[{}]", self.value(inner, depth, indent)),
+            TypeKind::Array { element, len } => {
+                let element = self.value(element, depth, indent);
+                format!("[{}]", vec![element; *len].join(", "))
+            }
             TypeKind::Map { key, value } => format!(
                 "{{{}: {}}}",
                 self.value(key, depth, indent),
@@ -126,6 +130,9 @@ fn placeholder(kind: &TypeKind, name: &str) -> String {
     match kind {
         TypeKind::Option(_) => "None".to_string(),
         TypeKind::List(_) => "[]".to_string(),
+        TypeKind::Array { element, len } => {
+            format!("[{}]", vec![placeholder(element, name); *len].join(", "))
+        }
         TypeKind::Map { .. } => "{}".to_string(),
         TypeKind::Enum { variants } => match variants.first() {
             Some(Variant {
@@ -200,6 +207,11 @@ mod tests {
             example(TypeKind::List(Box::new(TypeKind::I32)), &[], 2),
             "[0]"
         );
+        let array = TypeKind::Array {
+            element: Box::new(TypeKind::U8),
+            len: 3,
+        };
+        assert_eq!(example(array, &[], 2), "[0, 0, 0]");
     }
 
     #[test]

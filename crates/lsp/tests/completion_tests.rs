@@ -1071,7 +1071,7 @@ mod diagnostic_integration {
         assert_eq!(diag.range.start.line, 6, "Error should be on line 6");
 
         // Verify message is SHORT - no path prefix, just the error
-        assert_eq!(diag.message, "expected integer, found String");
+        assert_eq!(diag.message, "expected u32, found string");
 
         assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
     }

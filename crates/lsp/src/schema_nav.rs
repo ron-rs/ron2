@@ -202,15 +202,17 @@ fn inline_flattened<R: SchemaResolver + ?Sized>(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::sync::Arc;
+
     use ahash::HashMap;
 
     use super::*;
 
     /// An in-memory resolver for tests.
-    pub(crate) struct MapResolver(pub HashMap<String, Schema>);
+    pub(crate) struct MapResolver(pub HashMap<String, Arc<Schema>>);
 
     impl SchemaResolver for MapResolver {
-        fn resolve(&self, type_path: &str) -> Option<Schema> {
+        fn resolve(&self, type_path: &str) -> Option<Arc<Schema>> {
             self.0.get(type_path).cloned()
         }
     }
@@ -219,7 +221,7 @@ pub(crate) mod tests {
         MapResolver(
             schemas
                 .iter()
-                .map(|(path, kind)| ((*path).to_string(), Schema::new(kind.clone())))
+                .map(|(path, kind)| ((*path).to_string(), Arc::new(Schema::new(kind.clone()))))
                 .collect(),
         )
     }

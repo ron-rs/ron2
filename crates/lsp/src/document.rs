@@ -23,10 +23,10 @@ pub struct Document {
     pub type_attr: Option<String>,
     /// Extracted schema attribute (`#![schema = "..."]`).
     pub schema_attr: Option<String>,
-    /// Parsed AST. The parser recovers from errors, so this is always `Some`
-    /// after construction. It is owned so that diagnostics, completion and
-    /// hover share one parse per edit.
-    pub ast: Option<AstDocument<'static>>,
+    /// Parsed AST. The parser recovers from errors, so there always is one.
+    /// It is owned so that diagnostics, completion and hover share one parse
+    /// per edit.
+    pub ast: AstDocument<'static>,
     /// Parse errors (if any parsing failed).
     pub parse_errors: Vec<ParseError>,
     /// Byte offset of the start of each line.
@@ -52,7 +52,8 @@ impl Document {
             version,
             type_attr: None,
             schema_attr: None,
-            ast: None,
+            // Replaced by `update` below.
+            ast: ast::parse_document_lossy("").0.into_owned(),
             parse_errors: Vec::new(),
             line_offsets: Vec::new(),
         };
@@ -165,14 +166,14 @@ impl Document {
                 }
             })
             .collect();
-        self.ast = Some(doc.into_owned());
+        self.ast = doc.into_owned();
     }
 
     /// Get the cursor context at a position (for completion and hover).
     pub fn context_at_position(&self, line: u32, col: u32) -> CursorContext {
-        match (self.position_to_offset(line, col), &self.ast) {
-            (Some(offset), Some(ast)) => cursor::context_at_offset(ast, offset),
-            _ => CursorContext::None,
+        match self.position_to_offset(line, col) {
+            Some(offset) => cursor::context_at_offset(&self.ast, offset),
+            None => CursorContext::None,
         }
     }
 }
