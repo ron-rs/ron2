@@ -5,7 +5,9 @@
 //! - [`format_expr`] formats a single expression, e.g. one built with
 //!   [`value_to_expr`](crate::ast::value_to_expr).
 //! - [`format_expr_at`] formats an expression for a given column and nesting depth,
-//!   to replace one value inside existing text.
+//!   to replace one value inside existing text; [`format_expr_at_indented`] also takes
+//!   the indentation of the value's line, for text not indented in
+//!   [`FormatConfig::indent`] steps.
 //!
 //! [`FormatConfig`] controls indentation, spacing, comment handling and when collections
 //! are written on a single line (see [`Compaction`]).
@@ -315,7 +317,8 @@ pub struct At {
     pub column: usize,
     /// Nesting depth of the value: 0 for a document's root value, 1 for an item of the
     /// root collection, and so on. Lines inside a multiline value are indented by
-    /// `depth + 1` levels, its closing bracket by `depth` levels. The depth also
+    /// `depth + 1` levels, its closing bracket by `depth` levels ([`format_expr_at`];
+    /// [`format_expr_at_indented`] takes the indentation separately). The depth also
     /// selects [`Compaction::compact_from_depth`].
     pub depth: usize,
     /// Width (in characters) of the text that follows the value on the same line, e.g.
@@ -364,6 +367,53 @@ pub fn format_expr_at(expr: &Expr<'_>, config: &FormatConfig, at: At) -> String 
     formatter.continues_line = true;
     formatter.start_column = at.column;
     formatter.indent = at.depth;
+    formatter.expr(expr, at.depth, at.suffix);
+    formatter.out
+}
+
+/// Format a single RON expression as if it were written at `at` on a line indented by
+/// `indent`, for replacing one value inside existing text whose indentation need not be
+/// in [`FormatConfig::indent`] steps (tabs, two spaces, none).
+///
+/// Like [`format_expr_at`], except for the indentation: lines after the first start
+/// with `indent` verbatim, then one [`FormatConfig::indent`] per level inside the
+/// value, so the closing bracket of a multiline value is indented by `indent`.
+/// `at.depth` only selects the depth rules ([`Compaction::compact_from_depth`], and at
+/// depth 0 the multiline root of pretty mode); it does not indent.
+/// [`Compaction::char_limit`] measures the lines as written, `indent` included,
+/// counting characters (a tab counts as 1).
+///
+/// With `indent` set to `at.depth` times [`FormatConfig::indent`], the result is
+/// [`format_expr_at`]'s.
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::parse_document;
+/// use ron2::fmt::{At, FormatConfig, format_expr_at_indented};
+///
+/// let doc = parse_document("Label(text: \"brew\", size: 12)").unwrap();
+/// let expr = doc.value.as_ref().unwrap();
+/// let config = FormatConfig::default().char_limit(30);
+///
+/// // An item of a list whose items are indented by two tabs, followed by `,`.
+/// let at = At { column: 2, depth: 1, suffix: 1 };
+/// assert_eq!(
+///     format_expr_at_indented(expr, &config, at, "\t\t"),
+///     "Label(\n\t\t    text: \"brew\",\n\t\t    size: 12,\n\t\t)"
+/// );
+/// ```
+#[must_use]
+pub fn format_expr_at_indented(
+    expr: &Expr<'_>,
+    config: &FormatConfig,
+    at: At,
+    indent: &str,
+) -> String {
+    let mut formatter = Formatter::new(config);
+    formatter.continues_line = true;
+    formatter.start_column = at.column;
+    formatter.base_indent = indent;
     formatter.expr(expr, at.depth, at.suffix);
     formatter.out
 }
@@ -831,6 +881,9 @@ struct Formatter<'c> {
     /// first line gets no indentation and starts at `start_column`.
     continues_line: bool,
     start_column: usize,
+    /// Written verbatim at the start of every line before the `indent` levels (see
+    /// [`format_expr_at_indented`]).
+    base_indent: &'c str,
     widths: Widths,
 }
 
@@ -845,6 +898,7 @@ impl<'c> Formatter<'c> {
             pending_newline: false,
             continues_line: false,
             start_column: 0,
+            base_indent: "",
             widths: Widths::new(),
         }
     }
@@ -878,6 +932,7 @@ impl<'c> Formatter<'c> {
             self.newline();
         }
         if self.at_line_start() {
+            self.out.push_str(self.base_indent);
             for _ in 0..self.indent {
                 self.out.push_str(&self.config.indent);
             }
@@ -2416,6 +2471,13 @@ mod tests {
             let span = expr.span();
             let expected = &formatted[span.start_offset..span.end_offset];
             assert_eq!(format_expr_at(expr, config, at), expected, "at {at:?}");
+            // In whole indent steps, the indentation given is that of the depth.
+            let indent = config.indent.repeat(at.depth);
+            assert_eq!(
+                format_expr_at_indented(expr, config, at, &indent),
+                expected,
+                "indented at {at:?}"
+            );
             *checked += 1;
             let collection = match Shape::of(expr) {
                 Shape::Collection(c) => c,
@@ -2500,6 +2562,62 @@ mod tests {
             format_expr_at(doc.value.as_ref().unwrap(), &config, at),
             "42"
         );
+    }
+
+    #[test]
+    fn format_expr_at_indented_writes_the_indentation_given() {
+        let doc = parse_document(r#"Row(children: [Label(text: "a"), Label(text: "b")])"#).unwrap();
+        let expr = doc.value.as_ref().unwrap();
+        let config = FormatConfig::default().char_limit(30);
+        for indent in ["\t\t", "  ", ""] {
+            let at = At {
+                column: indent.chars().count(),
+                depth: 1,
+                suffix: 1,
+            };
+            assert_eq!(
+                format_expr_at_indented(expr, &config, at, indent),
+                format!(
+                    "Row(\n{indent}    children: [\n{indent}        Label(text: \"a\"),\n\
+                     {indent}        Label(text: \"b\"),\n{indent}    ],\n{indent})"
+                ),
+                "{indent:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn format_expr_at_indented_measures_lines_with_the_indentation() {
+        // `{indent}    items: [{item}],` ends at column 80 exactly or one past it; a tab
+        // counts as one character.
+        for indent in ["\t\t\t\t\t", "  ", ""] {
+            for overflow in [false, true] {
+                let width = 80 - indent.chars().count() - 14 + usize::from(overflow);
+                let item = format!("\"{}\"", "x".repeat(width - 2));
+                let source = format!("Row(items: [{item}])");
+                let doc = parse_document(&source).unwrap();
+                let at = At {
+                    column: indent.chars().count(),
+                    depth: 1,
+                    suffix: 1,
+                };
+                let items = if overflow {
+                    format!("[\n{indent}        {item},\n{indent}    ]")
+                } else {
+                    format!("[{item}]")
+                };
+                assert_eq!(
+                    format_expr_at_indented(
+                        doc.value.as_ref().unwrap(),
+                        &FormatConfig::default(),
+                        at,
+                        indent
+                    ),
+                    format!("Row(\n{indent}    items: {items},\n{indent})"),
+                    "{indent:?}, overflow {overflow}"
+                );
+            }
+        }
     }
 
     #[test]
