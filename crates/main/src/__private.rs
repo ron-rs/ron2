@@ -6,8 +6,8 @@
 use alloc::{borrow::Cow, format, string::ToString, vec::Vec};
 
 use crate::{
-    ast::{Expr, SeqItem, StructBody, StructExpr, TupleElement},
-    convert::{AstMapAccess, FieldNames, FromRon, expr_type_name},
+    ast::{Expr, SeqItem, StructBody, StructExpr, TupleElement, synthetic_option},
+    convert::{AstMapAccess, FieldNames, FromRon, ToRon, expr_type_name},
     error::{Error, ErrorKind, Result},
     schema::{Field, TypeKind},
 };
@@ -464,4 +464,49 @@ pub fn read_explicit_or<T: ExplicitOption>(
     Ok(access
         .optional::<Explicit<T>>(name)?
         .map_or_else(default, |e| e.0))
+}
+
+/// Field types allowed with `#[ron(implicit_some)]`: options whose `Some(x)`
+/// is written as bare `x`.
+#[diagnostic::on_unimplemented(
+    message = "`#[ron(implicit_some)]` requires an `Option<T>` field, but this field is `{Self}`",
+    label = "not an `Option`"
+)]
+pub trait ImplicitSome {
+    /// Write the value, `Some(x)` as bare `x` where that reads back the same.
+    fn to_implicit_some(&self) -> Result<Expr<'static>>;
+}
+
+impl<T: ToRon> ImplicitSome for Option<T> {
+    fn to_implicit_some(&self) -> Result<Expr<'static>> {
+        match self {
+            None => Ok(synthetic_option(None)),
+            Some(value) => {
+                let expr = value.to_ast()?;
+                Ok(if reads_as_option(&expr) {
+                    synthetic_option(Some(expr))
+                } else {
+                    expr
+                })
+            }
+        }
+    }
+}
+
+/// Whether `expr`, written without `Some(..)` around it, could read back as
+/// an option rather than as the inner value: an option itself, or a struct
+/// named `None` or `Some`. ron2 writes such a struct name as `r#None`, which
+/// reads back as a struct, but other readers and hand-built ASTs may not, so
+/// those keep the wrapper too.
+fn reads_as_option(expr: &Expr<'_>) -> bool {
+    match expr {
+        Expr::Option(_) => true,
+        Expr::Struct(s) => matches!(s.name.name.as_ref(), "None" | "Some"),
+        _ => false,
+    }
+}
+
+/// Write an `#[ron(implicit_some)]` field.
+pub fn implicit_some<T: ImplicitSome>(value: &T) -> Result<Expr<'static>> {
+    value.to_implicit_some()
 }

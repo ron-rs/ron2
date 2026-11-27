@@ -1,0 +1,29 @@
+error: #[ron(implicit_some)] cannot be combined with #[ron(explicit)]
+ --> tests/ui/implicit_some_conflicts.rs:3:11
+  |
+3 |     #[ron(implicit_some, explicit)]
+  |           ^^^^^^^^^^^^^
+
+error: #[ron(implicit_some)] cannot be combined with #[ron(skip)]
+ --> tests/ui/implicit_some_conflicts.rs:5:17
+  |
+5 |     #[ron(skip, implicit_some)]
+  |                 ^^^^^^^^^^^^^
+
+error: #[ron(implicit_some)] cannot be combined with #[ron(skip_serializing)]
+ --> tests/ui/implicit_some_conflicts.rs:7:29
+  |
+7 |     #[ron(skip_serializing, implicit_some)]
+  |                             ^^^^^^^^^^^^^
+
+error: #[ron(implicit_some)] cannot be combined with #[ron(flatten)]
+ --> tests/ui/implicit_some_conflicts.rs:9:20
+  |
+9 |     #[ron(flatten, implicit_some)]
+  |                    ^^^^^^^^^^^^^
+
+error: tuple fields only support #[ron(skip)] and #[ron(skip, default = "..")]
+  --> tests/ui/implicit_some_conflicts.rs:19:25
+   |
+19 | struct TupleField(#[ron(implicit_some)] Option<u32>);
+   |                         ^^^^^^^^^^^^^

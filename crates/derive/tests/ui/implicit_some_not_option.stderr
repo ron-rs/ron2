@@ -1,0 +1,17 @@
+error[E0277]: `#[ron(implicit_some)]` requires an `Option<T>` field, but this field is `u32`
+ --> tests/ui/implicit_some_not_option.rs:4:12
+  |
+4 |     value: u32,
+  |            ^^^ not an `Option`
+  |
+  = help: the trait `ron2::__private::ImplicitSome` is not implemented for `u32`
+help: the trait `ron2::__private::ImplicitSome` is implemented for `std::option::Option<T>`
+ --> $WORKSPACE/crates/main/src/__private.rs
+  |
+  | impl<T: ToRon> ImplicitSome for Option<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `ron2::__private::implicit_some`
+ --> $WORKSPACE/crates/main/src/__private.rs
+  |
+  | pub fn implicit_some<T: ImplicitSome>(value: &T) -> Result<Expr<'static>> {
+  |                         ^^^^^^^^^^^^ required by this bound in `implicit_some`

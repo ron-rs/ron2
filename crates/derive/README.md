@@ -79,6 +79,7 @@ Named fields only; tuple fields allow just `skip` and `skip, default = "path"`.
 | `flatten` | Flatten nested struct (or `Option`, or map as catch-all) into parent |
 | `skip_serializing_if = "fn"` | Skip if predicate returns true |
 | `explicit` | Require explicit `Some(...)` or `None` |
+| `implicit_some` | Write `Some(x)` as bare `x` (`Option` fields) |
 | `opt` | Default if missing, skip if equals default |
 
 ## Variant Attributes
@@ -122,10 +123,37 @@ struct Config {
 
 ```ron
 (value: Some(Some(true)))  // ok
+(value: Some(true))        // ok - only the outer Option is explicit
 (value: Some(None))        // ok
 (value: None)              // ok
 (value: true)              // ERROR - bare value not allowed
 ```
+
+### Writing Bare Values (`#[ron(implicit_some)]`)
+
+`ToRon` writes `Some(x)` as `Some(x)` by default. With `#[ron(implicit_some)]`
+it writes bare `x`. Reading is unchanged (both forms are accepted), and `None`
+is still written unless `opt` or `skip_serializing_if` skips it. This suits a
+field that changed from `T` to `Option<T>`: with `opt`, existing files keep
+their text.
+
+```rust
+#[derive(Ron, Default, PartialEq)]
+struct Style {
+    #[ron(opt, implicit_some)]
+    font_size: Option<u32>,
+}
+```
+
+```ron
+(font_size: 12)  // Some(12)
+()               // None
+```
+
+The wrapper is kept where the bare value would read back as an option: an
+inner option (`Some(None)`, `Some(Some(1))`) or a struct named `None` or
+`Some`. The attribute requires an `Option<T>` field and cannot be combined
+with `explicit`, `skip`, `skip_serializing` or `flatten`.
 
 ### Flattened Option Fields
 

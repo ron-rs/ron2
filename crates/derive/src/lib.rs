@@ -58,13 +58,33 @@
 //!   (sharing a field name with it is a compile error)
 //! - `#[ron(skip_serializing_if = "path::to::fn")]` - Skip if the predicate returns true
 //! - `#[ron(explicit)]` - Require explicit `Some(...)` or `None` for an `Option` field
+//! - `#[ron(implicit_some)]` - Write `Some(x)` of an `Option` field as bare `x`
 //! - `#[ron(opt)]` - `default`, and skip serialization when equal to the default
 //!
 //! # Extension Behavior
 //!
 //! `Option<T>` fields accept bare values (`name: "Alice"` means
-//! `Some("Alice")`) unless marked `#[ron(explicit)]`. Transparent newtypes
+//! `Some("Alice")`) unless marked `#[ron(explicit)]`. They are written as
+//! `Some(..)`, or bare with `#[ron(implicit_some)]`; the wrapper stays where
+//! the bare value would read back as an option (`Some(None)`, or a struct
+//! named `None` or `Some`). Transparent newtypes
 //! (`#[ron(transparent)] struct UserId(u64);`) serialize as their inner value.
+//!
+//! ```
+//! use ron2::{FromRon, Ron, ToRon, fmt::FormatConfig};
+//!
+//! #[derive(Ron, Debug, Default, PartialEq)]
+//! struct Style {
+//!     #[ron(opt, implicit_some)]
+//!     font_size: Option<u32>,
+//! }
+//!
+//! let style = Style { font_size: Some(12) };
+//! let text = style.to_ron_with(&FormatConfig::minimal()).unwrap();
+//! assert_eq!(text, "Style(font_size:12)");
+//! assert_eq!(Style::from_ron(&text).unwrap(), style);
+//! assert_eq!(Style::default().to_ron_with(&FormatConfig::minimal()).unwrap(), "Style()");
+//! ```
 
 mod ast;
 mod attr;

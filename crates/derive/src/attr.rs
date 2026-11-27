@@ -257,6 +257,8 @@ pub struct FieldAttrs {
     pub flatten: Option<Span>,
     /// Require `Some(..)`/`None` for an `Option` field.
     pub explicit: Option<Span>,
+    /// Write `Some(x)` of an `Option` field as bare `x`.
+    pub implicit_some: Option<Span>,
     /// `default` plus "skip serializing when equal to the default".
     pub opt: Option<Span>,
 }
@@ -280,6 +282,7 @@ impl FieldAttrs {
             }
             "flatten" => set_flag(&mut out.flatten, &meta),
             "explicit" => set_flag(&mut out.explicit, &meta),
+            "implicit_some" => set_flag(&mut out.implicit_some, &meta),
             "opt" => set_flag(&mut out.opt, &meta),
             _ => Err(unknown(
                 &meta,
@@ -292,6 +295,7 @@ impl FieldAttrs {
                     "default",
                     "flatten",
                     "explicit",
+                    "implicit_some",
                     "opt",
                 ],
             )),
@@ -310,6 +314,7 @@ impl FieldAttrs {
             self.default.as_ref().map(|s| s.span),
             self.flatten,
             self.explicit,
+            self.implicit_some,
             self.opt,
         ]
         .into_iter()

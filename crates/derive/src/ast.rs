@@ -403,6 +403,7 @@ fn validate_tuple_field(field: &Field<'_>, errors: &mut Errors) {
         a.skip_serializing_if.as_ref().map(|s| s.span),
         a.flatten,
         a.explicit,
+        a.implicit_some,
         a.opt,
     ];
     for span in unsupported.into_iter().flatten() {
@@ -452,6 +453,15 @@ fn validate_field(field: &Field<'_>, errors: &mut Errors) {
         ("flatten", a.flatten, "explicit", a.explicit),
         ("flatten", a.flatten, "opt", a.opt),
         ("flatten", a.flatten, "skip_serializing_if", skip_if),
+        ("skip", a.skip, "implicit_some", a.implicit_some),
+        (
+            "skip_serializing",
+            a.skip_serializing,
+            "implicit_some",
+            a.implicit_some,
+        ),
+        ("flatten", a.flatten, "implicit_some", a.implicit_some),
+        ("explicit", a.explicit, "implicit_some", a.implicit_some),
     ];
     for (first, first_span, second, second_span) in conflicts {
         if let (Some(_), Some(span)) = (first_span, second_span) {

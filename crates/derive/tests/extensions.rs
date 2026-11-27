@@ -4,6 +4,7 @@
 //! - `#[ron(transparent)]` - Serialize/deserialize as the single inner field
 //! - `#[ron(explicit)]` - Require explicit Some(...) or None for Option fields
 //! - Implicit Some (default) - Option fields accept bare values
+//!   (writing them bare, `#[ron(implicit_some)]`, is in `implicit_some.rs`)
 
 #![allow(dead_code)]
 

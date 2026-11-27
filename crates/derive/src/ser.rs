@@ -202,11 +202,13 @@ fn push_fields<'f, 'a: 'f>(
             continue;
         }
         let name = &field.name;
+        let ast = if field.attrs.implicit_some.is_some() {
+            quote_spanned!(span=> ::ron2::__private::implicit_some::<#ty>(#value)?)
+        } else {
+            quote_spanned!(span=> ::ron2::ToRon::to_ast(#value)?)
+        };
         let push = quote_spanned! {span=>
-            __fields.push((
-                ::std::borrow::Cow::Borrowed(#name),
-                ::ron2::ToRon::to_ast(#value)?,
-            ));
+            __fields.push((::std::borrow::Cow::Borrowed(#name), #ast));
         };
         pushes.push(if field.attrs.opt.is_some() {
             quote_spanned! {span=>
