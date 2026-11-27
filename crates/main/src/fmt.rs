@@ -4,6 +4,8 @@
 //!   trailing newline (in pretty mode).
 //! - [`format_expr`] formats a single expression, e.g. one built with
 //!   [`value_to_expr`](crate::ast::value_to_expr).
+//! - [`format_expr_at`] formats an expression for a given column and nesting depth,
+//!   to replace one value inside existing text.
 //!
 //! [`FormatConfig`] controls indentation, spacing, comment handling and when collections
 //! are written on a single line (see [`Compaction`]).
@@ -302,6 +304,67 @@ pub fn format_document(doc: &Document<'_>, config: &FormatConfig) -> String {
 pub fn format_expr(expr: &Expr<'_>, config: &FormatConfig) -> String {
     let mut formatter = Formatter::new(config);
     formatter.expr(expr, 0, 0);
+    formatter.out
+}
+
+/// Where a value formatted with [`format_expr_at`] is placed in the surrounding text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct At {
+    /// Column (in characters) at which the value starts, after the text before it on
+    /// its line, e.g. after `text: `.
+    pub column: usize,
+    /// Nesting depth of the value: 0 for a document's root value, 1 for an item of the
+    /// root collection, and so on. Lines inside a multiline value are indented by
+    /// `depth + 1` levels, its closing bracket by `depth` levels. The depth also
+    /// selects [`Compaction::compact_from_depth`].
+    pub depth: usize,
+    /// Width (in characters) of the text that follows the value on the same line, e.g.
+    /// 1 for the `,` after an item or 13 for `, size: 12)`.
+    pub suffix: usize,
+}
+
+/// Format a single RON expression as if it were written at `at`, for replacing one
+/// value inside existing text.
+///
+/// A collection stays on one line if `at.column`, its width and `at.suffix` together
+/// fit within [`Compaction::char_limit`]; otherwise it is written multiline, indented
+/// for `at.depth`. The first line has no indentation (the caller has written the
+/// text before the value), so the result can be inserted as is.
+///
+/// The result is what [`format_document`] writes for the value at that place when
+/// the collections around it are multiline. Rules of an enclosing collection are not
+/// known here: under [`Compaction::compact_types`], a value inside a collection whose
+/// type is compacted is written on one line by [`format_document`], but by this
+/// function only if its own type is compacted or its line fits.
+///
+/// # Example
+///
+/// ```
+/// use ron2::ast::parse_document;
+/// use ron2::fmt::{At, FormatConfig, format_expr_at};
+///
+/// let doc = parse_document("Bind(\"brew_target\")").unwrap();
+/// let expr = doc.value.as_ref().unwrap();
+/// let config = FormatConfig::default();
+///
+/// // After `Label(text: ` at column 56, followed by `)`: the line fits.
+/// let at = At { column: 56, depth: 1, suffix: 1 };
+/// assert_eq!(format_expr_at(expr, &config, at), "Bind(\"brew_target\")");
+///
+/// // At column 70 it does not.
+/// let at = At { column: 70, depth: 1, suffix: 1 };
+/// assert_eq!(
+///     format_expr_at(expr, &config, at),
+///     "Bind(\n        \"brew_target\",\n    )"
+/// );
+/// ```
+#[must_use]
+pub fn format_expr_at(expr: &Expr<'_>, config: &FormatConfig, at: At) -> String {
+    let mut formatter = Formatter::new(config);
+    formatter.continues_line = true;
+    formatter.start_column = at.column;
+    formatter.indent = at.depth;
+    formatter.expr(expr, at.depth, at.suffix);
     formatter.out
 }
 
@@ -764,6 +827,10 @@ struct Formatter<'c> {
     pending_space: bool,
     /// The current line is finished (it ends in a comment); the next token starts a new line.
     pending_newline: bool,
+    /// The output continues a line the caller has already started (see [`At`]): the
+    /// first line gets no indentation and starts at `start_column`.
+    continues_line: bool,
+    start_column: usize,
     widths: Widths,
 }
 
@@ -776,8 +843,15 @@ impl<'c> Formatter<'c> {
             line_start: 0,
             pending_space: false,
             pending_newline: false,
+            continues_line: false,
+            start_column: 0,
             widths: Widths::new(),
         }
+    }
+
+    /// Whether nothing has been written on the current line yet.
+    fn at_line_start(&self) -> bool {
+        self.out.len() == self.line_start && !(self.continues_line && self.line_start == 0)
     }
 
     // ------------------------------------------------------------------------
@@ -793,7 +867,7 @@ impl<'c> Formatter<'c> {
 
     /// Starts a new line unless the current one is still empty.
     fn ensure_line_start(&mut self) {
-        if self.out.len() > self.line_start {
+        if !self.at_line_start() {
             self.newline();
         }
     }
@@ -803,7 +877,7 @@ impl<'c> Formatter<'c> {
         if self.pending_newline {
             self.newline();
         }
-        if self.out.len() == self.line_start {
+        if self.at_line_start() {
             for _ in 0..self.indent {
                 self.out.push_str(&self.config.indent);
             }
@@ -821,10 +895,15 @@ impl<'c> Formatter<'c> {
     /// Current column in characters. Searches for the last newline rather than using
     /// `line_start`, because multi-line raw strings and block comments contain newlines.
     fn column(&self) -> usize {
-        let line_start = self.out.rfind('\n').map_or(0, |newline| newline + 1);
-        self.out
-            .get(line_start..)
-            .map_or(0, |line| line.chars().count())
+        let (line_start, start_column) = match self.out.rfind('\n') {
+            Some(newline) => (newline + 1, 0),
+            None => (0, self.start_column),
+        };
+        start_column
+            + self
+                .out
+                .get(line_start..)
+                .map_or(0, |line| line.chars().count())
     }
 
     // ------------------------------------------------------------------------
@@ -2317,6 +2396,124 @@ mod tests {
         assert_eq!(
             format_expr(&expr, &FormatConfig::minimal()),
             "r#None(r#x-y:1)"
+        );
+    }
+
+    // =========================================================================
+    // Formatting at a position
+    // =========================================================================
+
+    /// Checks that `format_expr_at` reproduces every value of `formatted` (the output of
+    /// `format_document`) that lies in a multiline collection, at its place there.
+    fn check_values_at(formatted: &str, config: &FormatConfig) {
+        fn walk(
+            expr: &Expr<'_>,
+            at: At,
+            formatted: &str,
+            config: &FormatConfig,
+            checked: &mut usize,
+        ) {
+            let span = expr.span();
+            let expected = &formatted[span.start_offset..span.end_offset];
+            assert_eq!(format_expr_at(expr, config, at), expected, "at {at:?}");
+            *checked += 1;
+            let collection = match Shape::of(expr) {
+                Shape::Collection(c) => c,
+                Shape::Named(StructExpr {
+                    body: Some(body), ..
+                }) => Collection::of_body(body),
+                _ => return,
+            };
+            if !expected.contains('\n') {
+                return;
+            }
+            for item in collection.items.iter() {
+                let column = item.value.span().start.col - 1;
+                let at = At {
+                    column,
+                    depth: at.depth + 1,
+                    suffix: 1,
+                };
+                walk(item.value, at, formatted, config, checked);
+            }
+        }
+
+        let doc = parse_document(formatted).unwrap();
+        let value = doc.value.as_ref().unwrap();
+        let mut checked = 0;
+        walk(value, At::default(), formatted, config, &mut checked);
+        assert!(checked > 3, "only {checked} values checked");
+    }
+
+    #[test]
+    fn format_expr_at_matches_format_document() {
+        let source = r#"Window(
+            title: "Brew", widgets: [Label(text: Bind("brew_target"), size: 12),
+            Row(children: [Button(label: "start", on_click: Start), Button(label: "stop", on_click: Stop)]),
+            {"a": [1, 2, 3], "b": (x: 1.5, y: Some((a: 1, b: [true, false, true, false, true])))}],
+        )"#;
+        for limit in [20, 40, 60, 80, 100] {
+            let config = FormatConfig::default().char_limit(limit);
+            check_values_at(&format_with(source, &config), &config);
+            let config = config.indent("  ");
+            check_values_at(&format_with(source, &config), &config);
+        }
+        let config = FormatConfig::default().compact_from_depth(3);
+        check_values_at(&format_with(source, &config), &config);
+    }
+
+    #[test]
+    fn format_expr_at_measures_the_real_line() {
+        let doc = parse_document(r#"Bind("brew_target")"#).unwrap();
+        let expr = doc.value.as_ref().unwrap();
+        let config = FormatConfig::default();
+        // 56 + 19 + 1 = 76 characters fit.
+        let at = At {
+            column: 56,
+            depth: 2,
+            suffix: 1,
+        };
+        assert_eq!(format_expr_at(expr, &config, at), r#"Bind("brew_target")"#);
+        // A suffix that ends the line past 80 characters splits the value.
+        let at = At {
+            column: 56,
+            depth: 2,
+            suffix: 6,
+        };
+        assert_eq!(
+            format_expr_at(expr, &config, at),
+            "Bind(\n            \"brew_target\",\n        )"
+        );
+        // At column 0 and depth 0 it is a document's root value: multiline.
+        assert_eq!(
+            format_expr_at(expr, &config, At::default()),
+            "Bind(\n    \"brew_target\",\n)"
+        );
+        // Scalars are unchanged.
+        let doc = parse_document("42").unwrap();
+        let at = At {
+            column: 79,
+            depth: 1,
+            suffix: 10,
+        };
+        assert_eq!(
+            format_expr_at(doc.value.as_ref().unwrap(), &config, at),
+            "42"
+        );
+    }
+
+    #[test]
+    fn format_expr_at_line_comment() {
+        // A line comment forces multiline; the first line still gets no indentation.
+        let doc = parse_document("[1, // one\n 2]").unwrap();
+        let at = At {
+            column: 10,
+            depth: 1,
+            suffix: 1,
+        };
+        assert_eq!(
+            format_expr_at(doc.value.as_ref().unwrap(), &FormatConfig::default(), at),
+            "[\n        1, // one\n        2,\n    ]"
         );
     }
 }
