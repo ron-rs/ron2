@@ -205,21 +205,21 @@ fn unresolved_type_refs_are_reported_without_a_resolver() {
         [
             (
                 Severity::Warning,
-                "1:10-1:16: in field 'shared': No schema found for type \
-                 `schema_metadata::Named`; value not checked"
+                "1:10-1:16: No schema found for type \
+                 `schema_metadata::Named`; value not checked (in field 'shared')"
                     .to_string()
             ),
             (
                 Severity::Warning,
-                "1:27-1:33: in field 'generic': No schema found for type \
-                 `schema_metadata::Gen<u8>`; value not checked"
+                "1:27-1:33: No schema found for type \
+                 `schema_metadata::Gen<u8>`; value not checked (in field 'generic')"
                     .to_string()
             ),
             (
                 Severity::Warning,
-                "1:43-1:59: in field 'nested': No schema found for type \
+                "1:43-1:59: No schema found for type \
                  `schema_metadata::Gen<schema_metadata::Gen<schema_metadata::Named>>`; \
-                 value not checked"
+                 value not checked (in field 'nested')"
                     .to_string()
             ),
         ]

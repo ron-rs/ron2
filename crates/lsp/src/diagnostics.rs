@@ -163,7 +163,7 @@ mod tests {
         // The first error points at `invalid`, which has no `:` after it.
         assert_eq!(
             diagnostics[0].message,
-            "Expected `:` after field name in struct field"
+            "Expected `:` after field name `invalid`"
         );
         assert_eq!(
             diagnostics[0].range,

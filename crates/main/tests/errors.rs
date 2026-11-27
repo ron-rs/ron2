@@ -2,7 +2,10 @@
 //!
 //! These tests verify that invalid RON input produces appropriate errors.
 
-use ron2::{Value, error::ErrorKind};
+use ron2::{
+    Value,
+    error::{ErrorKind, Position},
+};
 
 // =============================================================================
 // Syntax Errors
@@ -13,9 +16,10 @@ fn error_unclosed_brace() {
     let result: Result<Value, _> = "{ \"a\": 1".parse();
     assert_eq!(
         result.unwrap_err().kind(),
-        &ErrorKind::Expected {
-            expected: "closing `}`".into(),
-            context: Some("map"),
+        &ErrorKind::Unclosed {
+            open: "{".into(),
+            close: '}',
+            opened_at: Position { line: 1, col: 1 },
         }
     );
 }
@@ -25,9 +29,10 @@ fn error_unclosed_paren() {
     let result: Result<Value, _> = "(1, 2".parse();
     assert_eq!(
         result.unwrap_err().kind(),
-        &ErrorKind::Expected {
-            expected: "closing `)`".into(),
-            context: Some("tuple"),
+        &ErrorKind::Unclosed {
+            open: "(".into(),
+            close: ')',
+            opened_at: Position { line: 1, col: 1 },
         }
     );
 }
@@ -215,11 +220,8 @@ fn error_seq_missing_value() {
 fn error_named_struct_missing_colon() {
     let result: Result<Value, _> = "Point(x 1, y: 2)".parse();
     assert_eq!(
-        result.unwrap_err().kind(),
-        &ErrorKind::Expected {
-            expected: "comma".into(),
-            context: Some("tuple"),
-        }
+        result.unwrap_err().to_string(),
+        "1:7-1:8: Expected `:` after field name `x`"
     );
 }
 
@@ -318,4 +320,52 @@ fn error_multiline_position() {
     let msg = format!("{err}");
     // Should show position beyond line 1
     assert_eq!(msg, "5:1: Unexpected end of RON");
+}
+
+// =============================================================================
+// Messages for common mistakes
+// =============================================================================
+
+fn message(source: &str) -> String {
+    source.parse::<Value>().unwrap_err().to_string()
+}
+
+#[test]
+fn missing_colon_after_first_field_name() {
+    assert_eq!(
+        message(r#"Field(name "x")"#),
+        "1:7-1:11: Expected `:` after field name `name`"
+    );
+    assert_eq!(
+        message("Definitions(classes ["),
+        "1:13-1:20: Expected `:` after field name `classes`"
+    );
+    // Later fields of a struct name the field too.
+    assert_eq!(
+        message("Point(x: 1, y 2)"),
+        "1:13-1:14: Expected `:` after field name `y`"
+    );
+    // After a value that is not a bare identifier, a comma is missing.
+    assert_eq!(message("Pair(1 2)"), "1:8-1:9: Expected comma in tuple");
+    assert_eq!(message("(a, b c)"), "1:7-1:8: Expected comma in tuple");
+}
+
+#[test]
+fn unclosed_collection_names_its_opener() {
+    assert_eq!(
+        message("Definitions("),
+        "1:13: Expected closing `)` for `Definitions(` opened at 1:12"
+    );
+    assert_eq!(
+        message("Definitions(\n    classes: [\n        Class(name: \"a\")\n"),
+        "4:1: Expected closing `]` for `[` opened at 2:14"
+    );
+    assert_eq!(
+        message("Some(1"),
+        "1:7: Expected closing `)` for `Some(` opened at 1:5"
+    );
+    assert_eq!(
+        message("{\"a\": 1"),
+        "1:8: Expected closing `}` for `{` opened at 1:1"
+    );
 }

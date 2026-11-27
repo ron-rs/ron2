@@ -477,8 +477,8 @@ fn nested_struct_errors_have_paths() {
     assert_eq!(found.len(), 1);
     assert_eq!(spanned(src, &found[0]), "-1");
     assert_eq!(
-        found[0].to_string().split(": ").nth(1),
-        Some("in field 'server' -> field 'ports' -> element 1")
+        found[0].to_string().split(" (").nth(1),
+        Some("in field 'server' -> field 'ports' -> element 1)")
     );
 }
 

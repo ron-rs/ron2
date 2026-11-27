@@ -18,7 +18,7 @@
 //! assert_eq!(parsed, vec![1, 2, 3]);
 //!
 //! let err = Vec::<i32>::from_ron("[1, \"two\"]").unwrap_err();
-//! assert_eq!(err.to_string(), "1:5-1:10: in element 1: expected i32 but found string");
+//! assert_eq!(err.to_string(), "1:5-1:10: expected i32 but found string (in element 1)");
 //! ```
 
 mod impls_collection;
@@ -758,7 +758,7 @@ mod tests {
         assert!(err.span().is_synthetic());
         assert_eq!(
             err.to_string(),
-            "in element 2: expected i32 but found string"
+            "expected i32 but found string (in element 2)"
         );
     }
 

@@ -2,13 +2,14 @@
 //! all parsing submodules, plus the comma-separated list loop used by every
 //! container.
 
-use alloc::{borrow::Cow, vec::Vec};
+use alloc::{borrow::Cow, format, string::ToString, vec::Vec};
 use core::{mem, ops::Range};
 
 use super::AstParser;
 use crate::{
     ast::{
-        Comment, CommentKind, ErrorExpr, Expr, MapEntry, SeqItem, StructField, Trivia, TupleElement,
+        Comment, CommentKind, ErrorExpr, Expr, Ident, MapEntry, SeqItem, StructField, Trivia,
+        TupleElement,
     },
     error::{Error, ErrorKind, Span},
     token::{LexError, Token, TokenKind},
@@ -48,12 +49,35 @@ impl Delim {
         }
     }
 
-    fn expected_closer(self) -> &'static str {
+    fn open_char(self) -> char {
         match self {
-            Self::Paren => "closing `)`",
-            Self::Bracket => "closing `]`",
-            Self::Brace => "closing `}`",
+            Self::Paren => '(',
+            Self::Bracket => '[',
+            Self::Brace => '{',
         }
+    }
+
+    fn close_char(self) -> char {
+        match self {
+            Self::Paren => ')',
+            Self::Bracket => ']',
+            Self::Brace => '}',
+        }
+    }
+}
+
+/// The opening delimiter of a container, for reporting a missing closer.
+#[derive(Clone, Copy)]
+pub(super) struct Opener<'x> {
+    /// The struct name before the delimiter (`""` for anonymous containers).
+    pub(super) name: &'x str,
+    /// The span of the delimiter.
+    pub(super) span: Span,
+}
+
+impl Opener<'_> {
+    pub(super) fn anonymous(span: Span) -> Self {
+        Self { name: "", span }
     }
 }
 
@@ -61,6 +85,12 @@ impl Delim {
 /// filled in by [`AstParser::parse_list`].
 pub(super) trait ListItem<'a> {
     fn set_tail(&mut self, trailing: Trivia<'a>, comma: Option<Span>);
+
+    /// The identifier this item consists of, if a missing `:` after it would make it
+    /// a field name: a bare identifier as the first element of a tuple.
+    fn bare_ident(&self) -> Option<&Ident<'a>> {
+        None
+    }
 }
 
 macro_rules! impl_list_item {
@@ -74,7 +104,32 @@ macro_rules! impl_list_item {
     )*};
 }
 
-impl_list_item!(SeqItem, MapEntry, TupleElement, StructField);
+impl_list_item!(SeqItem, MapEntry, StructField);
+
+impl<'a> ListItem<'a> for TupleElement<'a> {
+    fn set_tail(&mut self, trailing: Trivia<'a>, comma: Option<Span>) {
+        self.trailing = trailing;
+        self.comma = comma;
+    }
+
+    fn bare_ident(&self) -> Option<&Ident<'a>> {
+        match &self.expr {
+            Expr::Struct(s) if s.body.is_none() => Some(&s.name),
+            _ => None,
+        }
+    }
+}
+
+/// The error for a field name without `:` after it.
+pub(super) fn expected_colon_after(name: &Ident<'_>) -> Error {
+    Error::with_span(
+        ErrorKind::Expected {
+            expected: Cow::Owned(format!("`:` after field name `{}`", name.name)),
+            context: None,
+        },
+        name.span,
+    )
+}
 
 /// The parsed contents of a delimited list.
 pub(super) struct List<'a, T> {
@@ -363,6 +418,7 @@ impl<'a> AstParser<'a> {
     pub(super) fn parse_list<T: ListItem<'a>>(
         &mut self,
         delim: Delim,
+        opener: Opener<'_>,
         context: &'static str,
         errors: &mut Vec<Error>,
         mut parse_item: impl FnMut(&mut Self, Trivia<'a>, &mut Vec<Error>) -> T,
@@ -393,15 +449,23 @@ impl<'a> AstParser<'a> {
             if comma.is_none() {
                 self.skip_stray_closers(errors);
                 if !self.at_list_end() {
-                    errors.push(Error::with_span(
-                        expected("comma", Some(context)),
-                        self.peek_span(),
-                    ));
+                    // `Name(field value`: the first element is more likely a field
+                    // name missing its `:` than a value missing its comma.
+                    let field = match items.as_slice() {
+                        [first] => first.bare_ident(),
+                        _ => None,
+                    };
+                    errors.push(match field {
+                        Some(name) => expected_colon_after(name),
+                        None => {
+                            Error::with_span(expected("comma", Some(context)), self.peek_span())
+                        }
+                    });
                 }
             }
         }
 
-        let close = self.expect_closer(delim, context, errors);
+        let close = self.expect_closer(delim, opener, errors);
         self.open[delim as usize] -= 1;
         List {
             items,
@@ -417,15 +481,21 @@ impl<'a> AstParser<'a> {
     pub(super) fn expect_closer(
         &mut self,
         delim: Delim,
-        context: &'static str,
+        opener: Opener<'_>,
         errors: &mut Vec<Error>,
     ) -> Span {
         let closer = delim.closer();
         if let Some(span) = self.eat(closer) {
             return span;
         }
+        let mut open = opener.name.to_string();
+        open.push(delim.open_char());
         errors.push(Error::with_span(
-            expected(delim.expected_closer(), Some(context)),
+            ErrorKind::Unclosed {
+                open,
+                close: delim.close_char(),
+                opened_at: opener.span.start,
+            },
             self.peek_span(),
         ));
         loop {

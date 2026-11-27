@@ -229,7 +229,7 @@ fn test_complete_workflow_nested_structures() {
         check(invalid_config, &loaded_schema)
             .unwrap_err()
             .to_string(),
-        "4:39-4:53: in field 'servers' -> element 0 -> field 'port': expected u16 but found string"
+        "4:39-4:53: expected u16 but found string (in field 'servers' -> element 0 -> field 'port')"
     );
 }
 
@@ -486,7 +486,7 @@ fn test_validation_error_provides_useful_context() {
     // The error should mention the field path
     assert_eq!(
         error_message,
-        "4:18-4:30: in field 'items' -> element 1 -> field 'id': expected i32 but found string"
+        "4:18-4:30: expected i32 but found string (in field 'items' -> element 1 -> field 'id')"
     );
 }
 

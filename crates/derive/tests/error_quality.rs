@@ -422,7 +422,7 @@ fn explicit_option_error_mentions_some_none() {
     // Should mention Some/None requirement
     assert_eq!(
         msg,
-        "1:9-1:11: in field 'value': expected Some(...) or None but found number"
+        "1:9-1:11: expected Some(...) or None but found number (in field 'value')"
     );
 }
 
@@ -642,7 +642,7 @@ fn error_display_includes_position() {
     // Position (line:col range) followed by the message
     assert_eq!(
         display,
-        "1:22-1:29: in field 'port': expected u16 but found string"
+        "1:22-1:29: expected u16 but found string (in field 'port')"
     );
 }
 
@@ -796,7 +796,7 @@ fn flatten_field_error_includes_context() {
     // The error should mention the type mismatch
     assert_eq!(
         msg,
-        "1:23-1:35: in field 'value': expected i32 but found string"
+        "1:23-1:35: expected i32 but found string (in field 'value')"
     );
 }
 
@@ -927,7 +927,7 @@ fn flatten_with_optional_field_error() {
     // 123 is wrong type for Option<String> - should expect string or None
     assert_eq!(
         msg,
-        "1:40-1:43: in field 'optional': expected String but found number"
+        "1:40-1:43: expected String but found number (in field 'optional')"
     );
 }
 
@@ -1045,7 +1045,7 @@ mod map_key_errors {
         // Error should mention expected type (string)
         assert_eq!(
             msg,
-            "1:10-1:13: in field 'data' -> map key: expected String but found number"
+            "1:10-1:13: expected String but found number (in field 'data' -> map key)"
         );
     }
 
@@ -1075,7 +1075,7 @@ mod map_key_errors {
         // Error should indicate integer expected
         assert_eq!(
             msg,
-            "1:10-1:22: in field 'data' -> map key: expected i32 but found string"
+            "1:10-1:22: expected i32 but found string (in field 'data' -> map key)"
         );
     }
 
@@ -1152,7 +1152,7 @@ mod map_value_errors {
         // Error should mention expected type (i32/integer)
         assert_eq!(
             msg,
-            "1:17-1:29: in field 'data' -> map value for '\"key\"': expected i32 but found string"
+            "1:17-1:29: expected i32 but found string (in field 'data' -> map value for '\"key\"')"
         );
     }
 
@@ -1195,7 +1195,7 @@ mod map_value_errors {
         // Should indicate type mismatch
         assert_eq!(
             msg,
-            "1:16-1:23: in map value for '\"b\"': expected i32 but found string"
+            "1:16-1:23: expected i32 but found string (in map value for '\"b\"')"
         );
     }
 }

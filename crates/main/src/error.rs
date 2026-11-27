@@ -387,6 +387,17 @@ pub enum ErrorKind {
         context: Option<&'static str>,
     },
 
+    /// A collection is missing its closing delimiter.
+    Unclosed {
+        /// The opening text: `(`, `[`, `{`, or a struct name with its `(`, such as
+        /// `Point(` or `Some(`.
+        open: String,
+        /// The missing closing delimiter.
+        close: char,
+        /// Where the opening delimiter is.
+        opened_at: Position,
+    },
+
     /// Non-whitespace trailing characters after main value.
     TrailingCharacters,
 
@@ -576,20 +587,20 @@ impl fmt::Display for Error {
             write!(f, "{}: ", self.0.span)?;
         }
 
-        // Path context (reversed - outermost first)
+        write!(f, "{}", self.0.kind)?;
+
+        // Path context last (reversed - outermost first)
         if !self.0.path.is_empty() {
-            write!(f, "in ")?;
+            write!(f, " (in ")?;
             for (i, seg) in self.0.path.iter().rev().enumerate() {
                 if i > 0 {
                     write!(f, " -> ")?;
                 }
                 write!(f, "{seg}")?;
             }
-            write!(f, ": ")?;
+            write!(f, ")")?;
         }
-
-        // Error kind message
-        write!(f, "{}", self.0.kind)
+        Ok(())
     }
 }
 
@@ -621,6 +632,14 @@ impl fmt::Display for ErrorKind {
                 expected,
                 context: None,
             } => write!(f, "Expected {expected}"),
+            ErrorKind::Unclosed {
+                open,
+                close,
+                opened_at,
+            } => write!(
+                f,
+                "Expected closing `{close}` for `{open}` opened at {opened_at}"
+            ),
             ErrorKind::TrailingCharacters => f.write_str("Non-whitespace trailing characters"),
             ErrorKind::ExpectedStringEnd => f.write_str("Expected end of string"),
             ErrorKind::InvalidIdentifier(s) => write!(f, "Invalid identifier {s:?}"),
@@ -907,7 +926,7 @@ mod tests {
             .in_field("items");
         assert_eq!(
             err.to_string(),
-            "in field 'items' -> element 0: expected i32 but found String"
+            "expected i32 but found String (in field 'items' -> element 0)"
         );
     }
 

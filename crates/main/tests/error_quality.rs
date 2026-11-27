@@ -82,9 +82,10 @@ fn span_points_to_unclosed_bracket_content() {
     // Error should be at end of file
     assert_eq!(
         err.kind(),
-        &ErrorKind::Expected {
-            expected: "closing `]`".into(),
-            context: Some("array")
+        &ErrorKind::Unclosed {
+            open: "[".into(),
+            close: ']',
+            opened_at: ron2::error::Position { line: 1, col: 1 },
         }
     );
     assert_eq!(err.span().start.line, 1);

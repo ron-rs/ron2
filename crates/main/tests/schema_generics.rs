@@ -99,8 +99,8 @@ fn catalog_validates_through_generic_type_refs() {
     let err = check("(container: (item: \"x\", child: (value: 2)))").unwrap_err();
     assert_eq!(
         err.to_string(),
-        "1:20-1:23: in field 'container' -> type 'schema_generics::GenericContainer<u32>' -> \
-         field 'item': expected u32 but found string"
+        "1:20-1:23: expected u32 but found string (in field 'container' -> \
+         type 'schema_generics::GenericContainer<u32>' -> field 'item')"
     );
 }
 

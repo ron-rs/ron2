@@ -2,7 +2,10 @@
 
 use alloc::vec::Vec;
 
-use super::{AstParser, core::Delim};
+use super::{
+    AstParser,
+    core::{Delim, Opener},
+};
 use crate::{
     ast::{AnonStructExpr, Expr, Trivia, TupleElement, TupleExpr, UnitExpr},
     error::{Error, Span},
@@ -25,7 +28,13 @@ impl<'a> AstParser<'a> {
         }
 
         if self.peek_is_named_field() {
-            let list = self.parse_list(Delim::Paren, "struct", errors, Self::parse_field);
+            let list = self.parse_list(
+                Delim::Paren,
+                Opener::anonymous(open.span),
+                "struct",
+                errors,
+                Self::parse_field,
+            );
             Expr::AnonStruct(AnonStructExpr {
                 span: Span::between(&open.span, &list.close),
                 open_paren: open.span,
@@ -35,7 +44,13 @@ impl<'a> AstParser<'a> {
                 close_paren: list.close,
             })
         } else {
-            let list = self.parse_list(Delim::Paren, "tuple", errors, Self::parse_element);
+            let list = self.parse_list(
+                Delim::Paren,
+                Opener::anonymous(open.span),
+                "tuple",
+                errors,
+                Self::parse_element,
+            );
             Expr::Tuple(TupleExpr {
                 span: Span::between(&open.span, &list.close),
                 open_paren: open.span,

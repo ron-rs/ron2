@@ -144,7 +144,7 @@ mod tests {
             .in_field("items");
         assert_eq!(
             err.to_string(),
-            "in field 'items' -> element 0: expected i32 but found String"
+            "expected i32 but found String (in field 'items' -> element 0)"
         );
     }
 
@@ -156,7 +156,7 @@ mod tests {
             .in_type_ref("my::Type");
         assert_eq!(
             err.to_string(),
-            "in type 'my::Type' -> field 'data' -> variant 'Some': missing required field `name`"
+            "missing required field `name` (in type 'my::Type' -> field 'data' -> variant 'Some')"
         );
     }
 
@@ -172,7 +172,7 @@ mod tests {
         assert!(!err.is_storage_error());
         assert_eq!(
             err.to_string(),
-            "in field 'config' -> map value for 'key1': Unknown field `bad_field`"
+            "Unknown field `bad_field` (in field 'config' -> map value for 'key1')"
         );
     }
 

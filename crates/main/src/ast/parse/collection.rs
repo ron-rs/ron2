@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use super::{
     AstParser,
-    core::{Delim, expected, span_at_end},
+    core::{Delim, Opener, expected, span_at_end},
 };
 use crate::{
     ast::{ErrorExpr, Expr, MapEntry, MapExpr, SeqExpr, SeqItem, Trivia},
@@ -17,14 +17,18 @@ impl<'a> AstParser<'a> {
     #[inline(never)]
     pub(super) fn parse_seq(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open = self.next_token();
-        let list = self.parse_list(Delim::Bracket, "array", errors, |p, leading, errors| {
-            SeqItem {
+        let list = self.parse_list(
+            Delim::Bracket,
+            Opener::anonymous(open.span),
+            "array",
+            errors,
+            |p, leading, errors| SeqItem {
                 leading,
                 expr: p.parse_expr(errors),
                 trailing: Trivia::empty(),
                 comma: None,
-            }
-        });
+            },
+        );
         Expr::Seq(SeqExpr {
             span: Span::between(&open.span, &list.close),
             open_bracket: open.span,
@@ -39,7 +43,13 @@ impl<'a> AstParser<'a> {
     #[inline(never)]
     pub(super) fn parse_map(&mut self, errors: &mut Vec<Error>) -> Expr<'a> {
         let open = self.next_token();
-        let list = self.parse_list(Delim::Brace, "map", errors, Self::parse_map_entry);
+        let list = self.parse_list(
+            Delim::Brace,
+            Opener::anonymous(open.span),
+            "map",
+            errors,
+            Self::parse_map_entry,
+        );
         Expr::Map(MapExpr {
             span: Span::between(&open.span, &list.close),
             open_brace: open.span,

@@ -5,7 +5,7 @@ use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use super::{
     AstParser,
-    core::{Delim, expected, span_at_end},
+    core::{Delim, Opener, expected, expected_colon_after, span_at_end},
 };
 use crate::{
     ast::{
@@ -60,7 +60,11 @@ impl<'a> AstParser<'a> {
             let trailing = p.take_trivia();
             let comma = p.eat(TokenKind::Comma);
             let post_comma = p.take_trivia();
-            let close_paren = p.expect_closer(Delim::Paren, "option", errors);
+            let opener = Opener {
+                name: some.text,
+                span: open_paren,
+            };
+            let close_paren = p.expect_closer(Delim::Paren, opener, errors);
             OptionValue {
                 pre_paren,
                 open_paren,
@@ -82,7 +86,10 @@ impl<'a> AstParser<'a> {
     #[inline(never)]
     fn parse_struct(&mut self, name: &Token<'a>, errors: &mut Vec<Error>) -> Expr<'a> {
         let (pre_body, body) = if self.peek_kind() == TokenKind::LParen {
-            (self.take_trivia(), Some(self.parse_struct_body(errors)))
+            (
+                self.take_trivia(),
+                Some(self.parse_struct_body(name, errors)),
+            )
         } else {
             // Trivia after a bodiless name belongs to whatever follows the value.
             (Trivia::empty(), None)
@@ -101,10 +108,14 @@ impl<'a> AstParser<'a> {
         })
     }
 
-    fn parse_struct_body(&mut self, errors: &mut Vec<Error>) -> StructBody<'a> {
+    fn parse_struct_body(&mut self, name: &Token<'a>, errors: &mut Vec<Error>) -> StructBody<'a> {
         let open = self.next_token();
+        let opener = Opener {
+            name: name.text,
+            span: open.span,
+        };
         if self.peek_is_named_field() {
-            let list = self.parse_list(Delim::Paren, "struct", errors, Self::parse_field);
+            let list = self.parse_list(Delim::Paren, opener, "struct", errors, Self::parse_field);
             StructBody::Fields(FieldsBody {
                 open_brace: open.span,
                 leading: Trivia::empty(),
@@ -113,7 +124,7 @@ impl<'a> AstParser<'a> {
                 close_brace: list.close,
             })
         } else {
-            let list = self.parse_list(Delim::Paren, "tuple", errors, Self::parse_element);
+            let list = self.parse_list(Delim::Paren, opener, "tuple", errors, Self::parse_element);
             StructBody::Tuple(TupleBody {
                 open_paren: open.span,
                 leading: Trivia::empty(),
@@ -156,10 +167,7 @@ impl<'a> AstParser<'a> {
         let name = self.next_token();
         let pre_colon = self.take_trivia();
         let colon = self.eat(TokenKind::Colon).unwrap_or_else(|| {
-            errors.push(Error::with_span(
-                expected("`:` after field name", Some("struct field")),
-                name.span,
-            ));
+            errors.push(expected_colon_after(&ident(&name)));
             span_at_end(&name.span)
         });
         let post_colon = self.take_trivia();
@@ -261,7 +269,7 @@ mod tests {
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert_eq!(
             errors[0].kind().to_string(),
-            "Expected `:` after field name in struct field"
+            "Expected `:` after field name `y`"
         );
         let Some(Expr::AnonStruct(s)) = doc.value else {
             panic!("expected anon struct");
