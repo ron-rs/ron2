@@ -18,6 +18,9 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # The trybuild UI tests expect compiler output that quotes std's source.
+          components: rust-src
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
