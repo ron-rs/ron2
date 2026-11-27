@@ -40,10 +40,13 @@ pub fn to_value(doc: &Document<'_>) -> Option<Result<Value>> {
     doc.value.as_ref().map(expr_to_value)
 }
 
-/// Maximum nesting depth of [`expr_to_value`] and [`value_to_expr`].
+/// Maximum nesting depth of parsing, [`expr_to_value`] and [`value_to_expr`]:
+/// the number of values from the outermost one to the innermost, inclusive
+/// (`[[1]]` is 3 levels deep).
 ///
 /// Deeper input fails with [`ErrorKind::ExceededRecursionLimit`] instead of
-/// overflowing the stack. Parsed documents are limited to the same depth.
+/// overflowing the stack. All three share the limit, so a value that converts
+/// can be written and parsed again.
 pub const MAX_CONVERSION_DEPTH: usize = 128;
 
 fn too_deep(span: Span) -> Error {
@@ -65,7 +68,8 @@ pub fn expr_to_value(expr: &Expr<'_>) -> Result<Value> {
 
 fn expr_to_value_at(expr: &Expr<'_>, depth: usize) -> Result<Value> {
     let nested = |child: &Expr<'_>| {
-        if depth >= MAX_CONVERSION_DEPTH {
+        // `depth` counts from 0, so the child is at level `depth + 2`.
+        if depth + 2 > MAX_CONVERSION_DEPTH {
             return Err(too_deep(*child.span()));
         }
         expr_to_value_at(child, depth + 1)
@@ -156,7 +160,8 @@ pub fn value_to_expr(value: &Value) -> Result<Expr<'static>> {
 
 fn value_to_expr_at(value: &Value, depth: usize) -> Result<Expr<'static>> {
     let nested = |child: &Value| {
-        if depth >= MAX_CONVERSION_DEPTH {
+        // `depth` counts from 0, so the child is at level `depth + 2`.
+        if depth + 2 > MAX_CONVERSION_DEPTH {
             return Err(too_deep(Span::synthetic()));
         }
         value_to_expr_at(child, depth + 1)
@@ -639,9 +644,10 @@ mod tests {
         );
     }
 
+    /// `levels` values deep: `levels - 1` sequences around a unit.
     fn nested_seq(levels: usize) -> Value {
         let mut value = Value::Unit;
-        for _ in 0..levels {
+        for _ in 1..levels {
             value = Value::Seq(vec![value]);
         }
         value
@@ -674,15 +680,23 @@ mod tests {
             .unwrap();
     }
 
-    /// Whatever the parser accepts converts without hitting the limit.
+    /// Parsing and conversion share the limit: the deepest document the
+    /// parser accepts converts, and the deepest value that converts is
+    /// written as text that parses again.
     #[test]
-    fn parser_depth_fits_conversion_depth() {
+    fn parser_and_conversion_limits_agree() {
         let nest = |n: usize| "[".repeat(n) + &"]".repeat(n);
         let deepest = (1..=MAX_CONVERSION_DEPTH + 8)
             .take_while(|&n| parse_document(&nest(n)).is_ok())
             .last()
             .unwrap();
+        assert_eq!(deepest, MAX_CONVERSION_DEPTH);
         assert!(convert(&nest(deepest)).is_ok());
+
+        let value = nested_seq(MAX_CONVERSION_DEPTH);
+        let expr = value_to_expr(&value).unwrap();
+        let text = crate::fmt::format_expr(&expr, &crate::fmt::FormatConfig::minimal());
+        assert_eq!(convert(&text).unwrap(), value);
     }
 
     #[test]

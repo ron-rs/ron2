@@ -174,8 +174,15 @@ mod tests {
     #[test]
     fn display_never_fails_on_deep_values() {
         let run = || {
-            let within = nested(MAX_CONVERSION_DEPTH);
-            assert!(within.to_string().contains('\n'), "pretty below the limit");
+            // The unit inside adds a level.
+            let within = nested(MAX_CONVERSION_DEPTH - 1);
+            assert!(within.to_string().contains('\n'), "pretty up to the limit");
+            let beyond = nested(MAX_CONVERSION_DEPTH);
+            assert_eq!(
+                beyond.to_string(),
+                compact(&beyond),
+                "compact past the limit"
+            );
 
             let deep = nested(1000);
             let text = deep.to_string();

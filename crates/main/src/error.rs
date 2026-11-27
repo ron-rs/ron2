@@ -484,7 +484,9 @@ pub enum ErrorKind {
     // =========================================================================
     // Limits
     // =========================================================================
-    /// Exceeded recursion limit.
+    /// Values nested deeper than
+    /// [`MAX_CONVERSION_DEPTH`](crate::ast::MAX_CONVERSION_DEPTH) levels, the
+    /// limit of parsing and of the AST↔`Value` conversion.
     ExceededRecursionLimit,
 
     // =========================================================================
@@ -694,7 +696,11 @@ impl fmt::Display for ErrorKind {
             }
 
             // Limits
-            ErrorKind::ExceededRecursionLimit => f.write_str("Exceeded recursion limit"),
+            ErrorKind::ExceededRecursionLimit => write!(
+                f,
+                "Nesting deeper than {} levels",
+                crate::ast::MAX_CONVERSION_DEPTH
+            ),
 
             // Schema
             ErrorKind::UnresolvedTypeRef(path) => {

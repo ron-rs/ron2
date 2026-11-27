@@ -19,8 +19,9 @@ use crate::{
     token::{Token, TokenKind},
 };
 
-/// Maximum recursion depth for parsing nested structures.
-const MAX_RECURSION_DEPTH: usize = 128;
+/// Maximum nesting depth of parsed values, shared with the AST↔`Value`
+/// conversion so that every converted value can be written and parsed again.
+const MAX_RECURSION_DEPTH: usize = super::MAX_CONVERSION_DEPTH;
 
 /// Parse RON source into an AST document.
 ///
