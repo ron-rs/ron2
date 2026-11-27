@@ -12,6 +12,7 @@ use crate::{
     ast::{Container, Data, Field, Style, Variant, unraw},
     bound::{self, Derive},
     names::{self, Direction},
+    variant_fn::{variant_fn, variant_fns},
 };
 
 pub fn expand(cont: &Container<'_>) -> TokenStream {
@@ -19,6 +20,7 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
     let (impl_generics, ty_generics, _) = cont.generics.split_for_impl();
     let where_clause = bound::where_clause(cont, Derive::FromRon);
     let mut checks = Vec::new();
+    let mut helpers = Vec::new();
 
     let (body, fields_impl) = match &cont.data {
         Data::Struct(..) if cont.attrs.transparent.is_some() => (transparent(cont), None),
@@ -35,9 +37,10 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
             };
             (body, None)
         }
-        Data::Enum(variants) => (enum_body(cont, variants, &mut checks), None),
+        Data::Enum(variants) => (enum_body(cont, variants, &mut checks, &mut helpers), None),
     };
 
+    let helpers = variant_fns(cont, &where_clause, &helpers);
     let fields_impl = fields_impl.map(|fields_impl| {
         quote! {
             impl #impl_generics ::ron2::convert::FromRonFields for #ident #ty_generics #where_clause {
@@ -53,6 +56,7 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
             }
         }
 
+        #helpers
         #fields_impl
         #(#checks)*
     }
@@ -166,19 +170,36 @@ fn transparent(cont: &Container<'_>) -> TokenStream {
     quote!(::core::result::Result::Ok(Self { #(#inits),* }))
 }
 
+/// Reading an enum matches on the variant name; each variant with fields is
+/// read by its own function in `helpers` (see `variant_fn`).
 fn enum_body(
     cont: &Container<'_>,
     variants: &[Variant<'_>],
     checks: &mut Vec<TokenStream>,
+    helpers: &mut Vec<TokenStream>,
 ) -> TokenStream {
     let enum_name = unraw(cont.ident);
-    let active: Vec<_> = variants.iter().filter(|v| v.attrs.skip.is_none()).collect();
-    let names: Vec<_> = active.iter().map(|v| &v.name).collect();
-    let arms = active.iter().map(|variant| {
-        let name = &variant.name;
-        let body = variant_body(cont, variant, checks);
-        quote!(#name => { #body })
-    });
+    let active: Vec<_> = variants
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.attrs.skip.is_none())
+        .collect();
+    let names: Vec<_> = active.iter().map(|(_, v)| &v.name).collect();
+    let arms: Vec<_> = active
+        .iter()
+        .map(|(index, variant)| {
+            let name = &variant.name;
+            let body = variant_body(cont, variant, checks);
+            if variant.style == Style::Unit {
+                return quote!(#name => { #body });
+            }
+            let fn_name = format_ident!("__ron_from_ast_{}", index);
+            let params = (quote!(__s), quote!(&::ron2::ast::StructExpr<'_>));
+            helpers.push(variant_fn(&fn_name, params, &quote!(Self), &body));
+            quote!(#name => Self::#fn_name(__s),)
+        })
+        .collect();
+    let active: Vec<_> = active.into_iter().map(|(_, v)| v).collect();
 
     // `None` and `Some(x)` parse as options, not as named variants.
     let none = active

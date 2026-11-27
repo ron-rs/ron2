@@ -8,6 +8,7 @@ use crate::{
     ast::{Container, Data, Field, Style, Variant, unraw},
     bound::{self, Derive},
     names::{self, Direction},
+    variant_fn::{variant_fn, variant_fns},
 };
 
 pub fn expand(cont: &Container<'_>) -> TokenStream {
@@ -18,6 +19,7 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
     let mut checks = Vec::new();
 
     let mut fields_impl = None;
+    let mut helpers = Vec::new();
     let body = match &cont.data {
         Data::Struct(..) if cont.attrs.transparent.is_some() => {
             let member = cont.transparent_field().map(|f| &f.member);
@@ -77,13 +79,16 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
         Data::Enum(variants) if variants.is_empty() => quote!(match *self {}),
         Data::Enum(variants) => {
             let enum_name = unraw(ident);
-            let arms = variants
+            let arms: Vec<_> = variants
                 .iter()
-                .map(|v| variant_arm(cont, &enum_name, v, &mut checks));
+                .enumerate()
+                .map(|(i, v)| variant_arm(cont, &enum_name, i, v, &mut checks, &mut helpers))
+                .collect();
             quote!(match self { #(#arms)* })
         }
     };
 
+    let helpers = variant_fns(cont, &where_clause, &helpers);
     quote! {
         impl #impl_generics ::ron2::ToRon for #ident #ty_generics #where_clause {
             fn to_ast(&self) -> ::ron2::error::Result<::ron2::ast::Expr<'static>> {
@@ -91,18 +96,23 @@ pub fn expand(cont: &Container<'_>) -> TokenStream {
             }
         }
 
+        #helpers
+
         #fields_impl
         #(#checks)*
     }
 }
 
-/// The match arm writing `variant`; free items (the field-name check) go to
-/// `checks`.
+/// The match arm writing `variant`. A variant with fields is written by its
+/// own function (pushed to `helpers`), which the arm calls with references to
+/// the fields; free items (the field-name check) go to `checks`.
 fn variant_arm(
     cont: &Container<'_>,
     enum_name: &str,
+    index: usize,
     variant: &Variant<'_>,
     checks: &mut Vec<TokenStream>,
+    helpers: &mut Vec<TokenStream>,
 ) -> TokenStream {
     let ident = variant.ident;
     let name = &variant.name;
@@ -114,11 +124,19 @@ fn variant_arm(
             ),
         };
     }
+    let expr = quote!(::ron2::ast::Expr<'static>);
+    let fn_name = format_ident!("__ron_to_ast_{}", index);
     match variant.style {
         Style::Unit => quote! {
             Self::#ident => ::core::result::Result::Ok(::ron2::ast::synthetic_named_unit(#name)),
         },
         Style::Tuple => {
+            let active: Vec<_> = variant
+                .fields
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.attrs.skip.is_none())
+                .collect();
             let patterns = variant.fields.iter().enumerate().map(|(i, f)| {
                 if f.attrs.skip.is_some() {
                     quote!(_)
@@ -127,19 +145,25 @@ fn variant_arm(
                     quote!(#binding)
                 }
             });
-            let values = variant
-                .fields
+            let bindings: Vec<_> = active
                 .iter()
-                .enumerate()
-                .filter(|(_, f)| f.attrs.skip.is_none())
-                .map(|(i, _)| {
-                    let binding = format_ident!("__field{}", i);
-                    quote!(::ron2::ToRon::to_ast(#binding)?)
-                });
+                .map(|(i, _)| format_ident!("__field{}", i))
+                .collect();
+            let body = quote! {
+                ::core::result::Result::Ok(::ron2::ast::synthetic_named_tuple(
+                    #name,
+                    ::std::vec![#(::ron2::ToRon::to_ast(#bindings)?),*],
+                ))
+            };
+            if active.is_empty() {
+                return quote!(Self::#ident(#(#patterns),*) => { #body }
+                );
+            }
+            let tys = active.iter().map(|(_, f)| f.ty);
+            let params = (quote!((#(#bindings,)*)), quote!((#(&#tys,)*)));
+            helpers.push(variant_fn(&fn_name, params, &expr, &body));
             quote! {
-                Self::#ident(#(#patterns),*) => ::core::result::Result::Ok(
-                    ::ron2::ast::synthetic_named_tuple(#name, ::std::vec![#(#values),*]),
-                ),
+                Self::#ident(#(#patterns),*) => Self::#fn_name((#(#bindings,)*)),
             }
         }
         Style::Named => {
@@ -163,17 +187,23 @@ fn variant_arm(
             let check = names::unique_check(cont, &variant.fields, Direction::Write, &label);
             checks.extend(check.item);
             let check = check.stmt;
-            quote! {
-                Self::#ident { #(#members: #bindings,)* .. } => {
-                    #check
-                    let mut __vec = ::std::vec::Vec::with_capacity(#capacity);
-                    {
-                        let __fields = &mut __vec;
-                        #pushes
-                    }
-                    ::core::result::Result::Ok(::ron2::ast::synthetic_struct(#name, __vec))
+            let body = quote! {
+                #check
+                let mut __vec = ::std::vec::Vec::with_capacity(#capacity);
+                {
+                    let __fields = &mut __vec;
+                    #pushes
                 }
+                ::core::result::Result::Ok(::ron2::ast::synthetic_struct(#name, __vec))
+            };
+            let pattern = quote!(Self::#ident { #(#members: #bindings,)* .. });
+            if active.is_empty() {
+                return quote!(#pattern => { #body });
             }
+            let tys = active.iter().map(|f| f.ty);
+            let params = (quote!((#(#bindings,)*)), quote!((#(&#tys,)*)));
+            helpers.push(variant_fn(&fn_name, params, &expr, &body));
+            quote!(#pattern => Self::#fn_name((#(#bindings,)*)),)
         }
     }
 }

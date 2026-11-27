@@ -93,6 +93,7 @@ mod de;
 mod names;
 mod schema;
 mod ser;
+mod variant_fn;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
